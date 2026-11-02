@@ -201,15 +201,24 @@ def test_compare_model_outputs_shape_mismatch_raises():
         validate_onnx.compare_model_outputs(logits, logits[:, :, :5, :])
 
 
-def _install_fake_torch_and_ort(onnx_logits):
+def _install_fake_torch_and_ort(onnx_logits, monkeypatch):
     """Injeta torch e onnxruntime falsos em sys.modules.
 
     O modelo dummy devolve logits NumPy; a sessão ONNX falsa devolve
     ``onnx_logits``. Retorna (modelo_dummy, caminho_onnx_falso).
+
+    A injeção vai por ``monkeypatch.setitem``: quando o teste acaba,
+    o pytest restaura sys.modules ao estado anterior. Atribuir
+    direto vazava o torch falso para os testes seguintes do mesmo
+    processo (test_selflearn_train_round precisava contornar
+    capturando o torch real na coleta); a regressão está em
+    test_fake_modules_do_not_leak_into_sys_modules.
     """
     fake_torch = types.ModuleType("torch")
     fake_torch.no_grad = lambda: _NoGrad()
+    fake_torch.__draw_fake__ = True
     fake_ort = types.ModuleType("onnxruntime")
+    fake_ort.__draw_fake__ = True
 
     class _NoGrad:
         def __enter__(self):
@@ -239,15 +248,15 @@ def _install_fake_torch_and_ort(onnx_logits):
         def __call__(self, x):
             return x  # entrada já é o logits dummy
 
-    sys.modules["torch"] = fake_torch
-    sys.modules["onnxruntime"] = fake_ort
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
     return _DummyModel(), "dummy.onnx"
 
 
 def test_validate_onnx_dummy_identical_is_ok(monkeypatch):
     mask = _mask_with_all_classes()
     logits = _logits_from_mask(mask)
-    model, path = _install_fake_torch_and_ort(logits.copy())
+    model, path = _install_fake_torch_and_ort(logits.copy(), monkeypatch)
     report = validate_onnx.validate_onnx(model, path, logits)
     assert report["status"] == "ok"
     assert report["degraded"] is False
@@ -261,7 +270,7 @@ def test_validate_onnx_dummy_degraded_is_flagged(monkeypatch):
     degraded_mask = mask.copy()
     degraded_mask[0:5, 0:5] = 2
     degraded_logits = _logits_from_mask(degraded_mask)
-    model, path = _install_fake_torch_and_ort(degraded_logits)
+    model, path = _install_fake_torch_and_ort(degraded_logits, monkeypatch)
     report = validate_onnx.validate_onnx(model, path, logits)
     assert report["status"] == "degraded"
     assert report["degraded"] is True
@@ -271,7 +280,7 @@ def test_validate_onnx_dummy_degraded_is_flagged(monkeypatch):
 def test_validate_onnx_expected_output_shape_is_enforced(monkeypatch):
     mask = _mask_with_all_classes()
     logits = _logits_from_mask(mask)
-    model, path = _install_fake_torch_and_ort(logits.copy())
+    model, path = _install_fake_torch_and_ort(logits.copy(), monkeypatch)
     report = validate_onnx.validate_onnx(
         model, path, logits, expected_shape=(1, 4, 12, 10)
     )
@@ -284,13 +293,41 @@ def test_validate_onnx_reports_onnx_shape_mismatch_as_degraded(monkeypatch):
     mask = _mask_with_all_classes()
     logits = _logits_from_mask(mask)
     lower_resolution = logits[:, :, :5, :]
-    model, path = _install_fake_torch_and_ort(lower_resolution)
+    model, path = _install_fake_torch_and_ort(lower_resolution, monkeypatch)
     report = validate_onnx.validate_onnx(model, path, logits)
     assert report["status"] == "degraded"
     assert report["shape_matches"] is False
     assert report["actual_shape"] == [1, 4, 10, 10]
     assert report["onnx_shape"] == [1, 4, 5, 10]
     assert report["comparison"] is None
+
+
+def test_fake_modules_do_not_leak_into_sys_modules():
+    # Regressão: _install_fake_torch_and_ort atribuía os módulos
+    # falsos direto em sys.modules e eles ficavam para os testes
+    # seguintes do processo (o torch falso quebrava quem importa
+    # torch de verdade depois, ex.: test_selflearn_train_round).
+    # Este teste roda DEPOIS dos testes de validate_onnx neste
+    # arquivo: nenhum módulo marcado como falso pode ter sobrado.
+    for name in ("torch", "onnxruntime"):
+        module = sys.modules.get(name)
+        assert not getattr(module, "__draw_fake__", False), (
+            f"sys.modules[{name!r}] é o módulo falso deste arquivo; "
+            "a injeção tem de ser desfeita ao fim de cada teste"
+        )
+    # Sem depender da marca: o torch falso não tem nn nem arquivo,
+    # e o onnxruntime falso não tem arquivo. Se algum dos dois
+    # estiver em sys.modules sem essas marcas de módulo real, é
+    # vazamento (num ambiente sem a biblioteca, o certo é a chave
+    # nem existir).
+    torch_mod = sys.modules.get("torch")
+    if torch_mod is not None:
+        assert hasattr(torch_mod, "nn"), "torch em sys.modules é o falso"
+    ort_mod = sys.modules.get("onnxruntime")
+    if ort_mod is not None:
+        assert getattr(ort_mod, "__file__", None) is not None, (
+            "onnxruntime em sys.modules é o falso"
+        )
 
 
 def test_validate_onnx_skipped_without_libraries(monkeypatch):
