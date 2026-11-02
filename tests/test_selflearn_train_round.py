@@ -77,6 +77,27 @@ def test_geo_valid_mask_marks_uncovered_strip():
     assert valid_y[:5, :].sum() == 5 * 8
 
 
+def test_consistency_targets_apply_classic_witness_veto():
+    # Issue #18: o pseudo-rotulo do treino tem de passar pelo veto
+    # da testemunha classica (teacher.pseudo_label), nao so pela
+    # confianca da propria rede.
+    tr = _train_round()
+    page = np.full((64, 64, 3), 0.94, dtype=np.float32)
+    page[28:32, 10:50] = 0.12  # traco escuro de verdade
+    prob = np.full((64, 64), 0.01, dtype=np.float32)
+    prob[5, 5] = 0.99    # rede ve tinta onde NAO ha escurecimento
+    prob[30, 30] = 0.99  # rede ve tinta sobre o traco
+    target, weight = tr.consistency_targets(prob, page)
+    # tinta confirmada pela testemunha: alvo 1, peso 1
+    assert target[30, 30] == 1.0 and weight[30, 30] == 1.0
+    # tinta vetada (sem escurecimento): ignore — nunca alvo de fundo
+    assert target[5, 5] == 0.0 and weight[5, 5] == 0.0
+    # escurecimento que a rede nao viu: ignore, nao fundo
+    assert target[30, 20] == 0.0 and weight[30, 20] == 0.0
+    # fundo confirmado (rede confiante no fundo, sem escurecimento)
+    assert target[10, 10] == 0.0 and weight[10, 10] == 1.0
+
+
 def test_supervised_loss_ignores_invalid_pixels():
     tr = _train_round()
     torch = _REAL_TORCH

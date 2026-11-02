@@ -6,10 +6,18 @@ Estilo UniMatch V1 simplificado sobre a U-Net da page-clean
 - Todo batch carrega paginas ROTULADAS (replay integral: a rodada
   nunca treina so com pseudo-rotulo, que e a receita do vies de
   confirmacao) com perda supervisionada BCE+Dice.
-- Paginas nao rotuladas: o teacher EMA gera o pseudo-rotulo na
-  vista fraca (flip + translacao de poucos px); o aluno treina na
-  vista forte (a mesma geometria, com brilho, sombra e blur) com
-  perda de consistencia mascarada pela confianca do teacher.
+- Paginas nao rotuladas: o teacher EMA gera a probabilidade na
+  vista fraca (flip + translacao de poucos px) e o pseudo-rotulo
+  passa pelo veto da testemunha classica
+  (draw/selflearn/teacher.py: pseudo_label): tinta prevista sem
+  escurecimento local e escurecimento que a rede nao viu vao para
+  ignore, nunca viram alvo de fundo nem de tinta. O aluno treina
+  na vista forte (a mesma geometria, com brilho, sombra e blur)
+  com a perda de consistencia mascarada por esse rotulo vetado.
+  Limitacao explicita: esta rodada ve uma passada por pagina
+  (K = 1, a "mediana" e a propria passada); a agregacao temporal
+  do teacher so atua onde ha passadas alinhadas da mesma pagina,
+  no caminho offline.
 - EMA com decay 0.999 atualizado a cada passo.
 
 Uso:
@@ -34,6 +42,10 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from draw.selflearn.teacher import pseudo_label  # noqa: E402
 
 BASE = 16
 EMA_DECAY = 0.999
@@ -177,6 +189,26 @@ def strong_view(img, rng):
     return np.clip(out, 0.0, 1.0)
 
 
+def consistency_targets(prob, weak_rgb):
+    """Alvo e peso da consistencia para uma pagina nao rotulada.
+
+    `prob`: mapa HxW de probabilidade do teacher EMA na vista fraca.
+    `weak_rgb`: a vista fraca, float 0..1 RGB.
+
+    Devolve (target, weight) float32 HxW: target 1 so onde o
+    pseudo-rotulo vetado diz tinta; weight 0 onde o veto manda
+    ignorar (tinta prevista sem escurecimento, escurecimento que a
+    rede nao viu, zona cinzenta). Discordancia nunca vira alvo.
+    """
+    bgr = (np.clip(weak_rgb, 0.0, 1.0)[..., ::-1] * 255.0) \
+        .round().astype(np.uint8)
+    mask, ignore, _confidence = pseudo_label(
+        prob, bgr, ink_thr=INK_THR, bg_thr=BG_THR)
+    target = (mask > 0).astype(np.float32)
+    weight = (ignore == 0).astype(np.float32)
+    return target, weight
+
+
 def load_pages(root, with_mask):
     root = Path(root)
     pages = []
@@ -254,24 +286,31 @@ def run_round(labeled, unlabeled, out_dir, steps, batch=4,
 
         loss = loss_sup
         if unlabeled:
-            weak, strong = [], []
+            weak, strong, weak_np = [], [], []
             for _ in range(batch):
                 img, _ = unlabeled[int(rng.integers(0, len(unlabeled)))]
                 y, x, size = sample_patch(img, patch, rng)
                 img_p = img[y:y + size, x:x + size]
                 img_g, _, _, _ = geo_view(img_p, rng)
                 weak.append(to_tensor(np.ascontiguousarray(img_g)))
+                weak_np.append(np.ascontiguousarray(img_g))
                 strong.append(to_tensor(strong_view(img_g, rng)))
             x_weak = torch.stack(weak).to(device)
             x_strong = torch.stack(strong).to(device)
             with torch.no_grad():
-                pseudo = torch.sigmoid(teacher(x_weak))
-            conf = (pseudo >= INK_THR) | (pseudo <= BG_THR)
-            target = (pseudo >= 0.5).float()
+                probs = torch.sigmoid(teacher(x_weak))[:, 0] \
+                    .cpu().numpy()
+            targets, weights = [], []
+            for i in range(batch):
+                t_i, w_i = consistency_targets(probs[i], weak_np[i])
+                targets.append(torch.from_numpy(t_i)[None])
+                weights.append(torch.from_numpy(w_i)[None])
+            target = torch.stack(targets).to(device)
+            weight = torch.stack(weights).to(device)
             logits_s = student(x_strong)
             bce = F.binary_cross_entropy_with_logits(
                 logits_s, target, reduction="none")
-            loss_cons = (bce * conf).sum() / conf.sum().clamp(min=1)
+            loss_cons = (bce * weight).sum() / weight.sum().clamp(min=1)
             loss = loss + CONS_WEIGHT * loss_cons
 
         opt.zero_grad()
