@@ -1,19 +1,19 @@
-# Arquivo de documentos
+# Document archive
 
-Documentos de eras concluídas do projeto. Ficam aqui como registro
-histórico, com o texto original. Caminhos citados dentro deles valem
-para a época em que foram escritos; o layout atual está no README
-principal.
+Documents from completed eras of the project. They stay here as a
+historical record, with the original text. Paths cited inside them apply
+to the time when they were written; the current layout is in the main
+README.
 
-- `analise/`: análise de código de 2026-10-31, com as sondas e os
-  benchmarks que a sustentam em `analise/probes/`.
-- `auditoria/`: auditoria de produto de 2026-10-31, com foco no modelo
-  de IA e nas recomendações da época.
-- `neural-seg-v1/`: documentos da era da segmentação neural v1
-  (2026-10-30): dados, treino no Kaggle, frames reais e revisão.
-- `noite/`: resumo da noite de 2026-10-30, com os blocos medidos e os
-  vereditos de modelo daquela rodada.
+- `analise/`: code analysis from 2026-10-31, with the probes and the
+  benchmarks supporting it in `analise/probes/`.
+- `auditoria/`: product audit from 2026-10-31, focused on the AI
+  model and the recommendations of the time.
+- `neural-seg-v1/`: documents from the neural segmentation v1 era
+  (2026-10-30): data, Kaggle training, real frames and review.
+- `noite/`: summary of the night of 2026-10-30, with the measured
+  blocks and the model verdicts of that round.
 
-Nada aqui é instrução vigente. O documento vivo de instalação é
-`docs/SETUP_WINDOWS.md` e o mapa atual do repositório é a seção
-Arquitetura do README principal.
+Nothing here is current instruction. The living installation document is
+`docs/SETUP_WINDOWS.md` and the current repository map is the
+Architecture section of the main README.

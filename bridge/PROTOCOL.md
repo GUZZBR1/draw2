@@ -1,155 +1,155 @@
-# Protocolo do ajudante Windows (v1)
+# Windows helper protocol (v1)
 
-Especificação do canal entre o ajudante residente no Windows e o Draw
-rodando no WSL. Este documento é o contrato: o receptor de referência
-está em [`../tools/helper_receiver.py`](../tools/helper_receiver.py) e
-o esboço do ajudante, em [`windows_helper.py`](windows_helper.py).
+Specification of the channel between the helper resident on Windows and Draw
+running on WSL. This document is the contract: the reference receiver
+is in [`../tools/helper_receiver.py`](../tools/helper_receiver.py) and
+the helper sketch, in [`windows_helper.py`](windows_helper.py).
 
-## Por que este canal existe
+## Why this channel exists
 
-Hoje a câmera entra no WSL via usbipd, e essa rota é frágil: os
-serviços de áudio do Windows (Audiosrv e AudioEndpointBuilder)
-seguram a função de microfone da câmera e a anexação falha com
-`Device busy`. A ponte ffmpeg atual desta pasta
-([`capture_windows.bat`](capture_windows.bat)) resolve a captura, mas
-entrega um stream MJPEG sobre HTTP sem identidade de frame e sem
-carimbo de tempo: o WSL recebe imagens, não frames datados.
+Today the camera enters WSL via usbipd, and this route is fragile: the
+Windows audio services (Audiosrv and AudioEndpointBuilder)
+hold the camera's microphone function and attachment fails with
+`Device busy`. The current ffmpeg bridge in this folder
+([`capture_windows.bat`](capture_windows.bat)) solves capture, but
+delivers an MJPEG stream over HTTP without frame identity and without
+a timestamp: WSL receives images, not dated frames.
 
-O desenho aprovado troca as duas rotas por um ajudante residente no
-Windows que captura via DirectShow/MSMF, carimba cada frame **na
-captura** e envia JPEG por um socket local. Todo o processamento e
-todo o ML continuam no WSL. Nada de ML roda no Windows.
+The approved design swaps both routes for a helper resident on
+Windows that captures via DirectShow/MSMF, timestamps each frame **at
+capture** and sends JPEG over a local socket. All processing and
+all ML remain on WSL. No ML runs on Windows.
 
-Sem carimbo de captura não há como medir a latência vidro→tinta, que
-nunca foi medida ponta a ponta neste projeto. Este protocolo existe
-para tornar essa medida possível (ver "Passo 0", abaixo).
+Without a capture timestamp there is no way to measure glass→ink latency, which
+has never been measured end to end in this project. This protocol exists
+to make that measurement possible (see "Step 0", below).
 
-## Transporte
+## Transport
 
-- TCP, um único sentido na v1: **ajudante → WSL**.
-- O ajudante **escuta** numa porta TCP (padrão **8765**, configurável)
-  e o WSL **conecta**. O ajudante é residente e vive mais que o app;
-  o lado do WSL reinicia com frequência durante o desenvolvimento,
-  então é ele quem inicia a conexão.
-- No WSL2, o IP do host Windows é o `nameserver` de
-  `/etc/resolv.conf`, como na ponte atual.
-- O firewall do Windows deve liberar a porta em redes privadas, como
-  já acontece com a ponte ffmpeg.
-- Sem TLS e sem autenticação na v1: o canal é local (host Windows ↔
-  WSL do mesmo PC) e o desenho assume esse perímetro. Não exponha a
-  porta fora da máquina.
+- TCP, a single direction in v1: **helper → WSL**.
+- The helper **listens** on a TCP port (default **8765**, configurable)
+  and WSL **connects**. The helper is resident and outlives the app;
+  the WSL side restarts frequently during development,
+  so it is the one that initiates the connection.
+- In WSL2, the Windows host IP is the `nameserver` of
+  `/etc/resolv.conf`, as in the current bridge.
+- The Windows firewall must allow the port on private networks, as
+  already happens with the ffmpeg bridge.
+- No TLS and no authentication in v1: the channel is local (Windows host ↔
+  WSL on the same PC) and the design assumes this perimeter. Do not expose the
+  port outside the machine.
 
-## Registro de frame
+## Frame record
 
-O fluxo é uma sequência de registros, sem separadores. Cada registro
-é um **cabeçalho binário de tamanho fixo (28 bytes)** seguido do
-payload JPEG. Todos os inteiros são **little-endian**, sem padding
-além do declarado na tabela.
+The stream is a sequence of records, without separators. Each record
+is a **fixed-size binary header (28 bytes)** followed by the
+JPEG payload. All integers are **little-endian**, with no padding
+beyond that declared in the table.
 
-| Desloc. | Tamanho | Tipo   | Campo           | Valor na v1 |
-|--------:|--------:|--------|-----------------|-------------|
-| 0       | 4       | bytes  | `magic`         | `DRAW` (0x44 0x52 0x41 0x57) |
-| 4       | 2       | uint16 | `version`       | 1 |
-| 6       | 2       | uint16 | `reserved`      | 0 (ignorar na leitura) |
-| 8       | 8       | uint64 | `frame_id`      | contador por sessão, começa em 0 |
-| 16      | 8       | int64  | `capture_ts_us` | microssegundos, ver âncora abaixo |
-| 24      | 4       | uint32 | `payload_len`   | tamanho do JPEG em bytes |
-| 28      | `payload_len` | bytes | payload  | um frame JPEG completo |
+| Offset | Size | Type   | Field           | Value in v1 |
+|-------:|-----:|--------|-----------------|-------------|
+| 0      | 4    | bytes  | `magic`         | `DRAW` (0x44 0x52 0x41 0x57) |
+| 4      | 2    | uint16 | `version`       | 1 |
+| 6      | 2    | uint16 | `reserved`      | 0 (ignore on reading) |
+| 8      | 8    | uint64 | `frame_id`      | per-session counter, starts at 0 |
+| 16     | 8    | int64  | `capture_ts_us` | microseconds, see anchor below |
+| 24     | 4    | uint32 | `payload_len`   | size of the JPEG in bytes |
+| 28     | `payload_len` | bytes | payload  | one complete JPEG frame |
 
-Em Python, o cabeçalho é `struct.Struct("<4sHHQqI")`, 28 bytes.
+In Python, the header is `struct.Struct("<4sHHQqI")`, 28 bytes.
 
-Regras do fluxo:
+Stream rules:
 
-- `frame_id` é estritamente crescente dentro de uma sessão e nunca
-  reutilizado nela. Lacunas são possíveis e significam frames que a
-  captura descartou; o receptor **não** deve travar esperando um id.
-- O payload é exatamente um JPEG autocontido (começa em `FF D8`,
-  termina em `FF D9`). Resolução e qualidade são configuração do
-  ajudante, fora de banda na v1; o receptor descobre a resolução
-  decodificando o JPEG.
-- Não há checksum na v1: o TCP já garante integridade e ordem no
-  transporte, e o arquivo gravado (abaixo) é escrito e lido na mesma
-  máquina. Um payload com `magic` inválido no registro seguinte
-  indica corrupção ou dessincronia; o receptor da v1 **falha** com
-  erro de protocolo, sem tentar ressincronizar.
+- `frame_id` is strictly increasing within a session and never
+  reused in it. Gaps are possible and mean frames that
+  capture discarded; the receiver **must not** block waiting for an id.
+- The payload is exactly one self-contained JPEG (starts at `FF D8`,
+  ends at `FF D9`). Resolution and quality are helper configuration,
+  out of band in v1; the receiver discovers the resolution
+  by decoding the JPEG.
+- There is no checksum in v1: TCP already guarantees integrity and order in
+  transport, and the recorded file (below) is written and read on the same
+  machine. A payload with an invalid `magic` in the following record
+  indicates corruption or desynchronization; the v1 receiver **fails** with
+  a protocol error, without trying to resynchronize.
 
-## Âncora do timestamp
+## Timestamp anchor
 
-`capture_ts_us` é o relógio do ajudante no momento mais próximo que a
-pilha de captura permite da entrega do frame ao ajudante, expresso em
-microssegundos sobre um **relógio monotônico cuja época é o início do
-processo do ajudante** (no Windows, `QueryPerformanceCounter`
-convertido; em Python, `time.perf_counter_ns() // 1000` tem a mesma
-semântica).
+`capture_ts_us` is the helper's clock at the moment closest that the
+capture stack allows to the delivery of the frame to the helper, expressed in
+microseconds over a **monotonic clock whose epoch is the start of the
+helper process** (on Windows, `QueryPerformanceCounter`
+converted; in Python, `time.perf_counter_ns() // 1000` has the same
+semantics).
 
-Ressalvas, que são parte do contrato:
+Caveats, which are part of the contract:
 
-- Relógio monotônico não é relógio de parede: o valor só serve para
-  **diferenças dentro da mesma sessão do ajudante** (intervalos entre
-  frames, ordem, jitter da fonte).
-- **Relógios de máquinas diferentes não se comparam sem uma âncora
-  comum.** `t_receive_us - capture_ts_us` entre WSL e Windows mede o
-  deslocamento entre os dois relógios, não a latência. Latência ponta
-  a ponta se mede com a âncora comum do passo 0: um cronômetro de
-  milissegundos filmado pela própria câmera, cuja leitura viaja
-  dentro da imagem.
-- Se o ajudante reiniciar, a época muda e `frame_id` volta a 0. Uma
-  sessão nova é uma época nova; séries de sessões diferentes não se
-  misturam sem registrar a troca.
+- A monotonic clock is not a wall clock: the value only serves for
+  **differences within the same helper session** (intervals between
+  frames, order, source jitter).
+- **Clocks on different machines do not compare without a common
+  anchor.** `t_receive_us - capture_ts_us` between WSL and Windows measures the
+  offset between the two clocks, not latency. End-to-end latency
+  is measured with the common anchor of step 0: a millisecond
+  stopwatch filmed by the camera itself, whose reading travels
+  inside the image.
+- If the helper restarts, the epoch changes and `frame_id` returns to 0. A
+  new session is a new epoch; series from different sessions do not
+  mix without recording the change.
 
-## Arquivo gravado (replay)
+## Recorded file (replay)
 
-O formato de gravação é **a mesma sequência de registros** que o
-socket carrega: cabeçalho de 28 bytes + payload, repetidos, sem
-cabeçalho de arquivo e sem rodapé. Um arquivo gravado é, byte a byte,
-o que passou pelo socket.
+The recording format is **the same sequence of records** that the
+socket carries: a 28-byte header + payload, repeated, with no
+file header and no footer. A recorded file is, byte for byte,
+what passed through the socket.
 
-Consequência deliberada: o receptor não distingue a fonte. O mesmo
-código que lê o socket lê o arquivo, e qualquer análise (inclusive o
-passo 0) roda igual sobre a sessão ao vivo e sobre o replay.
+Deliberate consequence: the receiver does not distinguish the source. The same
+code that reads the socket reads the file, and any analysis (including
+step 0) runs the same over the live session and over the replay.
 
-- Fim de arquivo no meio de um registro: os registros completos
-  anteriores são válidos; o receptor reporta o rabo truncado como
-  erro, não como frame.
-- No socket, o fechamento da conexão encerra a iteração da mesma
-  forma que o fim do arquivo.
+- End of file in the middle of a record: the previous complete
+  records are valid; the receiver reports the truncated tail as
+  an error, not as a frame.
+- On the socket, closing the connection ends the iteration in the same
+  way as the end of the file.
 
-## Passo 0 (a medida que este protocolo habilita)
+## Step 0 (the measurement this protocol enables)
 
-Protocolo de medição da latência vidro→tinta, a rodar **duas vezes na
-mesma régua**: uma com a câmera via usbipd (antes) e uma com o
-ajudante (depois). Filma-se um cronômetro de milissegundos; para cada
-frame gravam-se `frame_id`, `t_capture_us` (relógio da fonte),
-`t_receive_us` (relógio do WSL) e, quando houver, `t_screen_ms` (a
-leitura do cronômetro dentro daquele frame). A ferramenta é
+Protocol for measuring glass→ink latency, to run **twice on the
+same yardstick**: once with the camera via usbipd (before) and once with the
+helper (after). A millisecond stopwatch is filmed; for each
+frame, `frame_id`, `t_capture_us` (source clock),
+`t_receive_us` (WSL clock) and, when present, `t_screen_ms` (the
+stopwatch reading inside that frame) are recorded. The tool is
 [`../tools/step0_latency.py`](../tools/step0_latency.py).
 
-A métrica que decide é o **jitter, p95 − mediana**, sobre **200+
-frames**; a mediana sozinha não decide. O erro de leitura da tela
-(±16 ms a 60 Hz) é comum às duas corridas e cancela na comparação.
+The metric that decides is **jitter, p95 − median**, over **200+
+frames**; the median alone does not decide. The screen reading error
+(±16 ms at 60 Hz) is common to both runs and cancels out in the comparison.
 
-## O que a v1 é e o que fica para depois
+## What v1 is and what is left for later
 
-A v1 é só isto: **fluxo de frames num sentido só, ajudante → WSL**,
-com o gravador e o replay acima. Explicitamente fora da v1:
+V1 is only this: **a one-way frame stream, helper → WSL**,
+with the recorder and replay above. Explicitly outside v1:
 
-- **Ack e controle de fluxo**: o ajudante envia na cadência da
-  captura; se o WSL atrasar, o TCP segura o excesso e a latência
-  aparece no passo 0, não some. Nenhum frame é confirmado.
-- **Canal de controle WSL → ajudante**: iniciar/parar, trocar
-  resolução e qualidade, pedir estado. Hoje isso é configuração
-  manual do ajudante.
-- **Injeção de cursor**: o esboço do ajudante já declara a injeção
-  via `SendInput` (coordenadas absolutas normalizadas com desktop
-  virtual), mas o transporte dos comandos de cursor **não** faz parte
-  deste protocolo na v1. Será um canal próprio quando a ponte de
-  cursor for construída.
-- **Troca de âncora de relógio** (o ajudante declarar sua época em
-  relógio de parede): só entra se um consumidor real precisar
-  comparar relógios entre máquinas sem o cronômetro filmado.
-- **Compressão alternativa** (H.264, JPEG por blocos): a v1 é JPEG
-  frame a frame, igual à ponte atual, para o replay ser trivial.
+- **Ack and flow control**: the helper sends at the
+  capture cadence; if WSL lags, TCP holds the excess and the latency
+  appears in step 0, it does not disappear. No frame is acknowledged.
+- **Control channel WSL → helper**: start/stop, change
+  resolution and quality, request state. Today this is
+  manual helper configuration.
+- **Cursor injection**: the helper sketch already declares injection
+  via `SendInput` (normalized absolute coordinates with a virtual
+  desktop), but transport of cursor commands **is not** part
+  of this protocol in v1. It will be a channel of its own when the
+  cursor bridge is built.
+- **Clock anchor exchange** (the helper declaring its epoch in
+  wall clock): it only enters if a real consumer needs
+  to compare clocks between machines without the filmed stopwatch.
+- **Alternative compression** (H.264, block JPEG): v1 is JPEG
+  frame by frame, the same as the current bridge, so that replay is trivial.
 
-Mudanças incompatíveis sobem `version`. Campos novos entram primeiro
-no `reserved` ou em versão nova de cabeçalho, nunca mudando o
-significado de um campo existente.
+Incompatible changes raise `version`. New fields enter first
+in `reserved` or in a new header version, never changing the
+meaning of an existing field.

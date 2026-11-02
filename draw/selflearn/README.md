@@ -1,14 +1,14 @@
-# draw/selflearn: o loop que aprende sozinho (Loop A, fatia 1)
+# draw/selflearn: the loop that learns on its own (Loop A, slice 1)
 
-O Draw em producao e so inferencia com pesos congelados. Este pacote
-e o comeco do loop fechado offline que muda isso: o app coleta o que
-ve, o monitor aponta onde a rede provavelmente errou, uma fila
-ordenada decide o que vale correcao, um teacher offline gera
-pseudo-rotulos com veto, e uma rodada de treino no estilo UniMatch
-V1 (teacher EMA, weak-to-strong) aprende com rotulados + pseudo.
-Aprender acontece entre sessoes, nunca dentro do app em tempo real.
+Draw in production is only inference with frozen weights. This package
+is the beginning of the closed offline loop that changes that: the app collects what
+it sees, the monitor points out where the network probably erred, an ordered
+queue decides what is worth correcting, an offline teacher generates
+pseudo-labels with veto, and a training round in the UniMatch
+V1 style (EMA teacher, weak-to-strong) learns from labeled + pseudo.
+Learning happens between sessions, never inside the app in real time.
 
-## O loop
+## The loop
 
 ```
 sessao ao vivo
@@ -32,73 +32,73 @@ sessao ao vivo
      confianca. Exporta ONNX e metrics.json
 ```
 
-## Modulos
+## Modules
 
-- `monitor.py` funcoes puras de suspeita e divergencia (etapa 0).
-- `collect.py` gravador de exemplos no formato de dataset (U1).
-- `select.py` fila de active learning com motivos por item (U2).
-- `teacher.py` agregacao temporal e pseudo-rotulo com veto (U3).
-- `tools/selflearn/train_round.py` a rodada de treino (U5 minimo).
-  `--smoke` prova a receita em CPU com dataset sintetico proprio:
-  perda supervisionada cai, EMA se move, ONNX exporta.
+- `monitor.py` pure suspicion and divergence functions (step 0).
+- `collect.py` example recorder in dataset format (U1).
+- `select.py` active learning queue with reasons per item (U2).
+- `teacher.py` temporal aggregation and pseudo-label with veto (U3).
+- `tools/selflearn/train_round.py` the training round (minimum U5).
+  `--smoke` proves the recipe on CPU with its own synthetic dataset:
+  supervised loss falls, EMA moves, ONNX exports.
 
-Testes: `tests/test_selflearn.py`.
+Tests: `tests/test_selflearn.py`.
 
-## Loop v2: as seis correcoes de 2026-11-02
+## Loop v2: the six corrections of 2026-11-02
 
-A segunda fatia do loop fecha as correcoes do Lucas sobre a
-primeira: o motor existia, faltava a materia-prima real e os
-portoes certos.
+The second slice of the loop closes Lucas's corrections on the
+first: the engine existed, what was missing was the real raw material and the
+right gates.
 
-- `session.py` (U1) coleta automatica de sessao, ligada no app:
-  cada geracao grava referencia (primeiro warp; no legado, o warp
-  da tecla C), warp final, canvas final e `manifest.json` com
-  sha256 dos arquivos e dos modelos, teclas com tempo relativo e
-  a telemetria de passadas. Local apenas
-  (`captures/sessions/<session_id>/`, fora do git); mesa de outra
-  pessoa exige consentimento.
-- `split.py` (U2) divisao treino x holdout **por sessao**,
-  deterministica por hash, estratificada para o holdout incluir
-  sessoes faceis e com paginas vazias. Guardas que levantam
-  `LeakageError`: sessao de holdout nao entra em treino, selecao
-  por incerteza, pseudo-rotulacao nem tuning de limiar; o rotulo
-  do holdout e independente (foto final - referencia, revisado a
-  mao, `draft_independent_label` + `guard_holdout_example`) e
-  pseudo-rotulo nunca entra nele. Correcao da predicao (com seu
-  vies de ancoragem) e treino, nunca holdout.
-- `gate.py` + `tools/selflearn/judge_gate.py` (U3) o portao de
-  promocao: quem decide e o replay real selado; IoU DIBCO sai
-  rotulado como diagnostico e nao promove ninguem (a rodada 4
-  venceu nele e perdeu no real). Abaixo do n minimo
-  pre-registrado (padrao: 5 sessoes e 25 paginas de holdout), o
-  veredito e INCONCLUSIVE com os n impressos - o replay de ~48
-  arquivos antigos ainda nao tem poder estatistico.
-- Telemetria de latencia (U0): `_PageCleanWorker` expoe
-  `telemetry_snapshot()` (submits, substituicoes latest-wins,
-  carimbos submit/inicio/fim/publicacao por passada) sem mudar
-  comportamento, e `tools/selflearn/measure_latency.py` mede as
-  etapas sobre warps gravados. A auditoria esta em
-  `docs/AUDITORIA_LATENCIA.md`: o consenso temporal da hipotese
-  nao roda no caminho padrao da main (o acumulador de voto foi
-  removido em 8b9ff45; o legado de janela 15 so roda com
-  `--legacy-ink`), e o piso medido da trabalhadora nao fecha os
-  2,3-3,5 s - falta o cronometro vidro-a-tinta na mesa.
+- `session.py` (U1) automatic session collection, wired into the app:
+  each generation records reference (first warp; in legacy, the warp
+  of the C key), final warp, final canvas and `manifest.json` with
+  sha256 of the files and of the models, keys with relative time and
+  pass telemetry. Local only
+  (`captures/sessions/<session_id>/`, outside git); another
+  person's desk requires consent.
+- `split.py` (U2) train x holdout split **by session**,
+  deterministic by hash, stratified so that the holdout includes
+  easy sessions and sessions with blank pages. Guards that raise
+  `LeakageError`: a holdout session does not enter training, uncertainty
+  selection, pseudo-labeling or threshold tuning; the
+  holdout label is independent (final photo - reference, reviewed by
+  hand, `draft_independent_label` + `guard_holdout_example`) and
+  a pseudo-label never enters it. Correction of the prediction (with its
+  anchoring bias) is training, never holdout.
+- `gate.py` + `tools/selflearn/judge_gate.py` (U3) the promotion
+  gate: who decides is the sealed real replay; DIBCO IoU comes out
+  labeled as diagnostic and promotes no one (round 4
+  won on it and lost on the real one). Below the pre-registered
+  minimum n (default: 5 sessions and 25 holdout pages), the
+  verdict is INCONCLUSIVE with the n values printed - the replay of ~48
+  old files still has no statistical power.
+- Latency telemetry (U0): `_PageCleanWorker` exposes
+  `telemetry_snapshot()` (submits, latest-wins replacements,
+  submit/start/end/publication timestamps per pass) without changing
+  behavior, and `tools/selflearn/measure_latency.py` measures the
+  stages over recorded warps. The audit is in
+  `docs/AUDITORIA_LATENCIA.md`: the temporal consensus of the hypothesis
+  does not run on the standard main path (the vote accumulator was
+  removed in 8b9ff45; the legacy 15-window only runs with
+  `--legacy-ink`), and the measured floor of the worker does not close the
+  2.3-3.5 s - the glass-to-ink stopwatch on the desk is missing.
 
-Testes do loop v2: `tests/test_selflearn_session.py`,
+Loop v2 tests: `tests/test_selflearn_session.py`,
 `tests/test_selflearn_split.py`, `tests/test_selflearn_gate.py`,
 `tests/test_page_clean_telemetry.py`.
 
-## O que NAO esta implementado ainda
+## What is NOT implemented yet
 
-- U4: interface de correcao minima (editar a predicao com pincel e
-  scribble, orcamento em minutos e gestos).
-- Stress set historico e pre-registro automatico da rodada no
-  portao (o portao atual julga primario/pior-grupo/n; promocao
-  de modelo continua sendo decisao humana).
-- PrevMatch-lite (voto de checkpoints de rodadas anteriores).
-- Loop B (teacher maior offline com destilacao por canal para o
-  aluno) e Loop C (pre-treino mascarado do backbone).
-- Integracao com o runner do Kaggle (tools/runner) e a subida
-  automatica do dataset versionado.
-- Deteccao de mudanca por tile no app (frente de tempo real do
-  adendo): o monitor aqui e offline, nao esta ligado ao app.
+- U4: minimal correction interface (edit the prediction with brush and
+  scribble, budget in minutes and gestures).
+- Historical stress set and automatic pre-registration of the round in the
+  gate (the current gate judges primary/worst-group/n; promotion
+  of a model remains a human decision).
+- PrevMatch-lite (vote of checkpoints from previous rounds).
+- Loop B (larger offline teacher with per-channel distillation to the
+  student) and Loop C (masked pre-training of the backbone).
+- Integration with the Kaggle runner (tools/runner) and the automatic
+  upload of the versioned dataset.
+- Per-tile change detection in the app (real-time front of the
+  addendum): the monitor here is offline, not wired to the app.

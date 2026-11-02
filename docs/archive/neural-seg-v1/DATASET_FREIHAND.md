@@ -1,138 +1,138 @@
-# FreiHAND no Kaggle — verificação para o modelo de segmentação do Draw
+# FreiHAND on Kaggle — verification for the Draw segmentation model
 
-Data da verificação: 2026-10-29. Verificado com a Kaggle CLI 2.2.5
-(`.venv/bin/kaggle`), sem baixar o dataset inteiro: listagem por
-paginação (`datasets files`, páginas de 200 arquivos, token de página)
-+ download de amostra de 3 arquivos para `/tmp/freihand-sample`
-(2 RGB + 1 máscara), + metadados oficiais (`datasets metadata`).
-Token do Kaggle NÃO está neste documento e não foi exibido em nenhum
-passo. Escopo deste agente: só este relatório e `tools/check_freihand.py`.
-Nenhum commit, push, merge, webcam, app ou integração.
+Verification date: 2026-10-29. Verified with Kaggle CLI 2.2.5
+(`.venv/bin/kaggle`), without downloading the whole dataset: paginated
+listing (`datasets files`, pages of 200 files, page token)
++ sample download of 3 files to `/tmp/freihand-sample`
+(2 RGB + 1 mask), + official metadata (`datasets metadata`).
+The Kaggle token is NOT in this document and was not displayed in any
+step. Scope of this agent: only this report and `tools/check_freihand.py`.
+No commit, push, merge, webcam, app, or integration.
 
-## Dataset verificado
+## Verified dataset
 
 - Kaggle: `danieldelro/freihand` — "FreiHAND - Hand Pose, Shape and
   Mask Dataset"
-- Tamanho total informado: 3.885.249.922 bytes (~3,88 GB)
-- Última atualização no Kaggle: 2022-03-03
-- Downloads: 1.756 · votos: 27 · usabilidade: 0,9375 · visualizações: 9.211
-- Origem: Universidade de Freiburg, grupo LMB (Zimmermann et al.,
+- Total size reported: 3,885,249,922 bytes (~3.88 GB)
+- Last update on Kaggle: 2022-03-03
+- Downloads: 1,756 · votes: 27 · usability: 0.9375 · views: 9,211
+- Origin: University of Freiburg, LMB group (Zimmermann et al.,
   ICCV 2019, "FreiHAND: A Dataset for Markerless Capture of Hand Pose
   and Shape from Single RGB Images").
 
-## Respostas diretas (fatos verificados, não suposições)
+## Direct answers (verified facts, not assumptions)
 
-### Há imagens RGB utilizáveis? SIM
-- `evaluation/rgb/00000000.jpg` e `training/rgb/00000000.jpg`
-  baixados e lidos: **224 × 224 × 3, JPEG, uint8**, cor real
-  (canais diferentes, médias por canal distintas).
-- Contagem verificada por listagem: `evaluation/rgb` = **3.960 arquivos**,
-  exatamente o número da descrição oficial para o split de avaliação.
-- Treino, pela descrição oficial: 32.560 amostras únicas, cada uma
-  processada de 4 formas para remover o fundo verde → 130.240 amostras
-  de treino. A listagem completa do split de treino ainda estava em
-  andamento ao fechar este relatório (12.200+ arquivos listados sem
-  erro); os números de treino acima são os da descrição oficial, não
-  uma contagem final própria — revalidar com
-  `tools/check_freihand.py` sobre a cópia local completa antes de
-  gerar o dataset sintético.
+### Are there usable RGB images? YES
+- `evaluation/rgb/00000000.jpg` and `training/rgb/00000000.jpg`
+  downloaded and read: **224 × 224 × 3, JPEG, uint8**, real color
+  (different channels, distinct per-channel means).
+- Count verified by listing: `evaluation/rgb` = **3,960 files**,
+  exactly the number in the official description for the evaluation split.
+- Training, per the official description: 32,560 unique samples, each
+  processed in 4 ways to remove the green background → 130,240 training
+  samples. The full listing of the training split was still in
+  progress when this report was closed (12,200+ files listed without
+  error); the training numbers above are those from the official
+  description, not a final count of my own — revalidate with
+  `tools/check_freihand.py` on the complete local copy before
+  generating the synthetic dataset.
 
-### Há máscaras reais de segmentação da mão? SIM — só no treino
-- `training/mask/00000000.jpg` baixado e lido: **224 × 224, JPEG,
-  cinza replicado nos 3 canais** (canais idênticos), com valores
-  essencialmente binários.
-- Amostra medida: 91,39% dos pixels = 0 (fundo), 7,60% dos pixels
-  > 127 (mão). Valores intermediários existem só em pequena
-  quantidade (1–7 e 248–254), típicos de artefato de compressão JPEG
-  na borda da mão. **Regra de uso: binarizar com limiar 127**
-  (`máscara = pixel > 127`); NÃO usar os valores JPEG crus como
-  rótulo multi-classe.
-- Contagem parcial verificada: **8.038 arquivos em `training/mask`**
-  já listados nas primeiras 12.200 entradas, antes do fim da listagem.
-- Avaliação: **não há máscara no split de avaliação nesta cópia**
-  (só `evaluation/rgb` nas entradas listadas). Isso bate com a
-  descrição original — as anotações de avaliação eram retidas para
-  o servidor de avaliação — mesmo que a página do projeto mencione
-  liberação posterior das anotações de avaliação no site original.
-  Consequência prática: o split de avaliação do FreiHAND serve para
-  inspeção visual, NÃO para métrica de mão com ground truth.
+### Are there real hand segmentation masks? YES — only in training
+- `training/mask/00000000.jpg` downloaded and read: **224 × 224, JPEG,
+  gray replicated across the 3 channels** (identical channels), with
+  essentially binary values.
+- Measured sample: 91.39% of pixels = 0 (background), 7.60% of pixels
+  > 127 (hand). Intermediate values exist only in small quantity
+  (1–7 and 248–254), typical of JPEG compression artifacts
+  on the hand edge. **Usage rule: binarize with threshold 127**
+  (`mask = pixel > 127`); do NOT use the raw JPEG values as a
+  multi-class label.
+- Partial count verified: **8,038 files in `training/mask`**
+  already listed in the first 12,200 entries, before the end of the listing.
+- Evaluation: **there is no mask in the evaluation split in this copy**
+  (only `evaluation/rgb` in the listed entries). This matches the
+  original description — the evaluation annotations were held back for
+  the evaluation server — even though the project page mentions
+  a later release of the evaluation annotations on the original site.
+  Practical consequence: the FreiHAND evaluation split serves for
+  visual inspection, NOT for hand metrics with ground truth.
 
-### Formato das máscaras
-- Arquivo: JPEG grayscale (3 canais iguais), 224 × 224, 1 máscara por
-  imagem RGB de treino com o **mesmo nome de arquivo**
+### Mask format
+- File: JPEG grayscale (3 identical channels), 224 × 224, 1 mask per
+  training RGB image with the **same file name**
   (`training/rgb/NNNNNNNN.jpg` ↔ `training/mask/NNNNNNNN.jpg`).
-- NÃO é máscara gerada a partir de mesh nesta cópia: é a máscara de
-  segmentação fornecida pelo dataset. Não há, nas entradas listadas
-  até aqui, arquivos de keypoints 3D, matriz K, escala ou mesh
-  (só `.jpg` e 2 arquivos `.json` na raiz, ainda não identificados —
-  verificar antes de prometer keypoints/mesh a partir desta cópia).
-  Keypoints/pose/mesh NÃO são necessários para o pipeline do Draw
-  (só RGB + máscara), então essa ausência não bloqueia o trabalho.
+- It is NOT a mask generated from a mesh in this copy: it is the
+  segmentation mask supplied by the dataset. There are not, in the entries
+  listed so far, any 3D keypoint, K matrix, scale, or mesh files
+  (only `.jpg` and 2 `.json` files at the root, not yet identified —
+  check before promising keypoints/mesh from this copy).
+  Keypoints/pose/mesh are NOT needed for the Draw pipeline
+  (only RGB + mask), so this absence does not block the work.
 
-### Resolução
-- RGB e máscara: **224 × 224 pixels** (confirmado na amostra e na
-  descrição oficial). Para o modelo alvo (entrada 512 × 512), as mãos
-  serão reamostradas na composição sintética — registrar o
-  reescalonamento no gerador, não assumir 224 como entrada final.
+### Resolution
+- RGB and mask: **224 × 224 pixels** (confirmed in the sample and in the
+  official description). For the target model (512 × 512 input), the hands
+  will be resampled in the synthetic composition — record the
+  rescaling in the generator, do not assume 224 as the final input.
 
-### Licença e termos — LEIA ANTES DE USAR EM PRODUTO
-- Licença no Kaggle: **CC BY-NC 4.0** (Atribuição–NãoComercial 4.0
-  Internacional).
-- Termos do dataset original, na descrição oficial: **"for research
-  purposes only", sem garantia, uso comercial proibido, e citação
-  obrigatória** do artigo (Zimmermann et al., ICCV 2019 — referência
-  completa na descrição do dataset).
-- Implicação direta para o Draw: treinar com FreiHAND é adequado
-  para esta etapa de pesquisa, com atribuição. **Se o Draw virar
-  produto comercial, o uso de um modelo treinado com FreiHAND é um
-  risco de licença a ser resolvido antes (trocar a fonte das mãos ou
-  obter autorização)** — este relatório não resolve essa questão
-  jurídica, só a registra. Não publicar as imagens FreiHAND
-  redistribuídas sem checar os termos originais.
-- Composições sintéticas que recortam mãos FreiHAND continuam sendo
-  derivadas do dataset: mesma licença, mesma restrição, atribuição
-  mantida no manifesto do dataset sintético.
+### License and terms — READ BEFORE USING IN A PRODUCT
+- License on Kaggle: **CC BY-NC 4.0** (Attribution–NonCommercial 4.0
+  International).
+- Terms of the original dataset, in the official description: **"for research
+  purposes only", no warranty, commercial use prohibited, and mandatory
+  citation** of the paper (Zimmermann et al., ICCV 2019 — full
+  reference in the dataset description).
+- Direct implication for Draw: training with FreiHAND is suitable
+  for this research stage, with attribution. **If Draw becomes a
+  commercial product, the use of a model trained with FreiHAND is a
+  license risk to be resolved beforehand (change the hand source or
+  obtain authorization)** — this report does not resolve that legal
+  question, it only records it. Do not publish redistributed FreiHAND
+  images without checking the original terms.
+- Synthetic compositions that cut out FreiHAND hands remain
+  derivatives of the dataset: same license, same restriction, attribution
+  kept in the synthetic dataset manifest.
 
-## Decisão
+## Decision
 
-**USAR O FreiHAND DIRETO, só para a máscara da mão no treino.**
-Nenhuma invenção de rótulo é necessária: a máscara real existe,
-é pareada por nome com o RGB e é binarizável com limiar 127.
+**USE FreiHAND DIRECTLY, only for the hand mask in training.**
+No label invention is needed: the real mask exists,
+is paired by name with the RGB, and is binarizable with threshold 127.
 
-- Usar: `training/rgb` + `training/mask` (treino) como matéria-prima
-  das mãos nas cenas sintéticas.
-- Não usar como métrica: `evaluation/rgb` (sem máscara nesta cópia).
-- Não prometer a partir desta cópia: keypoints 3D, matriz K, escala
-  e mesh — verificar os 2 `.json` da raiz antes de qualquer uso, e,
-  se mesh for necessária no futuro, buscar a fonte original de
-  Freiburg (mesma licença/termos), não esta cópia do Kaggle.
-- Alternativa registrada (só se a máscara direta falhar em algum
-  recorte): renderizar máscara a partir da mesh 3D do FreiHAND
-  original, ou usar EgoHands (máscaras de mão pixel a pixel, uso
-  para pesquisa — verificar licença antes de baixar). Nenhuma das
-  duas é necessária agora.
+- Use: `training/rgb` + `training/mask` (training) as raw material
+  for the hands in the synthetic scenes.
+- Do not use as a metric: `evaluation/rgb` (no mask in this copy).
+- Do not promise from this copy: 3D keypoints, K matrix, scale
+  and mesh — check the 2 root `.json` files before any use, and,
+  if a mesh is needed in the future, seek the original Freiburg source
+  (same license/terms), not this Kaggle copy.
+- Recorded alternative (only if the direct mask fails on some
+  cutout): render a mask from the 3D mesh of the original FreiHAND,
+  or use EgoHands (pixel-by-pixel hand masks, research
+  use — check the license before downloading). Neither is
+  needed now.
 
-## Regras obrigatórias para o gerador sintético (derivadas disto)
+## Mandatory rules for the synthetic generator (derived from this)
 
-1. **Split por mão base, nunca por arquivo.** O treino original tem
-   32.560 mãos únicas × 4 variantes de fundo. Dividir os arquivos
-   aleatoriamente colocaria a mesma mão (com outro fundo) em treino
-   e teste. Separar primeiro as fontes (mão base), depois gerar
-   variações por split (80/10/10 sugerido no escopo).
-2. **Índices recomeçam por split.** `00000000.jpg` existe em treino
-   e em avaliação e NÃO é a mesma mão. Não usar nome de arquivo
-   como chave de vazamento entre splits.
-3. **Máscara sempre com limiar 127** após leitura do JPEG; guardar a
-   máscara binarizada no dataset sintético, não o JPEG cru.
-4. **Regra de oclusão do escopo:** na composição, onde a mão cobre
-   papel ou traço, o rótulo final é `hand` (o que a câmera vê).
-   Guardar `ink_full_mask` separada, fora do treino, só para avaliar
-   memória futura.
-5. **Manifesto:** registrar fonte (`danieldelro/freihand`, Kaggle),
-   licença (CC BY-NC 4.0 + pesquisa somente), citação ICCV 2019,
-   seeds e IDs das mãos base por split.
+1. **Split by base hand, never by file.** The original training set has
+   32,560 unique hands × 4 background variants. Splitting the files
+   randomly would put the same hand (with a different background) in training
+   and test. Separate the sources (base hands) first, then generate
+   variations per split (80/10/10 suggested in the scope).
+2. **Indices restart per split.** `00000000.jpg` exists in training
+   and in evaluation and is NOT the same hand. Do not use file name
+   as a leak key between splits.
+3. **Mask always with threshold 127** after reading the JPEG; store the
+   binarized mask in the synthetic dataset, not the raw JPEG.
+4. **Scope occlusion rule:** in the composition, where the hand covers
+   paper or stroke, the final label is `hand` (what the camera sees).
+   Store `ink_full_mask` separately, outside training, only to evaluate
+   future memory.
+5. **Manifest:** record source (`danieldelro/freihand`, Kaggle),
+   license (CC BY-NC 4.0 + research only), ICCV 2019 citation,
+   seeds and base hand IDs per split.
 
-## Como reproduzir esta verificação
+## How to reproduce this verification
 
 ```bash
 # Listagem (sem baixar tudo)
@@ -146,6 +146,6 @@ Nenhuma invenção de rótulo é necessária: a máscara real existe,
 .venv/bin/python tools/check_freihand.py <raiz-completa-do-freihand>
 ```
 
-Saída do checker na amostra (3 arquivos): estrutura OK, pares
-treino 1/1, RGB 224×224×3, máscara 224×224 com 7,60% de cobertura
-após limiar 127.
+Checker output on the sample (3 files): structure OK, training pairs
+1/1, RGB 224×224×3, mask 224×224 with 7.60% coverage
+after threshold 127.

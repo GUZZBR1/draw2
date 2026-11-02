@@ -5,247 +5,248 @@
 <h1 align="center">Draw</h1>
 
 <p align="center">
-  Uma mesa digitalizadora sem mesa digitalizadora.
+  A digitizing tablet without a digitizing tablet.
 </p>
 
-Uma webcam aponta para a mesa. A pessoa escreve e desenha numa folha de papel comum, e o Draw reproduz o traço no digital, ao vivo. Sem caneta especial, sem superfície especial, sem folha-modelo impressa.
+A webcam points at the desk. The person writes and draws on an ordinary sheet of paper, and Draw reproduces the stroke in digital form, live. No special pen, no special surface, no printed template sheet.
 
-A visão completa do projeto fica em [VISION.md](VISION.md). Este documento cobre o estado atual, como rodar e como o sistema funciona por dentro.
+The full vision of the project is in [VISION.md](VISION.md). This document covers the current state, how to run it, and how the system works internally.
 
 ## Status
 
-O Draw roda em tempo real na mesa do autor. O detector do dia a dia é o modelo neural v3, com o detector clássico de reserva dentro do mesmo processo. O canvas digital já acumula tinta entre frames e trata a mão como região desconhecida.
+Draw runs in real time on the author's desk. The everyday detector is the v3 neural model, with the classic fallback detector inside the same process. The digital canvas already accumulates ink between frames and treats the hand as an unknown region.
 
-O limite honesto do momento é a generalização. A v3 foi julgada nos frames da mesa do autor e em datasets públicos de documentos. Ela nunca passou por um conjunto de teste de outra mesa, outra câmera e outra luz. Esse conjunto ainda não existe, e nenhum número deste README mede outro setup.
+The honest limit at the moment is generalization. v3 was judged on frames from the author's desk and on public document datasets. It has never been through a test set from another desk, another camera, and another light. That set does not exist yet, and no number in this README measures another setup.
 
-## Início rápido
+## Quick start
 
-Pré-requisitos: Python (o autor roda 3.12), uma webcam e as dependências do projeto.
+Prerequisites: Python (the author runs 3.12), a webcam, and the project's dependencies.
 
 ```bash
 pip install -r requirements.txt
 python tools/fetch_models.py
 ```
 
-O segundo comando baixa os modelos oficiais (detector de folha v3, modelo de tinta pagina->limpa e o modelo de mão do MediaPipe) para a pasta `models/`. Os binários não moram no git: eles são distribuídos pela Release `models-2026-11-02` deste repositório, e o script confere sha256 e tamanho de cada arquivo contra `models/MANIFEST.json` antes de instalar. Sem esse passo, o Draw roda nos fallbacks: detector clássico de folha e pilha antiga de tinta.
+The second command downloads the official models (sheet detector v3, page-to-clean ink model, and the MediaPipe hand model) into the `models/` folder. The binaries do not live in git: they are distributed by this repository's `models-2026-11-02` Release, and the script checks each file's sha256 and size against `models/MANIFEST.json` before installing. Without this step, Draw runs on the fallbacks: the classic sheet detector and the old ink stack.
 
-### Windows com WSL
+### Windows with WSL
 
-O WSL2 não enxerga a webcam do Windows por padrão. Nenhum `/dev/video*` existe dentro dele até a câmera ser anexada.
+WSL2 does not see the Windows webcam by default. No `/dev/video*` exists inside it until the camera is attached.
 
-O guia completo fica em [docs/SETUP_WINDOWS.md](docs/SETUP_WINDOWS.md). O caminho curto roda de dentro do WSL.
+The complete guide is in [docs/SETUP_WINDOWS.md](docs/SETUP_WINDOWS.md). The short path runs from inside WSL.
 
 ```bash
 bash scripts/setup_camera_wsl.sh
 python main.py
 ```
 
-O script prepara o usbipd, anexa a câmera ao WSL e confere o resultado. Ele também corrige o grupo `video` do usuário e religa os serviços de áudio que ele mesmo parou.
+The script prepares usbipd, attaches the camera to WSL, and checks the result. It also corrects the user's `video` group and turns back on the audio services that it stopped itself.
 
-Se algo falhar, rode o diagnóstico antes de mexer em outra coisa.
+If something fails, run the diagnosis before touching anything else.
 
 ```bash
 python main.py --check
 ```
 
-O `--check` valida o OpenCV, a existência de `/dev/video*`, a permissão do processo sobre o dispositivo e a leitura de um quadro real. Cada falha sai nomeada, com a correção na linha seguinte.
+`--check` validates OpenCV, the existence of `/dev/video*`, the process's permission over the device, and the reading of a real frame. Each failure comes out named, with the fix on the following line.
 
-### Linux com câmera USB
+### Linux with a USB camera
 
 ```bash
 python main.py
 ```
 
-### Com o detector neural
+### With the neural detector
 
-Os modelos oficiais são distribuídos pela Release `models-2026-11-02` e registrados em `models/MANIFEST.json` (sha256, tamanho, a régua que aprovou cada um e a data). Um clone novo baixa tudo com um comando, sem nenhuma credencial:
+The official models are distributed by the `models-2026-11-02` Release and registered in `models/MANIFEST.json` (sha256, size, the ruler that approved each one, and the date). A fresh clone downloads everything with a single command, with no credentials:
 
 ```bash
 python tools/fetch_models.py
 python main.py
 ```
 
-Sem o fetch, o app sobe nos fallbacks e avisa no log: detector clássico de folha no lugar do neural v3, e pilha antiga de tinta no lugar do modelo pagina->limpa. Para usar um modelo próprio, o caminho continua existindo:
+Without the fetch, the app starts on the fallbacks and warns in the log: the classic sheet detector in place of neural v3, and the old ink stack in place of the page-to-clean model. To use your own model, the path still exists:
 
 ```bash
 python main.py --neural models/draw_seg_v3_dyn.onnx
 ```
 
-## Uso
+## Usage
 
-| Flag | O que faz |
+| Flag | What it does |
 |---|---|
-| `--source N` ou URL | Webcam local por índice (padrão 0) ou stream MJPEG por URL |
-| `--neural [modelo.onnx]` | Detector neural como primário, com o clássico de reserva. Sem caminho, lê `DRAW_NEURAL_MODEL` |
-| `--ink-model [modelo.onnx]` | Modelo aprendido de tinta como fonte da máscara. Sem caminho, lê `DRAW_INK_MODEL`. Sem arquivo ou com erro de carga, o app avisa uma vez e segue com a heurística |
-| `--hand-model [modelo.task]` | Máscara de mão do MediaPipe para o canvas acumulativo. Sem caminho, lê `DRAW_HAND_MODEL` ou `models/hand_landmarker.task` |
-| `--markers` | Modo opcional com a folha-modelo impressa e marcadores ArUco |
-| `--check` | Valida a câmera porta por porta e sai, sem abrir janela |
-| `--save-dir pasta` | Pasta das capturas. O padrão é `captures` |
+| `--source N` or URL | Local webcam by index (default 0) or MJPEG stream by URL |
+| `--neural [model.onnx]` | Neural detector as primary, with the classic one as fallback. Without a path, it reads `DRAW_NEURAL_MODEL` |
+| `--ink-model [model.onnx]` | Learned ink model as the source of the mask. Without a path, it reads `DRAW_INK_MODEL`. Without a file or with a load error, the app warns once and continues with the heuristic |
+| `--hand-model [model.task]` | MediaPipe hand mask for the accumulative canvas. Without a path, it reads `DRAW_HAND_MODEL` or `models/hand_landmarker.task` |
+| `--markers` | Optional mode with the printed template sheet and ArUco markers |
+| `--check` | Validates the camera port by port and exits, without opening a window |
+| `--save-dir folder` | Captures folder. The default is `captures` |
 
-A variável `DRAW_ORT_THREADS` troca o número de threads da sessão ONNX sem tocar no código. O padrão é 4, medido na máquina do autor.
+The variable `DRAW_ORT_THREADS` changes the number of threads of the ONNX session without touching the code. The default is 4, measured on the author's machine.
 
-A máscara de mão é opcional e pede um pacote fora da instalação padrão.
+The hand mask is optional and requires a package outside the standard installation.
 
 ```bash
 pip install mediapipe
 ```
 
-Sem o pacote ou sem o modelo, o app roda sem a máscara e avisa uma vez.
+Without the package or without the model, the app runs without the mask and warns once.
 
-Teclas dentro do app:
+Keys inside the app:
 
-- `s` salva o canvas digital como PNG em `captures/`
-- `f` salva o frame cru atual em `captures/frames/`
-- `g` liga ou desliga a captura automática, um frame cru a cada 10 quadros
-- `q` ou `Esc` sai
+- `s` saves the digital canvas as PNG in `captures/`
+- `f` saves the current raw frame in `captures/frames/`
+- `g` turns automatic capture on or off, one raw frame every 10 frames
+- `q` or `Esc` exits
 
-O modo padrão é o sem marcadores, em qualquer folha ou página de caderno. Ele é o padrão desde a v0.2. O modo com marcadores pede a folha-modelo gerada por `python template/generate_template.py`.
+The default mode is the markerless one, on any sheet or notebook page. It has been the default since v0.2. The marker mode requires the template sheet generated by `python template/generate_template.py`.
 
-## Como funciona
 
-O pipeline tem quatro etapas por frame. A câmera entrega o frame. Um detector encontra a folha e devolve os quatro cantos. A homografia retifica a folha para a vista de cima, em 850 por 1200 px. A etapa de tinta separa o traço do papel nessa vista e atualiza o canvas digital.
+## How it works
 
-### Detecção neural
+The pipeline has four steps per frame. The camera delivers the frame. A detector finds the sheet and returns the four corners. The homography rectifies the sheet to the top view, at 850 by 1200 px. The ink step separates the stroke from the paper in this view and updates the digital canvas.
 
-O detector primário é um SegFormer-B0 exportado para ONNX. Ele devolve duas saídas. Um logit de presença diz se há papel na cena. Uma máscara diz onde o papel está. O quadrilátero da folha sai do maior contorno da máscara, com escada de epsilon, reajuste de cada aresta como reta e refino subpixel nos cantos. Uma memória de arestas guarda a última reta confiável de cada lado. Quando a mão cobre uma aresta, a reta herdada segura o canto no lugar em vez de projetar a borda do braço.
+### Neural detection
 
-Quando o modelo não vê folha no frame, o detector clássico assume aquele frame. Quando o modelo vê folha e o ajuste do quadrilátero falha, o retângulo de área mínima da máscara entra como reserva.
+The primary detector is a SegFormer-B0 exported to ONNX. It returns two outputs. A presence logit says whether there is paper in the scene. A mask says where the paper is. The sheet's quadrilateral comes from the largest contour of the mask, with an epsilon ladder, refitting each edge as a line, and subpixel refinement at the corners. An edge memory keeps the last reliable line of each side. When the hand covers an edge, the inherited line holds the corner in place instead of projecting the arm's border.
 
-O ONNX dinâmico aceita qualquer resolução de entrada. O app roda esse arquivo a 384 por 384. O ONNX original, de formato fixo, impõe os 512 por 512 dele. A seção de desempenho traz os números dessa troca.
+When the model sees no sheet in the frame, the classic detector takes over that frame. When the model sees a sheet and the quadrilateral fitting fails, the mask's minimum-area rectangle enters as a fallback.
 
-### Detecção clássica
+The dynamic ONNX accepts any input resolution. The app runs this file at 384 by 384. The original ONNX, of fixed format, imposes its own 512 by 512. The performance section brings the numbers of this trade-off.
 
-O detector clássico é visão computacional em OpenCV, em duas etapas.
+### Classic detection
 
-A primeira etapa propõe candidatos por geometria. O frame passa por Canny e pela árvore completa de contornos. Um contorno vira candidato quando fecha um quadrilátero convexo, com área de pelo menos 12% do frame e razão de aspecto entre 0,4 e 2,5. A aproximação do polígono usa uma escada de epsilons de 0,01 a 0,05, porque cantos arredondados e a lombada de um caderno não fecham num epsilon só. Os cantos aceitos ganham refino subpixel. No loop do app, a detecção roda de forma espaçada e os cantos passam por estabilização temporal.
+The classic detector is computer vision in OpenCV, in two steps.
 
-A segunda etapa é um portão de textura. Ele mede o interior encolhido de cada candidato e devolve um de três vereditos.
+The first step proposes candidates by geometry. The frame passes through Canny and the full contour tree. A contour becomes a candidate when it closes a convex quadrilateral, with an area of at least 12% of the frame and an aspect ratio between 0.4 and 2.5. The polygon approximation uses an epsilon ladder from 0.01 to 0.05, because rounded corners and a notebook's spine do not close on a single epsilon. The accepted corners gain subpixel refinement. In the app loop, detection runs spaced out and the corners go through temporal stabilization.
 
-- `paper` quando o interior parece papel
-- `blank_maybe` quando o candidato é branco o bastante, mas liso demais para afirmar papel
-- rejeitado quando o candidato nem branco o bastante é
+The second step is a texture gate. It measures the shrunken interior of each candidate and returns one of three verdicts.
 
-O portão mede a fração de branco, a densidade de bordas internas e a variância do Laplaciano. Um candidato vira `paper` quando a fração de branco passa de 0,5, a variância do Laplaciano passa de 30 e uma de duas condições de textura vale. A densidade de bordas precisa de pelo menos 0,03, ou a variância do Laplaciano precisa de pelo menos 200. Um candidato reprovado não encerra a busca. O contorno seguinte ainda pode ser a folha.
+- `paper` when the interior looks like paper
+- `blank_maybe` when the candidate is white enough, but too smooth to assert paper
+- rejected when the candidate is not even white enough
 
-Um candidato `blank_maybe` recebe tratamento mais duro no app. Ele precisa do dobro de detecções consistentes para travar, 6 em vez de 3. Enquanto a trava vem desse veredito, a tela mostra o aviso de baixa confiança.
+The gate measures the white fraction, the internal edge density, and the Laplacian variance. A candidate becomes `paper` when the white fraction passes 0.5, the Laplacian variance passes 30, and one of two texture conditions holds. The edge density needs at least 0.03, or the Laplacian variance needs at least 200. A failed candidate does not end the search. The next contour may still be the sheet.
 
-O portão existe por um histórico medido. A versão só geométrica aceitava qualquer quadrilátero convexo grande. Numa auditoria com 10 cenas sem papel nenhum, ela disparou em 6. Tapete de mesa, caixa de papelão, monitor e bandeja branca viraram folha. O portão de textura cortou esses casos nas cenas medidas, sem modelo nenhum. Os limiares atuais são calibração de laboratório e precisam ser refeitos com capturas reais.
+A `blank_maybe` candidate receives harsher treatment in the app. It needs twice as many consistent detections to lock, 6 instead of 3. While the lock comes from this verdict, the screen shows the low-confidence warning.
 
-### Tinta e canvas
+The gate exists because of a measured history. The geometry-only version accepted any large convex quadrilateral. In an audit with 10 scenes with no paper at all, it fired on 6. A desk mat, a cardboard box, a monitor, and a white tray became a sheet. The texture gate cut these cases in the measured scenes, with no model at all. The current thresholds are laboratory calibration and need to be redone with real captures.
 
-O caminho padrão de tinta é o modelo página→limpa: uma U-Net leve (`models/page_clean_unet.onnx`, o modelo w8) que recebe a folha retificada e devolve a máscara de tinta, separando o traço da pauta, da textura do papel e da sombra. O binário é distribuído pela Release `models-2026-11-02` e registrado em `models/MANIFEST.json`; um clone novo o baixa com `python tools/fetch_models.py`. O modelo roda numa thread própria. A tinta nova aparece primeiro como camada provisória, mais clara e só na tela; o canvas confirmado é a união das máscaras que o voto entre passadas confirma, e é ele que alimenta o cursor e os snapshots. O w8 é o modelo vigente, não o teto: aprovado pela régua de replay em laboratório, segue provisório até um candidato melhor passar pela mesma régua e pelo teste ao vivo na mesa do autor.
+### Ink and canvas
 
-Sem o arquivo do modelo, ou se a carga dele falhar, o app avisa apontando o fetch e cai para a pilha antiga de tinta — o mesmo caminho da flag `--legacy-ink`. É essa pilha que os parágrafos seguintes descrevem.
+The default ink path is the page→clean model: a lightweight U-Net (`models/page_clean_unet.onnx`, the w8 model) that takes the rectified sheet and returns the ink mask, separating the stroke from the ruling, the paper texture, and shadow. The binary is distributed via the `models-2026-11-02` Release and registered in `models/MANIFEST.json`; a fresh clone downloads it with `python tools/fetch_models.py`. The model runs on its own thread. New ink first appears as a provisional layer, lighter and on screen only; the confirmed canvas is the union of the masks that the vote across passes confirms, and it is what feeds the cursor and the snapshots. The w8 is the current model, not the ceiling: approved by the lab replay ruler, it remains provisional until a better candidate passes the same ruler and the live test on the author's desk.
 
-Um limiar adaptativo separa a tinta do papel na folha retificada. Um veto separável roda junto. Um pixel só vira tinta quando está pelo menos 6 níveis abaixo das medianas da linha e da coluna inteiras dele. O veto mata a pauta do caderno e a textura do papel, que o limiar sozinho marcava como tinta.
+Without the model file, or if loading it fails, the app warns pointing to the fetch and falls back to the old ink stack — the same path as the `--legacy-ink` flag. The following paragraphs describe that stack.
 
-O canvas da pilha antiga não é uma foto do frame atual. Ele acumula evidência com histerese sobre uma janela de 15 frames. Um pixel entra na tinta com fração de amostras visíveis de 0,45 e sai com 0,20, com um mínimo de 4 amostras visíveis. O traço sobrevive à mão passando por cima. A borracha também funciona por esse caminho. A tinta apagada some do canvas depois de amostras limpas visíveis o bastante, não no frame seguinte.
+An adaptive threshold separates the ink from the paper on the rectified sheet. A separable veto runs alongside. A pixel only becomes ink when it is at least 6 levels below the medians of its entire row and column. The veto kills the notebook's ruling and the paper's texture, which the threshold alone marked as ink.
 
-Com a máscara de mão ligada, a região sob a mão vira desconhecida. Ela não ganha nem perde tinta enquanto está coberta.
+The old-stack canvas is not a photo of the current frame. It accumulates evidence with hysteresis over a 15-frame window. A pixel enters ink with a visible-sample fraction of 0.45 and leaves with 0.20, with a minimum of 4 visible samples. The stroke survives the hand passing over it. The eraser also works through this path. Erased ink disappears from the canvas after enough visible clean samples, not on the following frame.
 
-A flag `--ink-model` injeta um ONNX próprio na pilha antiga; sem ela, vale o caminho descrito acima.
+With the hand mask on, the region under the hand becomes unknown. It neither gains nor loses ink while it is covered.
 
-## Desempenho medido
+The `--ink-model` flag injects a custom ONNX into the old stack; without it, the path described above applies.
 
-Números medidos em 2026-10-29 no Ryzen 7 7700X do autor, com o pipeline completo do app sobre frames reais. Medianas por frame.
+## Measured performance
 
-| Configuração | Tempo por frame | Taxa |
+Numbers measured on 2026-10-29 on the author's Ryzen 7 7700X, with the app's full pipeline over real frames. Medians per frame.
+
+| Configuration | Time per frame | Rate |
 |---|---|---|
-| Sessão padrão do ONNX Runtime, modelo fixo a 512 | 212,8 ms | 4,7 fps |
-| 4 threads intra-op, modelo fixo a 512 | 183,5 ms | 5,4 fps |
-| 4 threads intra-op, modelo dinâmico a 384 | 127,2 ms | 7,9 fps |
+| Standard ONNX Runtime session, fixed model at 512 | 212.8 ms | 4.7 fps |
+| 4 intra-op threads, fixed model at 512 | 183.5 ms | 5.4 fps |
+| 4 intra-op threads, dynamic model at 384 | 127.2 ms | 7.9 fps |
 
-A sessão sozinha explica quase tudo. No padrão do ONNX Runtime, `session.run` marcava 248 ms no mesmo tensor. Com 4 threads, marca 122 ms a 512 e 58,3 ms a 384. Com 16 threads, piora para 210 ms. INT8 dinâmico foi medido e rejeitado. A qualidade dele se manteve, mas o tempo subiu para 366 ms, três vezes o FP32 dessa máquina.
+The session alone explains almost everything. On the ONNX Runtime default, `session.run` marked 248 ms on the same tensor. With 4 threads, it marks 122 ms at 512 and 58.3 ms at 384. With 16 threads, it worsens to 210 ms. Dynamic INT8 was measured and rejected. Its quality held, but the time rose to 366 ms, three times the FP32 of this machine.
 
-A troca de resolução custou pouco em qualidade. Nos 49 frames do harness, a máscara a 384 tem IoU médio de 0,984 contra a máscara a 512. Nenhum veredito de presença trocou nos positivos. As três frames de uma caixa branca sobre a mesa, que a 512 eram falso positivo fraco, a 384 viram negativo.
+The resolution trade-off cost little in quality. On the 49 harness frames, the mask at 384 has a mean IoU of 0.984 against the mask at 512. No presence verdict changed on the positives. The three frames of a white box on the desk, which at 512 were a weak false positive, at 384 became negative.
 
-## Treino do detector
+## Detector training
 
-Todo o treino roda no Kaggle, em GPU. Os frames reais do autor ficam em datasets privados e nunca entram neste repositório.
+All training runs on Kaggle, on GPU. The author's real frames stay in private datasets and never enter this repository.
 
-A mistura da v3 combina quatro fontes. MIDV-2020 photos traz 1.000 fotos reais de documentos com cantos anotados. SmartDoc 2015 traz 24.889 frames com gabarito. O dataset school-notebooks-RU traz páginas de caderno. Os 49 frames da mesa do autor entram com rótulo de presença para todos e polígonos desenhados à mão para 11 deles.
+The v3 mixture combines four sources. MIDV-2020 photos brings 1,000 real photos of documents with annotated corners. SmartDoc 2015 brings 24,889 frames with ground truth. The school-notebooks-RU dataset brings notebook pages. The author's 49 desk frames enter with a presence label for all of them and hand-drawn polygons for 11 of them.
 
-O detector clássico chegou a ser o professor planejado para rotular os frames. Nos 49 frames reais ele rotulou zero, porque o caderno sai cortado pela borda superior do quadro e os quatro cantos nunca aparecem juntos. O gabarito humano substituiu o professor.
+The classic detector was once the planned teacher for labeling the frames. On the 49 real frames it labeled zero, because the notebook leaves cropped by the frame's top edge and the four corners never appear together. Human ground truth replaced the teacher.
 
-O harness `tools/eval_real_frames.py` é o portão de qualquer modelo novo. Nenhum modelo entra no app sem passar por ele. A v3 marca presença em 43 de 43 positivos e 0 falsos positivos nos 6 negativos. Nas 11 anotações, o IoU de máscara é 0,962 de média e 0,841 de mínimo a 512. Na configuração de produção, a 384, presença é 49 de 49 e o IoU é 0,959 de média e 0,851 de mínimo.
+The harness `tools/eval_real_frames.py` is the gate for any new model. No model enters the app without passing it. v3 marks presence on 43 of 43 positives and 0 false positives on the 6 negatives. On the 11 annotations, the mask IoU is 0.962 on average and 0.841 at minimum at 512. In the production configuration, at 384, presence is 49 of 49 and the IoU is 0.959 on average and 0.851 at minimum.
 
-O kernel da v3 levou 44,7 minutos numa T4. O kernel da v2 levou 3 horas e 51 minutos. A diferença não veio de dados menores. Veio de pipeline assíncrono com workers, precisão mista, batch 16 e uma agenda de 20 épocas com parada por régua, no lugar de 40 épocas fixas.
+The v3 kernel took 44.7 minutes on a T4. The v2 kernel took 3 hours and 51 minutes. The difference did not come from smaller data. It came from an async pipeline with workers, mixed precision, batch 16, and a 20-epoch schedule with stopping by ruler, instead of 40 fixed epochs.
 
-## Limites conhecidos
+## Known limits
 
-- Uma folha totalmente em branco e lisa mede igual a qualquer retângulo branco e liso, como uma bandeja branca. Nenhuma estatística de interior separa os dois casos para o detector clássico. Quem separa é identidade de objeto aprendida, e é por isso que o neural é o primário.
-- A v3 nunca foi julgada na mesa de outra pessoa. O conjunto de teste externo é a régua que falta para chamar o detector de geral.
-- A ponte de captura do Windows em `bridge/` nunca foi testada numa máquina real.
-- Traço fino de 1 a 3 px sofre com o jitter da retificação. A média medida é de 5,4 px por amostra no replay do autor. O canvas acumulativo reduz o dano, mas não elimina a causa.
+- A totally blank and smooth sheet measures the same as any white and smooth rectangle, like a white tray. No interior statistic separates the two cases for the classic detector. What separates them is learned object identity, and that is why the neural one is the primary.
+- v3 has never been judged on another person's desk. The external test set is the missing ruler for calling the detector general.
+- The Windows capture bridge in `bridge/` has never been tested on a real machine.
+- A fine stroke of 1 to 3 px suffers from rectification jitter. The measured mean is 5.4 px per sample in the author's replay. The accumulative canvas reduces the damage, but does not eliminate the cause.
 
-## Arquitetura
+## Architecture
 
-- `draw/` é o pacote principal. `app.py` tem o loop da webcam e as validações de câmera. `view.py` tem a composição da janela (câmera e canvas lado a lado) e os quadros de aviso. `paper.py` tem a detecção clássica, o portão de textura e a homografia. `neural.py` tem o detector neural por ONNX, com presença, máscara e quadrilátero. `page_clean.py` tem a tinta pelo modelo página→limpa. `ink.py` tem a heurística de tinta e o canvas acumulativo. `hand.py` tem a máscara de mão do MediaPipe. `fusion.py` tem a fusão da ponta da caneta (protótipo com contrato testado; o app ainda não o usa). `manifest.py` confere o sha256 dos modelos contra `models/MANIFEST.json`. `config.py` guarda o tamanho da folha retificada e os dados dos marcadores. `selflearn/` tem o loop de aprendizado entre sessões (coleta de sessão, monitor, seleção, professor, divisão treino e holdout por sessão e o portão de promoção). O extrator do modelo aprendido de tinta (`ink_model.py`) não está neste repositório: o caminho dele fica atrás de `--ink-model`.
-- `template/` tem o gerador da folha-modelo imprimível, usado só pelo modo `--markers`. O PNG gerado não entra no versionamento.
-- `bridge/` tem a ponte de captura no Windows. Um `ffmpeg.exe` no Windows serve a webcam como stream MJPEG e o Draw consome pelo `--source`. O passo a passo fica em [bridge/README.md](bridge/README.md).
-- `scripts/` tem os scripts de instalação. Hoje guarda `setup_camera_wsl.sh`, o instalador da câmera do WSL.
-- `tests/` tem os testes sem webcam: `selftest.py` valida detecção, homografia, extração de tinta e o portão de textura em cenas sintéticas; os `test_*.py` cobrem o adaptador ONNX (com modelos minúsculos de verdade), a tinta, o `page_clean`, o manifesto, a composição de vista e o estado de sessão do app. `pytest` roda tudo.
-- `tools/` tem as ferramentas de apoio, como scripts planos de operador chamados por caminho. `label_frames.py` rotula frames capturados. `eval_real_frames.py` é o harness dos frames reais, o portão de qualquer modelo neural. `cadence_fusion.py` é a bancada de cadência da fusão da ponta. As famílias com imports internos se agrupam em `tools/runner/` (ciclo de experimentos) e `tools/selflearn/` (rodada de treino, juiz do portão e medição de latência do loop).
-- `training/` e `notebooks/` são a rota de treino do detector: `training/train.py` é o treinador e o notebook é o kernel do Kaggle que o executa com `training/` como input.
-- `models/` guarda o registro de integridade dos binários em `MANIFEST.json`. Modelo local (`.onnx`) não entra no versionamento.
-- `verification/` é o registro da verificação formal limitada da v0. Ele guarda a skill do projeto e o script que prova propriedades da homografia com sondas numéricas. É um registro histórico de uma etapa concluída, não uma etapa do pipeline.
-- `docs/` tem a instalação (guia do Windows com WSL) e o arquivo de documentos de eras concluídas (`docs/archive/`, com índice próprio: auditoria e análise de 2026-10-31, a era da segmentação v1 e o resumo da noite de 2026-10-30).
-- `main.py` é o ponto de entrada. Ele só chama o app.
-- `VISION.md` é o documento de visão do projeto.
+- `draw/` is the main package. `app.py` has the webcam loop and the camera validations. `view.py` has the window composition (camera and canvas side by side) and the warning frames. `paper.py` has the classic detection, the texture gate, and the homography. `neural.py` has the neural detector via ONNX, with presence, mask, and quadrilateral. `page_clean.py` has the ink via the page→clean model. `ink.py` has the ink heuristic and the accumulative canvas. `hand.py` has the MediaPipe hand mask. `fusion.py` has the pen-tip fusion (prototype with a tested contract; the app does not use it yet). `manifest.py` checks the sha256 of the models against `models/MANIFEST.json`. `config.py` keeps the size of the rectified sheet and the marker data. `selflearn/` has the cross-session learning loop (session collection, monitor, selection, teacher, train and holdout split by session, and the promotion gate). The extractor of the learned ink model (`ink_model.py`) is not in this repository: its path is behind `--ink-model`.
+- `template/` has the generator of the printable template sheet, used only by the `--markers` mode. The generated PNG does not enter versioning.
+- `bridge/` has the Windows capture bridge. An `ffmpeg.exe` on Windows serves the webcam as an MJPEG stream and Draw consumes it via `--source`. The step by step is in [bridge/README.md](bridge/README.md).
+- `scripts/` has the installation scripts. Today it keeps `setup_camera_wsl.sh`, the WSL camera installer.
+- `tests/` has the webcam-free tests: `selftest.py` validates detection, homography, ink extraction, and the texture gate on synthetic scenes; the `test_*.py` files cover the ONNX adapter (with truly tiny models), the ink, `page_clean`, the manifest, the view composition, and the app's session state. `pytest` runs everything.
+- `tools/` has the support tools, like plain operator scripts called by path. `label_frames.py` labels captured frames. `eval_real_frames.py` is the real-frame harness, the gate for any neural model. `cadence_fusion.py` is the cadence bench for tip fusion. The families with internal imports group in `tools/runner/` (experiment cycle) and `tools/selflearn/` (training round, gate judge, and loop latency measurement).
+- `training/` and `notebooks/` are the detector's training route: `training/train.py` is the trainer and the notebook is the Kaggle kernel that runs it with `training/` as input.
+- `models/` keeps the integrity record of the binaries in `MANIFEST.json`. A local model (`.onnx`) does not enter versioning.
+- `verification/` is the record of the limited formal verification of v0. It keeps the project's skill and the script that proves homography properties with numeric probes. It is a historical record of a completed step, not a pipeline step.
+- `docs/` has the installation (the Windows guide with WSL) and the archive of documents from completed eras (`docs/archive/`, with its own index: the 2026-10-31 audit and analysis, the v1 segmentation era, and the 2026-10-30 night summary).
+- `main.py` is the entry point. It only calls the app.
+- `VISION.md` is the project's vision document.
 
-O que não mora mais aqui: os documentos de eras concluídas saíram de `docs/` para `docs/archive/`; a bancada de cadência saiu de `tests/` (onde o nome fingia ser teste) para `tools/`; e scripts de correção feitos para um lote só foram removidos, com o histórico preservado no git.
+What no longer lives here: the documents from completed eras left `docs/` for `docs/archive/`; the cadence bench left `tests/` (where the name pretended to be a test) for `tools/`; and one-batch fix scripts were removed, with the history preserved in git.
 
-## Desenvolvimento
+## Development
 
-Sem webcam por perto, o pipeline inteiro se valida com cenas sintéticas.
+Without a webcam nearby, the entire pipeline validates with synthetic scenes.
 
 ```bash
 pip install -r requirements-dev.txt   # pytest, ruff, onnx (fixtures)
-pytest                                 # suíte inteira, ~6 s
+pytest                                 # entire suite, ~6 s
 python tests/selftest.py
 ```
 
-O selftest roda os casos com marcadores, sem marcadores, de folha aninhada e do portão de textura. Ele imprime o erro máximo de canto e o recall de tinta de cada caso. Todos precisam passar antes de qualquer publicação.
+The selftest runs the marker, markerless, nested-sheet, and texture-gate cases. It prints the maximum corner error and the ink recall of each case. All must pass before any publication.
 
-A verificação formal limitada roda com o comando abaixo.
+The limited formal verification runs with the command below.
 
 ```bash
 python verification/run_verification.py
 ```
 
-Para rotular frames capturados:
+To label captured frames:
 
 ```bash
 python tools/label_frames.py captures/frames dataset/rotulos
 ```
 
-A saída é um `labels.json` com os frames rotulados e os rejeitados. Cada frame rotulado ganha uma imagem de revisão na subpasta `overlays`. Os frames de origem nunca são modificados.
+The output is a `labels.json` with the labeled and rejected frames. Each labeled frame gains a review image in the `overlays` subfolder. The source frames are never modified.
 
 ## Roadmap
 
-Feito:
+Done:
 
-- Captura em tempo real, com folha retificada, tinta extraída e canvas digital ao vivo
-- Fonte de vídeo flexível, por índice local ou por URL de stream
-- Câmera do Windows anexada ao WSL pelo script de instalação
-- Diagnóstico de câmera porta por porta com `--check`
-- Detecção sem marcadores como modo padrão
-- Portão de textura com veredito de baixa confiança para folha lisa
-- Segmentação de papel treinada no Kaggle, com sinal de presença, nas versões v1, v2 e v3
-- Datasets reais de documentos e frames da mesa do autor no treino
-- Canvas acumulativo com histerese e máscara de mão opcional
-- Pacote de desempenho com threads fixadas e modelo dinâmico a 384
+- Real-time capture, with a rectified sheet, extracted ink, and a live digital canvas
+- Flexible video source, by local index or by stream URL
+- Windows camera attached to WSL by the installation script
+- Camera diagnosis port by port with `--check`
+- Markerless detection as the default mode
+- Texture gate with a low-confidence verdict for a smooth sheet
+- Paper segmentation trained on Kaggle, with a presence signal, in versions v1, v2, and v3
+- Real document datasets and the author's desk frames in training
+- Accumulative canvas with hysteresis and an optional hand mask
+- Performance package with pinned threads and a dynamic model at 384
 
-Em andamento:
+In progress:
 
-- Conjunto de teste externo, com frames de outros setups, para julgar a generalização da v3
-- Fase do traço, com a fidelidade ao vivo já medida e a ponte de cursor para o Windows em construção
-- Modelo aprendido de tinta, com a formulação fechada e o dataset sintético em montagem
+- External test set, with frames from other setups, to judge the generalization of v3
+- Stroke phase, with live fidelity already measured and the cursor bridge to Windows under construction
+- Learned ink model, with the formulation closed and the synthetic dataset being assembled
 
-Planejado:
+Planned:
 
-- Traço vetorial, com ordem, caminho e suavização dos traços
-- Interpretação de formas, letras e diagramas
-- Integração com um primeiro sistema alvo, CAD ou simulador
-- Feedback de simulação em tempo real
+- Vector stroke, with order, path, and smoothing of the strokes
+- Interpretation of shapes, letters, and diagrams
+- Integration with a first target system, CAD or simulator
+- Real-time simulation feedback

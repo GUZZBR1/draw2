@@ -1,52 +1,51 @@
-# tools/runner: o runner mínimo do Draw
+# tools/runner: the minimal Draw runner
 
-O encanamento pequeno que impede as perdas bobas do ciclo de
-experimento. Nasceu das falhas medidas de outubro de 2026, cada uma
-com conserto específico:
+The small plumbing that prevents the silly losses of the
+experiment cycle. Born from the measured failures of October 2026, each
+with a specific fix:
 
-- **Corrida de ~4 h aprendendo nada** (bug de agenda de LR):
-  self-test de 1 batch antes de lançar, conferindo LR efetiva e
-  métrica se mexendo, não só "rodou"; e a vigia (`watch.py`) lê as
-  métricas incrementais e aponta colapso nas primeiras épocas.
-- **Métricas perdidas depois do export**: o kernel escreve as
-  métricas antes de conferir o artefato. Regra do script de treino,
-  registrada aqui.
-- **Download truncado (ONNX de 0 bytes)**: coleta só com resume e
-  sha256 conferido (`collect.py`), com manifesto por corrida.
-- **Slot de TPU preso por ~11 h**: estado de toda corrida gravado
-  em disco a cada leitura (`watch.py`), para qualquer processo
-  retomar, conferir e cancelar sem depender de vigia viva.
+- **~4 h run learning nothing** (LR schedule bug):
+  1-batch self-test before launching, checking effective LR and
+  metric moving, not just "ran"; and the watcher (`watch.py`) reads the
+  incremental metrics and points to collapse in the first epochs.
+- **Metrics lost after export**: the kernel writes the
+  metrics before checking the artifact. Training script rule,
+  recorded here.
+- **Truncated download (0-byte ONNX)**: collection only with resume and
+  checked sha256 (`collect.py`), with a manifest per run.
+- **TPU slot stuck for ~11 h**: state of every run recorded
+  on disk at each read (`watch.py`), so any process
+  can resume, check and cancel without depending on a live watcher.
 
-## Peças
+## Pieces
 
-- `recipe.py`: o candidato como dado (kernel, datasets, hardware,
-  épocas, aumentos, hiperparâmetros).
-- `runner_kaggle.py`: push, status e saída de kernel no Kaggle.
-- `cycle.py`: amarra receita → push → vigia → coleta → arquivo,
-  com retomada pelo estado em disco.
-- `collect.py`: download com resume em laço + hash + manifesto.
-- `watch.py`: estado persistido e detecção de colapso.
-- `archive.py` + `candidates.jsonl`: o log de candidatos (receita,
-  status, métricas, resultados de régua, veredito). É o registro
-  por rodada do projeto.
-- `tests/`: a suíte do runner (coleta contra servidor que corta a
-  conexão, colapso sobre as corridas reais, ciclo com runner falso).
+- `recipe.py`: the candidate as data (kernel, datasets, hardware,
+  epochs, augmentations, hyperparameters).
+- `runner_kaggle.py`: push, status and kernel output on Kaggle.
+- `cycle.py`: ties recipe → push → watcher → collection → archive,
+  with resume via the state on disk.
+- `collect.py`: download with resume in a loop + hash + manifest.
+- `watch.py`: persisted state and collapse detection.
+- `archive.py` + `candidates.jsonl`: the candidate log (recipe,
+  status, metrics, ruler results, verdict). It is the project's
+  per-round record.
+- `tests/`: the runner suite (collection against a server that cuts the
+  connection, collapse over the real runs, cycle with a fake runner).
 
-## O que isto deliberadamente não é
+## What this deliberately is not
 
-- **Não é uma cascata com veto.** Hyperband/ASHA rendem com dezenas
-  de configurações; o Draw treina uma ou duas versões por vez. E a
-  métrica sintética por época já inverteu o ranking da régua de
-  cena nos nossos três candidatos julgados: ela serve para detectar
-  corrida morta, nunca para promover ou vetar candidato vivo. Veto
-  de verdade só depois do holdout real selado existir.
-- **Não é evolução de receitas.** O avaliador do Draw é um treino
-  de horas no Kaggle com cota e uma régua de vários portões, não um
-  escalar rápido e determinístico. Evolução estilo ShinkaEvolve
-  fica para depois do holdout real, se um dia fizer sentido.
-- **Não decide troca de modelo.** Quem decide é o Lucas, pelas
-  réguas, com o holdout real como portão.
+- **Not a cascade with veto.** Hyperband/ASHA pay off with dozens
+  of configurations; Draw trains one or two versions at a time. And the
+  synthetic metric per epoch already inverted the scene-ruler ranking in our three judged candidates: it serves to detect a
+  dead run, never to promote or veto a live candidate. A
+  real veto only after the sealed real holdout exists.
+- **Not recipe evolution.** The Draw evaluator is a training run of
+  hours on Kaggle with quota and a multi-gate ruler, not a fast
+  and deterministic scalar. ShinkaEvolve-style evolution
+  stays for after the real holdout, if it ever makes sense.
+- **Does not decide model swap.** Who decides is Lucas, by the
+  rulers, with the real holdout as gate.
 
-O laboratório de módulos experimentais (mini-régua, varredura de
-limiar, provas) mora no repositório draw-bridge. O que se prova lá
-e vira necessidade do ciclo desce para cá, pequeno e testado.
+The lab of experimental modules (mini-ruler, threshold sweep, proofs)
+lives in the draw-bridge repository. What is proved there
+and becomes a cycle need comes down here, small and tested.
