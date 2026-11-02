@@ -1287,6 +1287,88 @@ def _configure_local_capture(capture):
     capture.set(cv2.CAP_PROP_FPS, 30)
 
 
+# Supervisor de abertura da camera local (medido na mesa do Lucas,
+# 2026-11-02): a webcam barata via usbipd tem loteria de exposicao por
+# abertura -- as vezes abre estourada (brilho medio ~149 contra os
+# ~106-121 saudaveis) e fica assim a sessao inteira: o logit de
+# presenca do detector neural vai a negativo, o veto de presenca
+# devolve (None, None) e o app nao reconhece folha nenhuma
+# (reproduzido na fiacao real: 293/293 vereditos None em 30 s;
+# minutos depois, mesma cena e mesmo codigo, 128/131 paper).
+# Travar a exposicao por propriedade nao funciona nela (o set() de
+# CAP_PROP_AUTO_EXPOSURE devolve False via V4L2/usbipd) e
+# pre-processar o quadro estourado nao recupera a pagina clipada
+# (gama, escala de brilho e CLAHE medidos piores que o cru nos
+# quadros estourados salvos). O que resta: transmitir ate a exposicao
+# convergir e, se a abertura ficar estourada, reabrir -- cada
+# reabertura e um bilhete novo da loteria (4 aberturas seguidas
+# medidas assentadas; a convergencia natural levou ~1,9 s numa
+# abertura e ~4 s noutra).
+_EXPOSURE_SETTLED_MEAN = 135.0
+_EXPOSURE_BLOWN_MEAN = 140.0
+_EXPOSURE_PROBE_SECONDS = 6.0
+_EXPOSURE_MAX_ATTEMPTS = 3
+
+
+def _probe_exposure(capture, seconds=_EXPOSURE_PROBE_SECONDS, now=time.monotonic):
+    """Transmite por ate `seconds` e devolve o brilho medio recente.
+
+    Fecha cedo quando 3 quadros seguidos ficam abaixo de
+    _EXPOSURE_SETTLED_MEAN (exposicao assentada). Devolve None se a
+    leitura falhar: quem chama trata como "sem evidencia de estouro"
+    e o caminho existente de fonte morta cuida do resto.
+    """
+    deadline = now() + seconds
+    recent = []
+    while now() < deadline:
+        ok, frame = capture.read()
+        if not ok or frame is None:
+            return None
+        recent.append(float(frame.mean()))
+        del recent[:-3]
+        if len(recent) == 3 and sum(recent) / 3 < _EXPOSURE_SETTLED_MEAN:
+            return sum(recent) / 3
+    if not recent:
+        return None
+    return sum(recent) / len(recent)
+
+
+def _supervise_local_open(source, capture, capture_factory):
+    """Reabre a camera local se a abertura ficar estourada.
+
+    Devolve a captura a usar: a original assentada, uma reaberta
+    assentada, ou a ultima tentativa (com aviso) se todas estourarem.
+    """
+    attempt = 1
+    while True:
+        mean = _probe_exposure(capture)
+        if mean is None or mean < _EXPOSURE_BLOWN_MEAN:
+            if mean is not None and attempt > 1:
+                print(
+                    "Camera reaberta: exposicao assentada "
+                    f"(brilho medio {mean:.0f})."
+                )
+            return capture
+        if attempt >= _EXPOSURE_MAX_ATTEMPTS:
+            print(
+                "Aviso: camera segue com exposicao alta (brilho medio "
+                f"{mean:.0f}) apos {attempt} aberturas; o reconhecimento "
+                "de folha pode falhar ate a exposicao assentar."
+            )
+            return capture
+        print(
+            "Camera abriu com exposicao alta (brilho medio "
+            f"{mean:.0f}); reabrindo (tentativa "
+            f"{attempt + 1}/{_EXPOSURE_MAX_ATTEMPTS})..."
+        )
+        capture.release()
+        attempt += 1
+        capture = capture_factory(source)
+        if not capture.isOpened():
+            return capture
+        _configure_local_capture(capture)
+
+
 def _local_open_hint(source):
     """Diagnostico por porta: nomeia a primeira condicao que impede a abertura."""
     node = f"/dev/video{source}"
@@ -1321,11 +1403,14 @@ def _local_open_hint(source):
     )
 
 
-def _open_capture(source):
-    capture = cv2.VideoCapture(source)
+def _open_capture(source, capture_factory=None):
+    if capture_factory is None:
+        capture_factory = cv2.VideoCapture
+    capture = capture_factory(source)
     if capture.isOpened():
         if isinstance(source, int):
             _configure_local_capture(capture)
+            capture = _supervise_local_open(source, capture, capture_factory)
         return capture
     hint = f"Nao consegui abrir a fonte de video: {source!r}. "
     if isinstance(source, int):
