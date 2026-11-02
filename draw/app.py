@@ -64,6 +64,34 @@ from .view import _blank_sheet, _compose_view, _dead_source_view, _error_view
 
 _SHEET_NEAR_LIMIT_PX = 40.0
 _SHEET_BLEND_ALPHA = 0.3
+# Estabilizacao contra o jitter do detector (auditoria de
+# 2026-11-02, medido em laboratorio pelo agente): nos 5 frames
+# reais de uma cena parada da mesa do Lucas, os cantos crus do
+# detector andam em media 55 px por frame (maximo 156 px) e os
+# cantos exibidos andavam em media 9 px (maximo 101 px) — a folha
+# parada "se mexia" na tela. Tres defesas, nesta ordem:
+# (1) a deteccao que alimenta o rastreador e a mediana das ultimas
+# _SHEET_FILTER_WINDOW deteccoes, que apaga o salto isolado de um
+# frame so; (2) deteccao filtrada a ate _SHEET_DEADBAND_PX do quad
+# atual confirma presenca SEM mover o quad — abaixo disso e ruido
+# de medida, nao movimento, e a folha parada fica bit-estavel;
+# (3) o candidato a salto fica FIXO na primeira deteccao que o
+# abriu: antes ele era misturado a cada deteccao nova e "andava"
+# ate confirmar um salto que nenhuma posicao sustentou pelo tempo
+# de persistencia.
+_SHEET_FILTER_WINDOW = 3
+_SHEET_DEADBAND_PX = 2.0
+# Salto GRANDE (candidato a mais de _SHEET_BIG_JUMP_PX do quad
+# atual) exige persistencia maior: e a assinatura do detector
+# trocando de modo num ajuste biestavel (a folha cortada pela
+# borda do quadro projeta cantos a ~100 px frame a frame), e um
+# modo errado raramente se sustenta por 1 s em captura real, com
+# frames novos a cada instante. Mover a folha de verdade por mais
+# de 100 px paga ~0,7 s a mais de confirmacao; trocar de pagina
+# nao passa por aqui (a folha some e volta, e folha nova confirma
+# pelo caminho de primeira deteccao).
+_SHEET_BIG_JUMP_PX = 100.0
+_SHEET_BIG_JUMP_PERSIST_SECONDS = 1.0
 # Confirmação de salto por TEMPO, não por contagem de detecções
 # (medido em 2026-10-30 no laboratório,
 # draw-lab/noite-2026-10-30/block6/): com a contagem de 3, um salto
@@ -125,7 +153,9 @@ class _SheetTracker:
 
     Guarda o quadrilatero atual e decide, quadro a quadro, entre
     misturar uma deteccao vizinha, exigir persistencia para um salto
-    de posicao e descartar a folha perdida. Deteccao perto mistura
+    de posicao e descartar a folha perdida. A deteccao crua passa
+    antes pelo filtro de mediana e pela banda morta de
+    _SHEET_DEADBAND_PX (ver as constantes). Deteccao perto mistura
     com _SHEET_BLEND_ALPHA; salto (deteccao a mais de
     _SHEET_NEAR_LIMIT_PX do quad atual) so confirma quando o
     candidato persiste _SHEET_JUMP_PERSIST_SECONDS de relogio com
@@ -154,6 +184,7 @@ class _SheetTracker:
         self._pending_since = None
         self._frames_since_seen = 0
         self._last_seen_at = None
+        self._recent = deque(maxlen=_SHEET_FILTER_WINDOW)
 
     def should_detect(self, frame_number):
         return (
@@ -163,6 +194,15 @@ class _SheetTracker:
         )
 
     def _confirm(self, corners, verdict, now):
+        # Confirmacao que SALTA (primeira folha ou candidato a
+        # salto) recomeca a janela do filtro na posicao nova: sem
+        # isso, a mediana das proximas deteccoes misturaria a
+        # posicao velha com a nova e arrastaria o quad confirmado.
+        if self.corners is None or (
+            _corner_distance(self.corners, corners) > _SHEET_NEAR_LIMIT_PX
+        ):
+            self._recent.clear()
+            self._recent.append(np.asarray(corners, dtype=np.float32).copy())
         self.corners = corners
         self.verdict = verdict
         self._pending = None
@@ -170,6 +210,13 @@ class _SheetTracker:
         self._frames_since_seen = 0
         self._last_seen_at = now
         self.missed = False
+
+    def _filtered(self, detected):
+        """Mediana das ultimas deteccoes: apaga o salto de 1 frame."""
+        self._recent.append(
+            np.asarray(detected, dtype=np.float32).copy()
+        )
+        return np.median(np.stack(self._recent), axis=0).astype(np.float32)
 
     def update(self, detected, verdict, ran_detection, now):
         """Alimenta o rastreador com o resultado do quadro.
@@ -198,8 +245,19 @@ class _SheetTracker:
             self.missed = True
             return None
         if detected is not None:
+            detected = self._filtered(detected)
             if self.corners is None and verdict == "paper":
                 self._confirm(detected.copy(), verdict, now)
+                event = "seen"
+            elif (
+                self.corners is not None
+                and _corner_distance(self.corners, detected)
+                <= _SHEET_DEADBAND_PX
+            ):
+                # Dentro da banda morta: presenca confirmada, quad
+                # NAO se move. Folha parada fica bit-estavel em vez
+                # de nadar 30% do ruido a cada deteccao.
+                self._confirm(self.corners.copy(), verdict, now)
                 event = "seen"
             elif (
                 self.corners is not None
@@ -220,11 +278,26 @@ class _SheetTracker:
                     else _SHEET_JUMP_PERSIST_SECONDS
                 )
                 if (
+                    self.corners is not None
+                    and self._pending is not None
+                    and _corner_distance(self.corners, self._pending)
+                    > _SHEET_BIG_JUMP_PX
+                ):
+                    confirm_seconds = max(
+                        confirm_seconds, _SHEET_BIG_JUMP_PERSIST_SECONDS
+                    )
+                if (
                     self._pending is not None
                     and _corner_distance(self._pending, detected)
                     <= _SHEET_NEAR_LIMIT_PX
                 ):
-                    self._pending = _blend_corners(self._pending, detected)
+                    # Candidato FIXO: a deteccao nova sustenta o
+                    # candidato que ja existe, sem move-lo. Misturar
+                    # o candidato a cada deteccao deixava ele andar
+                    # atras dos modos errantes do detector e
+                    # confirmar um salto que nenhuma posicao fixa
+                    # sustentou pelo tempo de persistencia.
+                    pass
                 else:
                     self._pending = detected.copy()
                     self._pending_since = now
@@ -281,6 +354,7 @@ class _SheetTracker:
             self._pending = None
             self._pending_since = None
             self._frames_since_seen = 0
+            self._recent.clear()
             self.missed = False
             event = "drop"
         return event
