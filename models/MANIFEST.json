@@ -1,13 +1,5 @@
 {
   "schema": 1,
   "notes": "Registro de integridade dos binarios de modelo. O sha256 e o tamanho em bytes sao conferidos na carga quando o arquivo existe; a divergencia e um aviso, e DRAW_MODEL_STRICT=1 a transforma em erro. O repositorio nao publica o modelo de producao (draw_seg_v3_dyn.onnx); quando ele entrar, a entrada dele vem para ca com a regua que o aprovou.",
-  "models": {
-    "kaggle-real-pilot-v1/model.onnx": {
-      "sha256": "2ca5ea38210f8f1c7b4a6e981de89c0c434437341a18b7317c6733daba11c908",
-      "bytes": 15181516,
-      "approved_by": "nenhuma regua: piloto experimental de 4 classes, opt-in, nao e o modelo de producao",
-      "date": "2026-10-30",
-      "status": "experimental"
-    }
-  }
+  "models": {}
 }
