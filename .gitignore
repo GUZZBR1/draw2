@@ -8,6 +8,7 @@ sessions/
 logs/
 dataset/
 models/*.onnx
+models/*.task
 template/paper_template.png
 *.pyc
 .DS_Store
