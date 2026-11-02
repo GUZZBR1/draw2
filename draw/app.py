@@ -404,6 +404,124 @@ class _LatestFrameCapture:
         self._thread.join(timeout=2.0)
 
 
+# Teto da espera pela thread de deteccao na saida do app. Uma
+# deteccao nesta VM pode passar de 1 s; no Ryzen ela mede 36,7 ms.
+_DETECTION_STOP_TIMEOUT_SECONDS = 5.0
+
+
+class _SheetDetectionWorker:
+    """Deteccao de folha em thread propria, latest-wins.
+
+    O laco entrega o quadro com submit() e segue: a fila tem
+    tamanho 1 e um quadro nao processado e substituido pelo
+    proximo, nunca acumulado. A thread roda a deteccao e publica
+    (sequencia, cantos, veredito, carimbo do quadro, duracao). O
+    laco colhe com poll() sem bloquear, em qualquer estado do
+    rastreador, inclusive no missed: os 36,7 ms medidos da
+    deteccao no Ryzen saiam do laco de exibicao, e no missed
+    saiam de todo quadro.
+
+    O rastreador e alimentado com o carimbo de captura do quadro
+    detectado, nao com o instante de chegada do resultado: os
+    relogios de persistencia de salto (0,3 s) e de perda (0,5 s)
+    medem o tempo da cena, e um resultado que chega atrasado nao
+    pode inflar nem encolher esses relogios.
+    """
+
+    def __init__(self, detect):
+        self._detect = detect
+        self._condition = threading.Condition()
+        self._thread = threading.Thread(
+            target=self._work, name="draw-sheet-detection", daemon=True
+        )
+        self._pending = None
+        self._result = None
+        self._result_seq = 0
+        self._stopped = False
+        self._error = None
+        self._submitted = 0
+        self._completed = 0
+        self._dropped = 0
+        self._last_detect_ms = None
+
+    def start(self):
+        self._thread.start()
+        return self
+
+    def submit(self, frame, captured_at):
+        with self._condition:
+            if self._stopped:
+                return
+            if self._pending is not None:
+                self._dropped += 1
+            self._pending = (frame, captured_at)
+            self._submitted += 1
+            self._condition.notify_all()
+
+    def poll(self, after_seq):
+        """Resultado mais novo que after_seq, ou None. Nunca bloqueia."""
+        with self._condition:
+            if self._result is None or self._result[0] <= after_seq:
+                return None
+            return self._result
+
+    def _work(self):
+        while True:
+            with self._condition:
+                self._condition.wait_for(
+                    lambda: self._pending is not None or self._stopped
+                )
+                if self._stopped:
+                    return
+                frame, captured_at = self._pending
+                self._pending = None
+            started = time.monotonic()
+            try:
+                corners, verdict = self._detect(frame)
+            except Exception as error:  # noqa: BLE001 - vai para o laco
+                with self._condition:
+                    self._error = error
+                    self._stopped = True
+                    self._condition.notify_all()
+                return
+            detect_ms = round((time.monotonic() - started) * 1000.0, 1)
+            with self._condition:
+                if self._stopped:
+                    return
+                self._completed += 1
+                self._last_detect_ms = detect_ms
+                self._result_seq += 1
+                self._result = (
+                    self._result_seq,
+                    corners,
+                    verdict,
+                    captured_at,
+                    detect_ms,
+                )
+                self._condition.notify_all()
+
+    @property
+    def error(self):
+        """A excecao que matou a thread, ou None."""
+        with self._condition:
+            return self._error
+
+    def stats(self):
+        with self._condition:
+            return {
+                "detect_submitted": self._submitted,
+                "detect_completed": self._completed,
+                "detect_dropped": self._dropped,
+                "detect_ms": self._last_detect_ms,
+            }
+
+    def stop(self):
+        with self._condition:
+            self._stopped = True
+            self._condition.notify_all()
+        self._thread.join(timeout=_DETECTION_STOP_TIMEOUT_SECONDS)
+
+
 class _PngWriter:
     """Escritora de PNG em thread unica, para o imwrite sair do laco.
 
@@ -1513,6 +1631,9 @@ def run(
 
     capture = _open_capture(parse_source(source))
     frame_source = _LatestFrameCapture(capture).start()
+    detection_worker = None
+    if not markers_mode:
+        detection_worker = _SheetDetectionWorker(detect_sheet).start()
     png_writer = _PngWriter()
     save_path = Path(save_dir)
     telemetry = telemetry_module.SessionTelemetry(
@@ -1611,6 +1732,7 @@ def run(
     view_canvas_buffer = np.empty_like(canvas_buffer)
     frame_number = 0
     last_seq = 0
+    last_det_seq = 0
     last_view = None
     try:
         while True:
@@ -1653,6 +1775,8 @@ def run(
             }
             if ink_worker is not None:
                 tel_fields.update(ink_worker.stats())
+            if detection_worker is not None:
+                tel_fields.update(detection_worker.stats())
             telemetry.update(**tel_fields)
             if auto_capture and loop_frames % 10 == 0:
                 save_raw_frame(frame)
@@ -1663,21 +1787,33 @@ def run(
                 tel_sheet_present = sheet_present
             else:
                 markers = {}
-                if tracker.should_detect(frame_number):
-                    detect_started = time.monotonic()
-                    detected_corners, detected_verdict = detect_sheet(frame)
-                    tel_detect_ms = round(
-                        (time.monotonic() - detect_started) * 1000.0, 1
-                    )
+                det_result = detection_worker.poll(last_det_seq)
+                if det_result is not None:
+                    (
+                        last_det_seq,
+                        detected_corners,
+                        detected_verdict,
+                        det_captured_at,
+                        tel_detect_ms,
+                    ) = det_result
                     ran_detection = True
                 else:
                     detected_corners, detected_verdict = None, None
+                    det_captured_at = None
                     ran_detection = False
+                if tracker.should_detect(frame_number):
+                    detection_worker.submit(
+                        frame, frame_capture_ms / 1000.0
+                    )
+                if detection_worker.error is not None:
+                    raise detection_worker.error
                 tracker_event = tracker.update(
                     detected_corners,
                     detected_verdict,
                     ran_detection,
-                    time.monotonic(),
+                    det_captured_at
+                    if ran_detection
+                    else time.monotonic(),
                 )
                 if tracker_event == "drop":
                     ink_session_open = False
@@ -1989,6 +2125,8 @@ def run(
         # erro no meio do laco vazava a camera aberta e a thread
         # daemon ficava lendo o dispositivo ate o processo sair.
         frame_source.stop()
+        if detection_worker is not None:
+            detection_worker.stop()
         if ink_worker is not None:
             ink_worker.stop()
         telemetry.close()
