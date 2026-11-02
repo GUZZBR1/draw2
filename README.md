@@ -174,7 +174,7 @@ O kernel da v3 levou 44,7 minutos numa T4. O kernel da v2 levou 3 horas e 51 min
 - `tests/` tem os testes sem webcam: `selftest.py` valida detecção, homografia, extração de tinta e o portão de textura em cenas sintéticas; os `test_*.py` cobrem o adaptador ONNX (com modelos minúsculos de verdade), a tinta, o `page_clean`, o manifesto, a composição de vista e o estado de sessão do app. `pytest` roda tudo.
 - `tools/` tem as ferramentas de apoio. `label_frames.py` rotula frames capturados. `eval_real_frames.py` é o harness dos frames reais, o portão de qualquer modelo neural.
 - `verification/` é o registro da verificação formal limitada da v0. Ele guarda a skill do projeto e o script que prova propriedades da homografia com sondas numéricas. É um registro histórico de uma etapa concluída, não uma etapa do pipeline.
-- `docs/` tem a instalação (guia do Windows com WSL), a auditoria de produto (`docs/auditoria/`) e a análise de código (`docs/analise/`, com as sondas que a sustentam em `docs/analise/probes/`).
+- `docs/` tem a instalação (guia do Windows com WSL) e o arquivo de documentos de eras concluídas (`docs/archive/`, com índice próprio: auditoria e análise de 2026-10-31, a era da segmentação v1 e o resumo da noite de 2026-10-30).
 - `main.py` é o ponto de entrada. Ele só chama o app.
 - `VISION.md` é o documento de visão do projeto.
 
