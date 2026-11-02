@@ -32,7 +32,7 @@ draw-lab/pen-fusion/REPORT.md, contra o replay do vídeo de desenho
   0,002, dcutoff 1,0 Hz. No protótipo, beta acima de 0,01 desliga o
   filtro nas velocidades de mão medidas (100 a 200 px/s). Os
   parâmetros são indicativos: foram varridos num replay a 3 fps e
-  NÃO transferem entre cadências (ver tests/cadence_fusion.py).
+  NÃO transferem entre cadências (ver tools/cadence_fusion.py).
 - Levantar a caneta: 1,0 s de silêncio sem delta fresco. No replay,
   os silêncios dentro de episódio vão até 2 amostras (0,67 s) e os
   entre episódios começam em 3 amostras (1,0 s); a margem de
@@ -148,7 +148,7 @@ class OneEuroFilter2D:
     amostras, nunca uma cadência presumida. Mesmo assim, os
     parâmetros NÃO transferem entre cadências: beta multiplica a
     velocidade estimada, e a velocidade por amostra muda com a
-    cadência (medido em tests/cadence_fusion.py).
+    cadência (medido em tools/cadence_fusion.py).
     """
 
     def __init__(self, mincutoff=0.5, beta=0.002, dcutoff=1.0):
