@@ -1393,7 +1393,11 @@ def _check_models():
     for name in sorted(models):
         path = Path(__file__).resolve().parent.parent / "models" / name
         if not path.exists():
-            print(f"AVISO: {name} esta no manifesto e nao esta em models/.")
+            print(
+                f"AVISO: {name} esta no manifesto e nao esta em models/. "
+                "Baixe os modelos oficiais com: "
+                "python tools/fetch_models.py"
+            )
             continue
         try:
             entry = manifest_module.verify_model(path)
