@@ -145,6 +145,36 @@ def test_adapters_map_lab_formats():
     m = judge.from_tri_metrics(tri)
     assert m["print_leak"]["leak_frac"] == 0.004
     assert m["invariance"]["pairs"] is None
+    # Formato antigo: sem as contagens, o adaptador repassa None
+    # (o portao fica INCONCLUSIVE e sem IC95, nunca inventa numero).
+    assert m["print_leak"]["leak_px"] is None
+    assert m["invariance"]["print_center_px"] is None
+    assert m["invariance"]["print_center_leak_px"] is None
+
+
+def test_tri_adapter_new_format_unlocks_wilson_ci():
+    # O corpo TRI passou a emitir leak_px e as contagens do
+    # impresso no centro: o adaptador repassa, e os portoes TRI
+    # ganham o IC95 de Wilson que faltava via --tri-metrics.
+    tri = {"rulers_ema": {
+        "PRINT": {"pages": 9, "print_px": 40000, "leak_px": 160,
+                  "leak_frac": 0.004, "gate_le_0.005": True},
+        "INV": {"print_center_notink": 0.999,
+                "ink_margin_ratio_min": 0.95, "pairs": 24,
+                "print_center_px": 40000, "print_center_leak_px": 40}}}
+    m = judge.from_tri_metrics(tri)
+    assert m["print_leak"]["leak_px"] == 160
+    assert m["invariance"]["pairs"] == 24
+    assert m["invariance"]["print_center_px"] == 40000
+    assert m["invariance"]["print_center_leak_px"] == 40
+    report = judge.judge(m)
+    inv_gate = _gate(report, "invariance_print")
+    assert inv_gate["status"] == judge.PASS
+    assert inv_gate["ci95"] is not None
+    assert inv_gate["ci95"][0] < inv_gate["ci95"][1]
+    leak_gate = _gate(report, "print_leak")
+    assert leak_gate["status"] == judge.PASS
+    assert leak_gate["ci95"] is not None
 
 
 def test_report_carries_lab_label_and_gate_lines():

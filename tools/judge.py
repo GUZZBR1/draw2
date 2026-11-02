@@ -404,6 +404,7 @@ def from_tri_metrics(d):
     if prn:
         out["print_leak"] = {"leak_frac": prn.get("leak_frac"),
                              "print_px": prn.get("print_px"),
+                             "leak_px": prn.get("leak_px"),
                              "pages": prn.get("pages"),
                              "skipped": prn.get("skipped", False),
                              "reason": prn.get("reason", "")}
@@ -412,6 +413,8 @@ def from_tri_metrics(d):
         entry = {"print_center_notink": inv.get("print_center_notink"),
                  "ink_margin_ratio_min": inv.get("ink_margin_ratio_min"),
                  "pairs": inv.get("pairs"),
+                 "print_center_px": inv.get("print_center_px"),
+                 "print_center_leak_px": inv.get("print_center_leak_px"),
                  "skipped": inv.get("skipped", False),
                  "reason": inv.get("reason", "")}
         out["invariance"] = entry
