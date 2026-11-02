@@ -252,8 +252,26 @@ class _SheetTracker:
                 self.missed = True
             self._frames_since_seen += 1
 
+        # A perda so e avaliada em quadro com resultado de deteccao.
+        # Desde que a deteccao virou thread propria (carimbo de
+        # captura no resultado), avaliar nos quadros intermediarios
+        # do laco mistura os dois relogios: _last_seen_at guarda o
+        # carimbo de CAPTURA do ultimo quadro visto, enquanto o
+        # `now` intermediario e o instante corrente — a janela de
+        # _SHEET_LOST_SECONDS encolhe pela idade do pipeline
+        # (submissao->resultado). Medido em laboratorio pelo agente
+        # (bancada com o worker e o rastreador reais, detector
+        # perfeito, folha parada): com deteccao de 450 ms, a folha
+        # confirmada caia 32 vezes em 15 s, reconfirmando em seguida
+        # — a folha "some e volta" sem nada ter mudado na mesa. Nos
+        # quadros com resultado, os dois carimbos sao de captura e a
+        # idade do pipeline cancela: a perda mede o tempo de cena
+        # desde o ultimo quadro examinado que viu a folha, e a folha
+        # removida de verdade segue caindo ~_SHEET_LOST_SECONDS
+        # depois (mais a latencia de uma deteccao).
         if (
-            self.corners is not None
+            ran_detection
+            and self.corners is not None
             and self._frames_since_seen > _SHEET_LOST_MIN_FRAMES
             and self._last_seen_at is not None
             and now - self._last_seen_at > _SHEET_LOST_SECONDS
