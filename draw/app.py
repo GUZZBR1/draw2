@@ -54,6 +54,7 @@ except ImportError:
 from . import manifest as manifest_module
 from . import neural as neural_module
 from . import page_clean as page_clean_module
+from .selflearn import session as session_module
 from . import paper as paper_module
 
 
@@ -1294,6 +1295,30 @@ def run(
     frame_source = _LatestFrameCapture(capture).start()
     png_writer = _PngWriter()
     save_path = Path(save_dir)
+    # Coleta automatica de sessao (loop v2, correcao 5): cada
+    # geracao grava referencia + warp final + canvas final +
+    # manifesto em save_path/sessions/<id>/, local, para o par
+    # antes/depois virar dado do loop sem passar por modelo. A
+    # escrita e da thread do gravador; o laco so copia arrays.
+    # No modo de marcadores nao ha geracao de folha: sem coleta.
+    session_recorder = None
+    if not markers_mode:
+        model_paths = {}
+        if page_clean is not None:
+            model_paths["page_clean"] = page_clean.model_path
+        if neural_model is not None:
+            model_paths["sheet"] = neural_model
+        try:
+            session_recorder = session_module.SessionRecorder(
+                save_path, model_paths=model_paths)
+        except Exception as error:  # noqa: BLE001 - coleta nao derruba o app
+            print(
+                "Aviso: a coleta de sessao nao iniciou "
+                f"({error}); o app segue sem gravar a sessao."
+            )
+    # Geracao do gravador no caminho legado (sem worker, a geracao
+    # e local: abre na folha nova e na tecla C).
+    legacy_generation = 0
     if markers_mode:
         print("Draw v0 rodando. Mostre a folha-modelo para a camera.")
     else:
@@ -1332,6 +1357,8 @@ def run(
 
     def handle_capture_key(key, img):
         nonlocal auto_capture, restart_reference
+        if session_recorder is not None:
+            session_recorder.note_key(key)
         if key == ord("f"):
             save_raw_frame(img)
         elif key == ord("c") and session_ink is not None:
@@ -1465,6 +1492,13 @@ def run(
                             freeze_pending = False
                         corner_history.clear()
                         ink_session_open = True
+                        if (
+                            session_recorder is not None
+                            and page_clean is None
+                        ):
+                            legacy_generation += 1
+                            session_recorder.start_generation(
+                                legacy_generation)
                     if restart_reference:
                         # Tecla C: novo ponto zero da sessao. O canvas
                         # acumulado zera junto, porque a pagina base nova
@@ -1475,6 +1509,13 @@ def run(
                         session_ink.reset()
                         baseline_armed = True
                         freeze_pending = True
+                        if session_recorder is not None:
+                            # Tecla C: a geracao do gravador recomeca
+                            # aqui; a referencia dela e o warp deste
+                            # momento (a pagina base do legado).
+                            legacy_generation += 1
+                            session_recorder.start_generation(
+                                legacy_generation)
                     corner_history.append(tracker.corners.copy())
                     ink_corners = np.median(
                         np.stack(corner_history), axis=0
@@ -1497,6 +1538,9 @@ def run(
                         # trabalhadora e entra no canvas pelo poll()
                         # logo abaixo, quando uma versao nova publica.
                         ink_worker.submit(ink_warped, clean_generation)
+                        if session_recorder is not None:
+                            session_recorder.note_warp(
+                                clean_generation, ink_warped)
                     else:
                         visible = None
                         if hand_masker is not None:
@@ -1524,6 +1568,11 @@ def run(
                             ),
                             out=canvas_buffer,
                         )
+                        if session_recorder is not None:
+                            session_recorder.note_warp(
+                                legacy_generation, ink_warped)
+                            session_recorder.note_canvas(
+                                legacy_generation, accumulated_canvas)
 
                 if ink_worker is not None:
                     # Colhe a tinta assincrona: versao nova da geracao
@@ -1538,6 +1587,9 @@ def run(
                         accumulated_canvas = ink_module.render_canvas(
                             clean_mask, out=canvas_buffer
                         )
+                        if session_recorder is not None:
+                            session_recorder.note_canvas(
+                                clean_generation, accumulated_canvas)
                     # Virada de pagina (U3): a trabalhadora detectou
                     # conteudo descorrelacionado do canvas por 2
                     # passadas. A pagina anterior vira snapshot em
@@ -1699,6 +1751,24 @@ def run(
         frame_source.stop()
         if ink_worker is not None:
             ink_worker.stop()
+        if session_recorder is not None:
+            # O manifesto fecha a sessao do loop: pares
+            # antes/depois, shas dos modelos, teclas e o retrato
+            # de telemetria da trabalhadora (U0).
+            try:
+                telemetry = (
+                    ink_worker.telemetry_snapshot()
+                    if ink_worker is not None else None
+                )
+                manifest_path = session_recorder.finish(
+                    telemetry=telemetry)
+                print(
+                    f"Sessao gravada para o loop em {manifest_path}")
+            except Exception as error:  # noqa: BLE001 - aviso, nao queda
+                print(
+                    "Aviso: nao consegui fechar a gravacao da "
+                    f"sessao ({error})."
+                )
         png_writer.close()
         cv2.destroyAllWindows()
 
