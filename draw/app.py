@@ -457,6 +457,41 @@ class _PngWriter:
         self._thread.join(timeout=_PNG_DRAIN_SECONDS)
 
 
+# Porta de ociosidade sem mao: no maximo uma sonda a cada
+# _IDLE_PROBE_SECONDS. A porta e a presenca da mao, nao um
+# detector de mudanca por diff de warp: medido nesta webcam, o
+# churn entre quadros parados (1,5-2,0) supera o sinal do lapis,
+# entao diff cego dispara a toa ou engole o traco fraco. Escrever
+# exige mao no papel; sem mao, a pagina esta assentada e so a
+# sonda periodica confere.
+_IDLE_PROBE_SECONDS = 1.0
+
+
+class _MediaPipeHandPresence:
+    """Presenca de mao sobre o HandMasker: True, False ou None.
+
+    None e "sinal indisponivel" (sem mediapipe ou sem modelo), e
+    quem decide a cadencia trata None como ativo: sem sinal, a
+    economia nao liga e o app roda como antes.
+    """
+
+    def __init__(self, masker):
+        self._masker = masker
+
+    def present(self, frame):
+        mask = self._masker.mask(frame)
+        if mask is None:
+            return None
+        return bool(np.count_nonzero(mask))
+
+
+def _make_hand_presence(model_path):
+    """Adaptador de presenca se o modelo de mao existe, senao None."""
+    if not hand_module.hand_model_available(model_path):
+        return None
+    return _MediaPipeHandPresence(hand_module.HandMasker(model_path))
+
+
 # Cadencia maxima da tinta: uma passada completa a cada ~250 ms.
 # A passada custa 168 ms no Ryzen com 8 threads (perfil em
 # draw-lab/page-clean-v0/PERF_BASELINE_RYZEN.md), entao quem manda
@@ -677,6 +712,8 @@ class _PageCleanWorker:
         self._retracted_px_total = 0
         self._published_display = None
         self._display_version = 0
+        self._hand_state = None
+        self._confirm_once = False
         # Evento de virada (desligado por padrao): pendente
         # (geracao, canvas confirmado anterior).
         self._turn_event = None
@@ -702,6 +739,25 @@ class _PageCleanWorker:
                 return
             self._pending = (warped, generation)
             self._condition.notify_all()
+
+    def set_hand_presence(self, present):
+        """Alimenta a porta de ociosidade: True, False ou None.
+
+        A transicao para False arma exatamente uma passada de
+        confirmacao: a mao saiu, a pagina assentou, e essa passada
+        fecha o voto do que foi escrito. Depois dela, sem mao, a
+        trabalhadora sonda a no maximo 1 Hz.
+        """
+        with self._condition:
+            if present is False and self._hand_state is not False:
+                self._confirm_once = True
+            self._hand_state = present
+            self._condition.notify_all()
+
+    def _pass_interval(self):
+        if self._hand_state is False and not self._confirm_once:
+            return _IDLE_PROBE_SECONDS
+        return _PAGE_CLEAN_INTERVAL_SECONDS
 
     def poll(self, generation, after_version):
         """(versao, copia do canvas confirmado) se ha publicado
@@ -774,7 +830,7 @@ class _PageCleanWorker:
                 # geracao trocou, new_generation limpou o pendente
                 # e esta volta nao roda nada.
                 while self._last_pass_start is not None:
-                    remaining = _PAGE_CLEAN_INTERVAL_SECONDS - (
+                    remaining = self._pass_interval() - (
                         time.monotonic() - self._last_pass_start
                     )
                     if remaining <= 0 or self._pending is None:
@@ -787,6 +843,8 @@ class _PageCleanWorker:
                 warped, generation = self._pending
                 self._pending = None
                 self._last_pass_start = time.monotonic()
+                if self._confirm_once:
+                    self._confirm_once = False
             # Uma excecao do modelo (shape errado, sessao morta, ONNX
             # sem memoria) matava esta thread em silencio: o canvas
             # congelava no ultimo quadro e nada era impresso. O erro
@@ -870,6 +928,14 @@ class _PageCleanWorker:
                 "canvas_px": self._confirmed_px,
                 "provisional_px": self._provisional_px,
                 "retracted_px_total": self._retracted_px_total,
+                "worker_mode": (
+                    "active"
+                    if self._hand_state
+                    else "idle"
+                    if self._hand_state is False
+                    else "unknown"
+                ),
+                "hand_present": self._hand_state,
             }
 
     @property
@@ -1431,6 +1497,17 @@ def run(
             "desconhecida no canvas acumulativo."
         )
 
+    clean_hand_presence = None
+    clean_hand_present = None
+    if page_clean is not None and not markers_mode:
+        clean_hand_presence = _make_hand_presence(hand_model)
+        if clean_hand_presence is not None:
+            print(
+                "Porta de ociosidade pela mao ativa no caminho "
+                "pagina->limpa: sem mao, a tinta sonda a no maximo "
+                "1 Hz e a geometria da tinta congela."
+            )
+
     def detect_sheet(frame):
         return _detect_sheet_combined(frame, neural_detector)
 
@@ -1625,6 +1702,11 @@ def run(
                 warped = None
 
                 if ran_detection and tracker.corners is not None:
+                    if clean_hand_presence is not None:
+                        clean_hand_present = clean_hand_presence.present(
+                            frame
+                        )
+                        ink_worker.set_hand_presence(clean_hand_present)
                     if not ink_session_open:
                         # Folha nova na cena: canvas e geometria recomecam.
                         ink_accumulator.reset()
@@ -1660,7 +1742,14 @@ def run(
                         session_ink.reset()
                         baseline_armed = True
                         freeze_pending = True
-                    corner_history.append(tracker.corners.copy())
+                    # Sem mao, a geometria da tinta congela na
+                    # ultima mediana: a pagina esta assentada e a
+                    # mediana viva seguiria andando com o balanco
+                    # do detector, deslocando a tinta ja publicada.
+                    if clean_hand_present is not False or (
+                        not corner_history
+                    ):
+                        corner_history.append(tracker.corners.copy())
                     ink_corners = np.median(
                         np.stack(corner_history), axis=0
                     ).astype(np.float32)
