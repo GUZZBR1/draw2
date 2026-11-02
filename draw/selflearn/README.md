@@ -44,13 +44,57 @@ sessao ao vivo
 
 Testes: `tests/test_selflearn.py`.
 
+## Loop v2: as seis correcoes de 2026-11-02
+
+A segunda fatia do loop fecha as correcoes do Lucas sobre a
+primeira: o motor existia, faltava a materia-prima real e os
+portoes certos.
+
+- `session.py` (U1) coleta automatica de sessao, ligada no app:
+  cada geracao grava referencia (primeiro warp; no legado, o warp
+  da tecla C), warp final, canvas final e `manifest.json` com
+  sha256 dos arquivos e dos modelos, teclas com tempo relativo e
+  a telemetria de passadas. Local apenas
+  (`captures/sessions/<session_id>/`, fora do git); mesa de outra
+  pessoa exige consentimento.
+- `split.py` (U2) divisao treino x holdout **por sessao**,
+  deterministica por hash, estratificada para o holdout incluir
+  sessoes faceis e com paginas vazias. Guardas que levantam
+  `LeakageError`: sessao de holdout nao entra em treino, selecao
+  por incerteza, pseudo-rotulacao nem tuning de limiar; o rotulo
+  do holdout e independente (foto final - referencia, revisado a
+  mao, `draft_independent_label` + `guard_holdout_example`) e
+  pseudo-rotulo nunca entra nele. Correcao da predicao (com seu
+  vies de ancoragem) e treino, nunca holdout.
+- `gate.py` + `tools/selflearn/judge_gate.py` (U3) o portao de
+  promocao: quem decide e o replay real selado; IoU DIBCO sai
+  rotulado como diagnostico e nao promove ninguem (a rodada 4
+  venceu nele e perdeu no real). Abaixo do n minimo
+  pre-registrado (padrao: 5 sessoes e 25 paginas de holdout), o
+  veredito e INCONCLUSIVE com os n impressos - o replay de ~48
+  arquivos antigos ainda nao tem poder estatistico.
+- Telemetria de latencia (U0): `_PageCleanWorker` expoe
+  `telemetry_snapshot()` (submits, substituicoes latest-wins,
+  carimbos submit/inicio/fim/publicacao por passada) sem mudar
+  comportamento, e `tools/selflearn/measure_latency.py` mede as
+  etapas sobre warps gravados. A auditoria esta em
+  `docs/AUDITORIA_LATENCIA.md`: o consenso temporal da hipotese
+  nao roda no caminho padrao da main (o acumulador de voto foi
+  removido em 8b9ff45; o legado de janela 15 so roda com
+  `--legacy-ink`), e o piso medido da trabalhadora nao fecha os
+  2,3-3,5 s - falta o cronometro vidro-a-tinta na mesa.
+
+Testes do loop v2: `tests/test_selflearn_session.py`,
+`tests/test_selflearn_split.py`, `tests/test_selflearn_gate.py`,
+`tests/test_page_clean_telemetry.py`.
+
 ## O que NAO esta implementado ainda
 
 - U4: interface de correcao minima (editar a predicao com pincel e
   scribble, orcamento em minutos e gestos).
-- U6: portao de promocao automatizado (holdout selado por sessao,
-  pior-grupo, stress set historico, pre-registro da rodada).
-  Promocao de modelo continua sendo decisao humana.
+- Stress set historico e pre-registro automatico da rodada no
+  portao (o portao atual julga primario/pior-grupo/n; promocao
+  de modelo continua sendo decisao humana).
 - PrevMatch-lite (voto de checkpoints de rodadas anteriores).
 - Loop B (teacher maior offline com destilacao por canal para o
   aluno) e Loop C (pre-treino mascarado do backbone).

@@ -1,6 +1,9 @@
 __pycache__/
 .venv/
 captures/
+# Sessoes do loop (frames privados da mesa) com --save-dir fora de
+# captures/: nunca versionar, em nenhuma raiz.
+sessions/
 template/paper_template.png
 *.pyc
 .DS_Store
