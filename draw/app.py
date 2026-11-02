@@ -1182,6 +1182,17 @@ def _configure_local_capture(capture):
     capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    # Fila do driver no minimo e fps pedido explicitamente
+    # (auditoria de 2026-11-02): na mesa do Lucas a fila V4L2 mediu
+    # profundidade 4 — ate ~200-300 ms de quadro velho quando o
+    # consumo atrasa, somados a toda a latencia do pipeline. A
+    # thread de captura ja e latest-frame do lado do app; isto pede
+    # o mesmo do lado do driver. As duas propriedades sao pedidos:
+    # backend que nao suporta ignora o set() em silencio, e o
+    # formato/resolucao acima nao mudam. O efeito so e mensuravel
+    # com a camera dele; sem ela, o pedido e o comportamento seguro.
+    capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    capture.set(cv2.CAP_PROP_FPS, 30)
 
 
 def _local_open_hint(source):
