@@ -11,6 +11,7 @@ local, nunca publica nada.
 import hashlib
 import json
 import time
+import uuid
 from pathlib import Path
 
 import cv2
@@ -31,20 +32,56 @@ class ExampleRecorder:
 
     def record(self, session_id, warped_bgr, prob, corners,
                model_sha, origin):
-        """Grava um exemplo e retorna a linha do manifesto (dict)."""
+        """Grava um exemplo e retorna a linha do manifesto (dict).
+
+        O nome combina sessao, instante, contador e um sufixo
+        aleatorio, e os dois arquivos sao criados com criacao
+        exclusiva ("xb"): dois gravadores no mesmo diretorio nunca
+        produzem o mesmo nome nem sobrescrevem amostra existente —
+        colisao gera um nome novo. A linha do manifesto so e
+        publicada depois que os dois arquivos estao gravados.
+        """
         stamp = time.time()
-        name = f"{session_id}_{int(stamp * 1000)}_{self._count:06d}"
-        self._count += 1
 
         ok, buf = cv2.imencode(".png", warped_bgr)
         if not ok:
             raise RuntimeError("falha ao codificar o warp em PNG")
         image_bytes = buf.tobytes()
-        (self.input_dir / f"{name}.png").write_bytes(image_bytes)
 
         prob_u8 = np.clip(prob * 255.0, 0, 255).astype(np.uint8)
-        if not cv2.imwrite(str(self.prob_dir / f"{name}.png"), prob_u8):
-            raise RuntimeError("falha ao gravar o mapa de probabilidade")
+        ok, prob_buf = cv2.imencode(".png", prob_u8)
+        if not ok:
+            raise RuntimeError("falha ao codificar o mapa de "
+                               "probabilidade")
+        prob_bytes = prob_buf.tobytes()
+
+        name = None
+        for _ in range(100):
+            candidate = (
+                f"{session_id}_{int(stamp * 1000)}_{self._count:06d}"
+                f"_{uuid.uuid4().hex[:8]}")
+            self._count += 1
+            input_path = self.input_dir / f"{candidate}.png"
+            prob_path = self.prob_dir / f"{candidate}.png"
+            try:
+                with open(input_path, "xb") as f:
+                    f.write(image_bytes)
+            except FileExistsError:
+                continue
+            try:
+                with open(prob_path, "xb") as f:
+                    f.write(prob_bytes)
+            except FileExistsError:
+                input_path.unlink(missing_ok=True)
+                continue
+            except BaseException:
+                input_path.unlink(missing_ok=True)
+                raise
+            name = candidate
+            break
+        if name is None:
+            raise RuntimeError("sem nome unico disponivel para o "
+                               "exemplo")
 
         row = {
             "file": name,

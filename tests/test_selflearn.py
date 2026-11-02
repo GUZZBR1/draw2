@@ -84,6 +84,39 @@ def test_recorder_writes_files_and_manifest_hash_matches(tmp_path):
     assert saved["corners"] == corners
 
 
+def test_recorder_concurrent_same_millisecond_never_overwrites(
+        tmp_path, monkeypatch):
+    # Dois gravadores, mesmo diretorio, mesma sessao, mesmo
+    # milissegundo (issue #21): nomes unicos, nenhum arquivo
+    # sobrescrito, e cada linha do manifesto bate com o seu arquivo.
+    import types
+
+    from draw.selflearn import collect as collect_module
+
+    frozen = types.SimpleNamespace(time=lambda: 1700000000.0)
+    monkeypatch.setattr(collect_module, "time", frozen)
+
+    out = tmp_path / "collected"
+    rec_a = ExampleRecorder(out)
+    rec_b = ExampleRecorder(out)
+    corners = [[0, 0], [30, 0], [30, 20], [0, 20]]
+    prob = np.full((20, 30), 0.5, dtype=np.float32)
+    warp_a = np.full((20, 30, 3), 200, dtype=np.uint8)
+    warp_b = np.full((20, 30, 3), 100, dtype=np.uint8)
+    row_a = rec_a.record("sess1", warp_a, prob, corners, "m1", "live")
+    row_b = rec_b.record("sess1", warp_b, prob, corners, "m1", "live")
+
+    assert row_a["file"] != row_b["file"]
+    for row in (row_a, row_b):
+        image_path = out / "input" / f"{row['file']}.png"
+        prob_path = out / "prob" / f"{row['file']}.png"
+        assert image_path.exists() and prob_path.exists()
+        digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
+        assert digest == row["sha256"]
+    lines = (out / "manifest.jsonl").read_text().strip().splitlines()
+    assert len(lines) == 2
+
+
 def _item(session, tta, novelty=0.0):
     return {
         "session_id": session,
