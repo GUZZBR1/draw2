@@ -69,7 +69,15 @@ def test_telemetry_counts_replaced_pending_and_stamps_stages(
         assert snapshot["submits"] == 3
         assert snapshot["submits_replaced"] == 1
         assert snapshot["passes"] == 2
-        assert snapshot["publishes"] == 2
+        # Reconciliacao com a orquestracao em camadas (PR #17):
+        # publishes conta so as passadas que publicam canvas
+        # confirmado novo. A mascara deste fake e vazia, entao so
+        # a primeira passada publica (a abertura da geracao); a
+        # segunda nao confirma nada novo e nao publica. No caminho
+        # de uniao antigo, toda passada publicava e o esperado era
+        # 2; o resto do contrato (submits, substituicoes, carimbos
+        # por passada) segue igual.
+        assert snapshot["publishes"] == 1
         assert len(snapshot["records"]) == 2
         for record in snapshot["records"]:
             assert record["generation"] == generation
