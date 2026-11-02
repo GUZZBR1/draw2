@@ -539,6 +539,17 @@ class _PageCleanWorker:
         self._worker_generation = -1
         self._union = None
         self._last_pass_start = None
+        # Telemetria por etapa (auditoria de latencia, U0 do loop
+        # v2): contadores e os carimbos das ultimas passadas, para
+        # medir onde o tempo submit->publicacao mora sem mudar
+        # comportamento nenhum. Quem le usa telemetry_snapshot();
+        # quem escreve e o submit (laco) e a trabalhadora, sempre
+        # sob a Condition. Ver docs/AUDITORIA_LATENCIA.md.
+        self._telemetry_submits = 0
+        self._telemetry_replaced = 0
+        self._telemetry_passes = 0
+        self._telemetry_publishes = 0
+        self._telemetry_records = deque(maxlen=256)
         # Evento de virada (U3, desligado por padrao): pendente
         # (geracao, canvas anterior) + contadores da deteccao por
         # cobertura sobre a uniao.
@@ -564,8 +575,33 @@ class _PageCleanWorker:
         with self._condition:
             if self._stopped or generation != self._generation:
                 return
-            self._pending = (warped, generation)
+            if self._pending is not None:
+                # Latest-wins: um warp pendente substituido nunca
+                # vira passada; a telemetria conta a substituicao
+                # porque ela e atraso real de atualizacao.
+                self._telemetry_replaced += 1
+            self._telemetry_submits += 1
+            self._pending = (warped, generation, time.monotonic())
             self._condition.notify_all()
+
+    def telemetry_snapshot(self):
+        """Copia da telemetria por etapa (somente leitura).
+
+        Contadores desde a criacao da trabalhadora e, por passada
+        recente, os carimbos monotonicos e as duracoes derivadas:
+        queue_wait_s (submit->inicio da passada; inclui a espera
+        da cadencia de _PAGE_CLEAN_INTERVAL_SECONDS), pass_s
+        (inicio->fim do modelo) e submit_to_publish_s (submit->
+        publicacao da uniao). Nenhum campo muda comportamento.
+        """
+        with self._condition:
+            return {
+                "submits": self._telemetry_submits,
+                "submits_replaced": self._telemetry_replaced,
+                "passes": self._telemetry_passes,
+                "publishes": self._telemetry_publishes,
+                "records": [dict(r) for r in self._telemetry_records],
+            }
 
     def poll(self, generation, after_version):
         """(versao, copia da mascara) se ha publicado novo da
@@ -622,9 +658,10 @@ class _PageCleanWorker:
                         return
                 if self._pending is None:
                     continue
-                warped, generation = self._pending
+                warped, generation, submitted_at = self._pending
                 self._pending = None
                 self._last_pass_start = time.monotonic()
+                pass_started_at = self._last_pass_start
             # Uma excecao do modelo (shape errado, sessao morta, ONNX
             # sem memoria) matava esta thread em silencio: o canvas
             # congelava no ultimo quadro e nada era impresso. O erro
@@ -637,6 +674,7 @@ class _PageCleanWorker:
                     self._stopped = True
                     self._condition.notify_all()
                 return
+            pass_ended_at = time.monotonic()
             with self._condition:
                 if self._stopped:
                     return
@@ -688,6 +726,22 @@ class _PageCleanWorker:
                     self._version,
                     self._union.copy(),
                 )
+                published_at = time.monotonic()
+                self._telemetry_passes += 1
+                self._telemetry_publishes += 1
+                self._telemetry_records.append({
+                    "generation": generation,
+                    "version": self._version,
+                    "submitted_at": submitted_at,
+                    "pass_started_at": pass_started_at,
+                    "pass_ended_at": pass_ended_at,
+                    "published_at": published_at,
+                    "queue_wait_s": pass_started_at - submitted_at,
+                    "pass_s": pass_ended_at - pass_started_at,
+                    "submit_to_publish_s": published_at - submitted_at,
+                    "mask_px": int(np.count_nonzero(mask)),
+                    "union_px": int(np.count_nonzero(self._union)),
+                })
                 self._condition.notify_all()
 
     @property
