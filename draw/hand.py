@@ -65,6 +65,12 @@ def _resolve_model_path(model_path):
     return None
 
 
+def hand_model_available(model_path=None):
+    """True se um arquivo de modelo resolve e existe neste disco."""
+    path = _resolve_model_path(model_path)
+    return path is not None and Path(path).exists()
+
+
 def _hand_polygons(points, frame_shape):
     """Os polígonos de uma mão: casco escalado e trapézio do antebraço.
 
