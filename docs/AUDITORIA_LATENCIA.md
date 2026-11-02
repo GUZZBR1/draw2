@@ -43,15 +43,17 @@ desta VM compartilhada, não da mesa do Lucas.
 |---|---|---|---|---|
 | Tinta falsa instantânea | 6 | 248,5 ms | 0,1 ms | 249,4 ms |
 | Modelo real v2 (`page_clean_v2_fixed.onnx`, sha 0e7fecb1…) | 4 | 0,0 ms | 4.700,8 ms | 4.741,7 ms |
+| Modelo real w8 instalada (`w8_page_clean_student_w8.onnx`, sha a470bd28…) | 6 | 1,7 ms | 2.877,3 ms | 2.882,4 ms |
 
 Leitura:
 
 - Com passada instantânea, o piso submit→publicação é a
   **cadência inteira**: submetido logo após a publicação
   anterior, o warp espera o resto dos 250 ms entre inícios.
-- Com o modelo real nesta VM (sob carga, ~4,7 s/passada — muito
-  acima dos ~0,6–1,1 s históricos dela em repouso, e dos
-  96,6–168 ms do Ryzen), a passada engole a cadência: fila ~0.
+- Com o modelo real nesta VM (sob carga: v2 ~4,7 s/passada e a
+  w8 ~2,9 s/passada — muito acima dos ~0,6–1,1 s históricos
+  dela em repouso, e dos 96,6–168 ms do Ryzen), a passada
+  engole a cadência: fila ~0–2 ms nas duas.
 - Projetando para o Ryzen com os números dele (passada
   96,6–168 ms < cadência 250 ms): o piso da trabalhadora é
   ~250–350 ms por atualização. **Nem a cadência nem a passada,
