@@ -43,6 +43,19 @@ def _score(item):
     return score, reasons
 
 
+class RankedExamples(list):
+    """Lista devolvida por rank_examples, com o registro da cota.
+
+    `random_quota_requested`: quantos itens a cota pedia.
+    `random_quota_unmet`: quantos a cota nao conseguiu preencher
+    (0 no caminho normal; > 0 so quando a populacao candidata e
+    menor que a cota pedida).
+    """
+
+    random_quota_requested = 0
+    random_quota_unmet = 0
+
+
 def rank_examples(items, per_session_cap=3, random_quota=0.2, seed=0):
     """Ordena items e aplica teto por sessao e cota aleatoria.
 
@@ -50,6 +63,13 @@ def rank_examples(items, per_session_cap=3, random_quota=0.2, seed=0):
     Retorna nova lista ordenada; cada item ganha "score" (float) e
     "reasons" (lista). Os itens da cota aleatoria ganham o motivo
     "random_quota" e vao ao fim da fila ordenada.
+
+    A cota e definida sobre a populacao candidata: primeiro sorteia
+    do overflow do teto por sessao; nao havendo overflow suficiente
+    (coleta pequena, todas as sessoes dentro do teto), sorteia da
+    propria fila ranqueada — nenhum item novo entra, entao o teto
+    por sessao segue respeitado. O que a cota nao preencher fica
+    registrado em `random_quota_unmet` da lista devolvida.
     """
     scored = []
     for item in items:
@@ -72,14 +92,31 @@ def rank_examples(items, per_session_cap=3, random_quota=0.2, seed=0):
             overflow.append(entry)
 
     n_random = int(round(len(ranked) * random_quota))
-    if n_random > 0 and overflow:
+    picks = []
+    keep = list(ranked)
+    if n_random > 0:
         rng = random.Random(seed)
-        sampled = rng.sample(overflow, min(n_random, len(overflow)))
-        picks = []
-        for entry in sampled:
-            pick = dict(entry)
-            pick["reasons"] = list(entry["reasons"]) + ["random_quota"]
-            picks.append(pick)
-        keep = ranked[: len(ranked) - len(picks)]
-        ranked = keep + picks
-    return ranked
+        if overflow:
+            sampled = rng.sample(overflow, min(n_random, len(overflow)))
+            for entry in sampled:
+                pick = dict(entry)
+                pick["reasons"] = list(entry["reasons"]) \
+                    + ["random_quota"]
+                picks.append(pick)
+            keep = ranked[: len(ranked) - len(picks)]
+        missing = n_random - len(picks)
+        if missing > 0 and keep:
+            chosen = rng.sample(keep, min(missing, len(keep)))
+            chosen_ids = {id(entry) for entry in chosen}
+            keep = [entry for entry in keep
+                    if id(entry) not in chosen_ids]
+            for entry in chosen:
+                pick = dict(entry)
+                pick["reasons"] = list(entry["reasons"]) \
+                    + ["random_quota"]
+                picks.append(pick)
+    result = RankedExamples(keep + picks)
+    result.random_quota_requested = n_random
+    result.random_quota_unmet = n_random - sum(
+        1 for entry in result if "random_quota" in entry["reasons"])
+    return result

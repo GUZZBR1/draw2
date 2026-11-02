@@ -119,6 +119,37 @@ def test_ranking_random_quota_filled_from_remainder():
     assert quota[0]["tta_disagreement"] == 0.5
 
 
+def test_ranking_random_quota_filled_without_overflow():
+    # Coleta pequena: nenhuma sessao estoura o teto, nao ha overflow,
+    # e mesmo assim a cota aleatoria tem de ser cumprida (issue #20).
+    items = [_item("a", 0.9), _item("a", 0.8), _item("b", 0.7),
+             _item("b", 0.6)]
+    ranked = rank_examples(items, per_session_cap=2, random_quota=0.5,
+                           seed=1)
+    quota = [r for r in ranked if "random_quota" in r["reasons"]]
+    assert len(ranked) == 4
+    assert len(quota) == 2
+    sessions = [r["session_id"] for r in ranked]
+    assert sessions.count("a") <= 2
+    assert sessions.count("b") <= 2
+    assert ranked.random_quota_requested == 2
+    assert ranked.random_quota_unmet == 0
+    # os itens da cota vao ao fim da fila
+    assert all("random_quota" in r["reasons"] for r in ranked[-2:])
+
+
+def test_ranking_random_quota_unmet_is_recorded():
+    # Cota maior que a populacao candidata: o nao atendido fica
+    # registrado explicitamente em vez de sumir em silencio.
+    items = [_item("a", 0.9), _item("b", 0.8)]
+    ranked = rank_examples(items, per_session_cap=3, random_quota=1.5,
+                           seed=0)
+    quota = [r for r in ranked if "random_quota" in r["reasons"]]
+    assert ranked.random_quota_requested == 3
+    assert len(quota) == 2
+    assert ranked.random_quota_unmet == 1
+
+
 def test_temporal_aggregate_median_closer_than_single_noisy_frame():
     rng = np.random.default_rng(7)
     clean = np.zeros((16, 16), dtype=np.float32)
