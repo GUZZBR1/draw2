@@ -55,6 +55,7 @@ from . import manifest as manifest_module
 from . import neural as neural_module
 from . import page_clean as page_clean_module
 from . import paper as paper_module
+from . import telemetry as telemetry_module
 
 
 _SHEET_NEAR_LIMIT_PX = 40.0
@@ -539,6 +540,8 @@ class _PageCleanWorker:
         self._worker_generation = -1
         self._union = None
         self._last_pass_start = None
+        self._passes_total = 0
+        self._last_pass_ms = None
         # Evento de virada (U3, desligado por padrao): pendente
         # (geracao, canvas anterior) + contadores da deteccao por
         # cobertura sobre a uniao.
@@ -629,6 +632,7 @@ class _PageCleanWorker:
             # sem memoria) matava esta thread em silencio: o canvas
             # congelava no ultimo quadro e nada era impresso. O erro
             # fica guardado, e o laco principal o reporta.
+            pass_started = time.monotonic()
             try:
                 mask = self._page_clean.ink_mask(warped)
             except Exception as error:  # noqa: BLE001 - vai para o laco
@@ -678,6 +682,10 @@ class _PageCleanWorker:
                                 self._turn_fired = True
                         else:
                             self._low_overlap_streak = 0
+                self._passes_total += 1
+                self._last_pass_ms = (
+                    time.monotonic() - pass_started
+                ) * 1000.0
                 if self._union is None:
                     self._union = mask
                 else:
@@ -689,6 +697,23 @@ class _PageCleanWorker:
                     self._union.copy(),
                 )
                 self._condition.notify_all()
+
+    def stats(self):
+        """Contadores para a telemetria: passadas e custo da ultima."""
+        with self._condition:
+            return {
+                "passes_total": self._passes_total,
+                "pass_ms": (
+                    None
+                    if self._last_pass_ms is None
+                    else round(self._last_pass_ms, 1)
+                ),
+                "canvas_px": (
+                    0
+                    if self._union is None
+                    else int(np.count_nonzero(self._union))
+                ),
+            }
 
     @property
     def error(self):
@@ -1240,6 +1265,13 @@ def run(
     frame_source = _LatestFrameCapture(capture).start()
     png_writer = _PngWriter()
     save_path = Path(save_dir)
+    telemetry = telemetry_module.SessionTelemetry(
+        save_path / "telemetry.jsonl"
+    ).start()
+    print(
+        "Telemetria de sessao ligada: 1 registro/s em "
+        f"{save_path / 'telemetry.jsonl'} (arquivo local e rotativo)."
+    )
     if markers_mode:
         print("Draw v0 rodando. Mostre a folha-modelo para a camera.")
     else:
@@ -1264,6 +1296,11 @@ def run(
     session_corners = None
     freeze_pending = False
     loop_frames = 0
+    tel_window_start = time.monotonic()
+    tel_window_frames = 0
+    tel_loop_fps = 0.0
+    tel_detect_ms = None
+    tel_sheet_present = False
 
     def save_raw_frame(img):
         frames_path.mkdir(parents=True, exist_ok=True)
@@ -1348,16 +1385,38 @@ def run(
             # no acumulador, como fazia o carimbo tirado no laco.
 
             loop_frames += 1
+            tel_window_frames += 1
+            tel_now = time.monotonic()
+            if tel_now - tel_window_start >= 1.0:
+                tel_loop_fps = round(
+                    tel_window_frames / (tel_now - tel_window_start), 2
+                )
+                tel_window_start = tel_now
+                tel_window_frames = 0
+            tel_fields = {
+                "loop_fps": tel_loop_fps,
+                "detect_ms": tel_detect_ms,
+                "sheet_present": tel_sheet_present,
+                "state": "sheet" if tel_sheet_present else "no_sheet",
+            }
+            if ink_worker is not None:
+                tel_fields.update(ink_worker.stats())
+            telemetry.update(**tel_fields)
             if auto_capture and loop_frames % 10 == 0:
                 save_raw_frame(frame)
 
             if markers_mode:
                 warped, markers = paper_module.warp_paper(frame)
                 sheet_present = warped is not None
+                tel_sheet_present = sheet_present
             else:
                 markers = {}
                 if tracker.should_detect(frame_number):
+                    detect_started = time.monotonic()
                     detected_corners, detected_verdict = detect_sheet(frame)
+                    tel_detect_ms = round(
+                        (time.monotonic() - detect_started) * 1000.0, 1
+                    )
                     ran_detection = True
                 else:
                     detected_corners, detected_verdict = None, None
@@ -1385,6 +1444,7 @@ def run(
                 # de tinta e o fallback de exibicao, que retifica sob
                 # demanda.
                 sheet_present = tracker.corners is not None
+                tel_sheet_present = sheet_present
                 warped = None
 
                 if ran_detection and tracker.corners is not None:
@@ -1645,6 +1705,7 @@ def run(
         frame_source.stop()
         if ink_worker is not None:
             ink_worker.stop()
+        telemetry.close()
         png_writer.close()
         cv2.destroyAllWindows()
 
