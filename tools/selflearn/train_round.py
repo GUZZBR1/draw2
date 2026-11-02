@@ -85,17 +85,67 @@ class UNet(nn.Module):
         return self.head(y)
 
 
-def supervised_loss(logits, target):
-    bce = F.binary_cross_entropy_with_logits(
-        logits, target, pos_weight=torch.tensor(8.0))
+def supervised_loss(logits, target, valid=None):
+    """BCE+Dice supervisionada; `valid` (0/1) exclui pixels da perda.
+
+    Pixels sem conteudo valido (a faixa descoberta por uma translacao
+    geometrica) nao sao fundo: sao ignorados, nao rotulados.
+    """
+    pos_weight = torch.tensor(8.0, device=logits.device,
+                              dtype=logits.dtype)
     p = torch.sigmoid(logits)
-    inter = (p * target).sum()
-    dice = 1 - (2 * inter + 1) / (p.sum() + target.sum() + 1)
+    if valid is None:
+        bce = F.binary_cross_entropy_with_logits(
+            logits, target, pos_weight=pos_weight)
+        inter = (p * target).sum()
+        dice = 1 - (2 * inter + 1) / (p.sum() + target.sum() + 1)
+        return bce + dice
+    bce_map = F.binary_cross_entropy_with_logits(
+        logits, target, pos_weight=pos_weight, reduction="none")
+    bce = (bce_map * valid).sum() / valid.sum().clamp(min=1)
+    inter = (p * target * valid).sum()
+    dice = 1 - (2 * inter + 1) / ((p * valid).sum()
+                                  + (target * valid).sum() + 1)
     return bce + dice
 
 
-def geo_view(img, rng, flip=None, dx=None, dy=None):
-    """Vista geometrica fraca: flip + translacao inteira pequena."""
+def shift_with_fill(arr, dy, dx, fill):
+    """Translacao inteira SEM wraparound: a faixa descoberta recebe
+    `fill`, em vez de pixels da borda oposta (np.roll e circular e
+    criava costura artificial conectando tracos separados)."""
+    out = np.full(arr.shape, fill, dtype=arr.dtype)
+    h, w = arr.shape[:2]
+    ys0, ys1 = max(0, -dy), min(h, h - dy)
+    xs0, xs1 = max(0, -dx), min(w, w - dx)
+    if ys1 > ys0 and xs1 > xs0:
+        out[ys0 + dy:ys1 + dy, xs0 + dx:xs1 + dx] = arr[ys0:ys1, xs0:xs1]
+    return out
+
+
+def geo_valid_mask(shape, dy, dx):
+    """1 onde o pixel veio do conteudo original, 0 na faixa descoberta
+    pela translacao (flip nao muda a cobertura: espelha uns)."""
+    return shift_with_fill(np.ones(shape, dtype=np.float32), dy, dx, 0.0)
+
+
+def _background_estimate(img):
+    """Mediana dos pixels de borda: estimativa robusta do fundo da
+    pagina (a borda e dominada por fundo, mesmo com traco encostando)."""
+    if img.ndim == 3:
+        border = np.concatenate(
+            [img[0], img[-1], img[:, 0], img[:, -1]], axis=0)
+        return np.median(border, axis=0).astype(img.dtype)
+    border = np.concatenate([img[0], img[-1], img[:, 0], img[:, -1]])
+    return img.dtype.type(np.median(border))
+
+
+def geo_view(img, rng, flip=None, dx=None, dy=None, fill=None):
+    """Vista geometrica fraca: flip + translacao inteira pequena.
+
+    A translacao preenche a faixa descoberta com o fundo estimado da
+    imagem (ou `fill`, ex.: 0 numa mascara) — nunca com pixels
+    transportados da borda oposta.
+    """
     out = img
     if flip is None:
         flip = rng.random() < 0.5
@@ -105,7 +155,9 @@ def geo_view(img, rng, flip=None, dx=None, dy=None):
         dx = int(rng.integers(-3, 4))
     if dy is None:
         dy = int(rng.integers(-3, 4))
-    return np.roll(out, shift=(dy, dx), axis=(0, 1)), flip, dx, dy
+    if fill is None:
+        fill = _background_estimate(out)
+    return shift_with_fill(out, dy, dx, fill), flip, dx, dy
 
 
 def strong_view(img, rng):
@@ -177,7 +229,7 @@ def run_round(labeled, unlabeled, out_dir, steps, batch=4,
     sup_history = []
     t0 = time.time()
     for step in range(steps):
-        imgs, targets = [], []
+        imgs, targets, valids = [], [], []
         for _ in range(batch):
             img, mask = labeled[int(rng.integers(0, len(labeled)))]
             y, x, size = sample_patch(img, patch, rng)
@@ -187,14 +239,18 @@ def run_round(labeled, unlabeled, out_dir, steps, batch=4,
             dx = int(rng.integers(-3, 4))
             dy = int(rng.integers(-3, 4))
             img_g, _, _, _ = geo_view(img_p, rng, flip, dx, dy)
-            mask_g, _, _, _ = geo_view(mask_p, rng, flip, dx, dy)
+            mask_g, _, _, _ = geo_view(mask_p, rng, flip, dx, dy,
+                                       fill=0.0)
             imgs.append(to_tensor(np.ascontiguousarray(img_g)))
             targets.append(torch.from_numpy(
                 np.ascontiguousarray(mask_g))[None])
+            valids.append(torch.from_numpy(
+                geo_valid_mask(mask_p.shape, dy, dx))[None])
         x_lab = torch.stack(imgs).to(device)
         y_lab = torch.stack(targets).to(device)
+        v_lab = torch.stack(valids).to(device)
         logits = student(x_lab)
-        loss_sup = supervised_loss(logits, y_lab)
+        loss_sup = supervised_loss(logits, y_lab, v_lab)
 
         loss = loss_sup
         if unlabeled:
