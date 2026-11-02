@@ -1,9 +1,13 @@
 __pycache__/
+.pytest_cache/
 .venv/
 captures/
 # Sessoes do loop (frames privados da mesa) com --save-dir fora de
 # captures/: nunca versionar, em nenhuma raiz.
 sessions/
+logs/
+dataset/
+models/*.onnx
 template/paper_template.png
 *.pyc
 .DS_Store
