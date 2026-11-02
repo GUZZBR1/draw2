@@ -88,3 +88,22 @@ def test_cli_exit_codes_and_dibco_label(tmp_path):
     assert run.returncode == 1
     assert "REJECT" in run.stdout
     assert "diagnostico" in run.stdout
+
+
+def test_cli_worst_group_tolerance_flag_reaches_the_gate(tmp_path):
+    # judge_candidate aceita worst_group_tolerance, mas a CLI nao
+    # expunha a flag: a tolerancia ficava sempre 0 na pratica.
+    candidate = tmp_path / "candidate.json"
+    baseline = tmp_path / "baseline.json"
+    candidate.write_text(json.dumps(_real(0.50, 0.33)))
+    baseline.write_text(json.dumps(_real(0.45, 0.35)))
+    cmd = [sys.executable, str(ROOT / "tools/selflearn/judge_gate.py"),
+           "--candidate", str(candidate), "--baseline", str(baseline)]
+    strict = subprocess.run(cmd, capture_output=True, text=True,
+                            timeout=60)
+    assert strict.returncode == 1  # pior grupo regrediu 0,02 sem tolerancia
+    tolerant = subprocess.run(
+        cmd + ["--worst-group-tolerance", "0.05"],
+        capture_output=True, text=True, timeout=60)
+    assert tolerant.returncode == 0
+    assert "PROMOTE" in tolerant.stdout
