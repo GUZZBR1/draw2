@@ -132,15 +132,19 @@ Um candidato `blank_maybe` recebe tratamento mais duro no app. Ele precisa do do
 
 O portão existe por um histórico medido. A versão só geométrica aceitava qualquer quadrilátero convexo grande. Numa auditoria com 10 cenas sem papel nenhum, ela disparou em 6. Tapete de mesa, caixa de papelão, monitor e bandeja branca viraram folha. O portão de textura cortou esses casos nas cenas medidas, sem modelo nenhum. Os limiares atuais são calibração de laboratório e precisam ser refeitos com capturas reais.
 
-### Tinta e canvas acumulativo
+### Tinta e canvas
+
+O caminho padrão de tinta é o modelo página→limpa: uma U-Net leve (`models/page_clean_unet.onnx`, o modelo w8) que recebe a folha retificada e devolve a máscara de tinta, separando o traço da pauta, da textura do papel e da sombra. O binário é distribuído pela Release `models-2026-11-02` e registrado em `models/MANIFEST.json`; um clone novo o baixa com `python tools/fetch_models.py`. O modelo roda numa thread própria. A tinta nova aparece primeiro como camada provisória, mais clara e só na tela; o canvas confirmado é a união das máscaras que o voto entre passadas confirma, e é ele que alimenta o cursor e os snapshots. O w8 é o modelo vigente, não o teto: aprovado pela régua de replay em laboratório, segue provisório até um candidato melhor passar pela mesma régua e pelo teste ao vivo na mesa do autor.
+
+Sem o arquivo do modelo, ou se a carga dele falhar, o app avisa apontando o fetch e cai para a pilha antiga de tinta — o mesmo caminho da flag `--legacy-ink`. É essa pilha que os parágrafos seguintes descrevem.
 
 Um limiar adaptativo separa a tinta do papel na folha retificada. Um veto separável roda junto. Um pixel só vira tinta quando está pelo menos 6 níveis abaixo das medianas da linha e da coluna inteiras dele. O veto mata a pauta do caderno e a textura do papel, que o limiar sozinho marcava como tinta.
 
-O canvas não é uma foto do frame atual. Ele acumula evidência com histerese sobre uma janela de 15 frames. Um pixel entra na tinta com fração de amostras visíveis de 0,45 e sai com 0,20, com um mínimo de 4 amostras visíveis. O traço sobrevive à mão passando por cima. A borracha também funciona por esse caminho. A tinta apagada some do canvas depois de amostras limpas visíveis o bastante, não no frame seguinte.
+O canvas da pilha antiga não é uma foto do frame atual. Ele acumula evidência com histerese sobre uma janela de 15 frames. Um pixel entra na tinta com fração de amostras visíveis de 0,45 e sai com 0,20, com um mínimo de 4 amostras visíveis. O traço sobrevive à mão passando por cima. A borracha também funciona por esse caminho. A tinta apagada some do canvas depois de amostras limpas visíveis o bastante, não no frame seguinte.
 
 Com a máscara de mão ligada, a região sob a mão vira desconhecida. Ela não ganha nem perde tinta enquanto está coberta.
 
-O app também aceita um modelo aprendido de tinta por `--ink-model`. A integração está pronta e testada com um ONNX da arquitetura. O treino do modelo de tinta ainda não rodou. Sem ele, vale o caminho heurístico descrito acima.
+A flag `--ink-model` injeta um ONNX próprio na pilha antiga; sem ela, vale o caminho descrito acima.
 
 ## Desempenho medido
 
