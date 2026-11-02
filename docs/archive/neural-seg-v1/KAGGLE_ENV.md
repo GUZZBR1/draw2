@@ -1,59 +1,59 @@
-# Ambiente de treino e compatibilidade
+# Training environment and compatibility
 
-Este documento descreve o contrato atual do pipeline. O treino completo ainda
-não foi executado nesta proposta; as dependências e os checks locais não
-substituem uma execução com GPU e dados reais.
+This document describes the current contract of the pipeline. The full training
+has not yet been run in this proposal; local dependencies and checks do not
+replace a run with GPU and real data.
 
-## Ambiente reproduzível
+## Reproducible environment
 
-Use Python 3.11 ou 3.12 e as versões diretas fixadas em
-`training/requirements.txt`. O notebook não instala pacotes: falha no preflight
-se uma dependência obrigatória faltar ou tiver versão diferente. Para `torch`,
-instale a wheel de versão `2.11.0` compatível com o runtime CUDA da máquina.
+Use Python 3.11 or 3.12 and the pinned direct versions in
+`training/requirements.txt`. The notebook does not install packages: it fails in preflight
+if a mandatory dependency is missing or has a different version. For `torch`,
+install the version `2.11.0` wheel compatible with the machine's CUDA runtime.
 
-| Pacote | Versão | Uso |
+| Package | Version | Use |
 |---|---:|---|
-| torch | 2.11.0 | Modelo, treino, AMP e exportação |
-| transformers | 4.57.1 | SegFormer-B0 pré-treinado |
-| albumentations | 2.0.8 | Augmentations pareadas de imagem e máscara |
-| numpy | 1.26.4 | Dados e métricas |
-| opencv-contrib-python | 4.11.0.86 | Imagens, máscaras e pré-processamento |
-| onnx | 1.23.0 | Exportação |
-| onnxruntime | 1.31.1 | Validação do artefato exportado |
+| torch | 2.11.0 | Model, training, AMP and export |
+| transformers | 4.57.1 | Pre-trained SegFormer-B0 |
+| albumentations | 2.0.8 | Paired image and mask augmentations |
+| numpy | 1.26.4 | Data and metrics |
+| opencv-contrib-python | 4.11.0.86 | Images, masks and preprocessing |
+| onnx | 1.23.0 | Export |
+| onnxruntime | 1.31.1 | Validation of the exported artifact |
 
-O notebook recebe `training/` e os datasets como inputs do Kaggle; não clona o
-repositório nem baixa dependências. O backbone `nvidia/mit-b0` precisa estar em
-cache ou acessível na primeira chamada de `from_pretrained`.
+The notebook receives `training/` and the datasets as Kaggle inputs; it does not clone the
+repository or download dependencies. The `nvidia/mit-b0` backbone must be in
+cache or accessible on the first `from_pretrained` call.
 
-## O que o código executa
+## What the code executes
 
-- Augmentation geométrica aplica os mesmos parâmetros à imagem e à máscara;
-  máscaras usam nearest-neighbor. Fotometria altera somente a imagem.
-- O treino usa bf16 em CUDA quando disponível, fp16 escalado como fallback e
-  fp32 em CPU. `gradient_accumulation_steps` controla os passos do otimizador.
-- O scheduler faz warmup linear seguido de decaimento cosseno, em passos do
-  otimizador.
-- O split `val` dirige early stopping e seleção de checkpoint. O split `test`
-  é avaliado uma vez depois de carregar o melhor checkpoint e não participa da
-  seleção.
-- O wrapper de exportação redimensiona logits do SegFormer para a resolução de
-  entrada. Para entrada 512×512, o contrato é `image` `[N,3,512,512]` e
+- Geometric augmentation applies the same parameters to image and mask;
+  masks use nearest-neighbor. Photometry changes only the image.
+- Training uses bf16 on CUDA when available, scaled fp16 as fallback and
+  fp32 on CPU. `gradient_accumulation_steps` controls optimizer steps.
+- The scheduler does linear warmup followed by cosine decay, in optimizer
+  steps.
+- The `val` split drives early stopping and checkpoint selection. The `test`
+  split is evaluated once after loading the best checkpoint and does not participate in
+  selection.
+- The export wrapper resizes SegFormer logits to the input
+  resolution. For 512×512 input, the contract is `image` `[N,3,512,512]` and
   `logits` `[N,4,512,512]`.
-- A validação ONNX compara shape, diferença máxima absoluta dos logits e IoU
-  mínima de argmax. `ok` passou os limites, `degraded` falhou, `skipped` não
-  conseguiu comparar. `skipped` nunca significa que o ONNX está validado.
-- Métricas do treino usam `tools/seg_metrics.py`, inclusive pixels 255 e
-  tolerância de tinta agregada sobre todas as imagens avaliadas.
+- ONNX validation compares shape, maximum absolute logit difference and minimum
+  argmax IoU. `ok` passed the limits, `degraded` failed, `skipped` could not
+  compare. `skipped` never means the ONNX is validated.
+- Training metrics use `tools/seg_metrics.py`, including 255 pixels and
+  ink tolerance aggregated over all evaluated images.
 
-## Limites conhecidos
+## Known limits
 
-- `last.pt` e `best.pt` salvam pesos do modelo, mas o pipeline ainda não retoma
-  optimizer, scheduler ou estado de época após interrupção.
-- O dataset real atual tem 719 frames de duas sessões, usados apenas no treino.
-  As máscaras são pseudo-rótulos com revisão em miniaturas; bordas finas ainda
-  não foram revisadas pixel a pixel. Não existe holdout real independente.
-- Não foi executado treino completo nem produzido um modelo nesta proposta.
-  Resultados de treino com os pseudo-rótulos precisam ser marcados como
-  exploratórios; use uma nova sessão real para avaliação independente.
-- GPU, cota do Kaggle e cache dos pesos precisam ser confirmados no runtime da
-  execução. Um smoke CPU não comprova uso de GPU nem qualidade do modelo.
+- `last.pt` and `best.pt` save model weights, but the pipeline does not yet resume
+  optimizer, scheduler or epoch state after interruption.
+- The current real dataset has 719 frames from two sessions, used only in training.
+  The masks are pseudo-labels with thumbnail review; thin edges have not yet
+  been reviewed pixel by pixel. There is no independent real holdout.
+- No full training was run and no model produced in this proposal.
+  Training results with the pseudo-labels must be marked as
+  exploratory; use a new real session for independent evaluation.
+- GPU, Kaggle quota and weight cache must be confirmed in the execution
+  runtime. A CPU smoke test does not prove GPU use or model quality.

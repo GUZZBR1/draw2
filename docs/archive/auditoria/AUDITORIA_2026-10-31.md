@@ -1,403 +1,400 @@
-# Auditoria pesada do Draw — com foco no modelo de IA
+# Heavy audit of Draw — with a focus on the AI model
 
-**Data:** 2026-10-31. **Base auditada:** `main` em `5d64146` (clone fresco
-do GitHub), mais o laboratório completo (`draw-lab`, `draw-bridge`) onde
-vivem treinos, réguas e relatórios. **Onde rodou:** VM da Julia — nenhuma
-medição de latência desta auditoria transfere para o Ryzen do Lucas; os
-tempos de VM citados são só prova de execução. **Método:** leitura de
-código com evidência `file:line`, inspeção de metadados ONNX medida
-(onnx 1.23.2 / onnxruntime 1.31.1 / OpenCV 5.0.0), execução da suíte de
-testes do clone e leitura de todos os relatórios de treino/julgamento do
-laboratório. Número sem fonte declarada = número de relatório, não
-remedido.
+**Date:** 2026-10-31. **Audited base:** `main` at `5d64146` (fresh
+clone from GitHub), plus the complete laboratory (`draw-lab`, `draw-bridge`) where
+training runs, rulers and reports live. **Where it ran:** Julia's VM — no
+latency measurement from this audit transfers to Lucas's Ryzen; the
+VM times cited are only proof of execution. **Method:** code reading
+with `file:line` evidence, measured ONNX metadata inspection
+(onnx 1.23.2 / onnxruntime 1.31.1 / OpenCV 5.0.0), execution of the
+test suite of the clone and reading of all training/judgment reports
+from the laboratory. A number with no declared source = a report number, not
+remeasured.
 
-> **Ressalva de base.** A auditoria congelou o código em `5d64146`.
-> **Durante a auditoria, a main avançou** para `686e29a` (2026-10-31
-> 16:34), que empurra a unidade 3 do reinício (`draw/page_clean.py`
-> novo + mudanças em `draw/app.py`: page-clean como tinta padrão,
-> heurística atrás de `--legacy-ink`). O código da unidade 3 **não foi
-> auditado linha a linha** — o page-clean entra pelos relatórios do
-> laboratório (`page-clean-v0/UNIT3_REPORT.md`) — e a sequência
-> (padrão primeiro, julgamento real depois) é ela mesma um achado
+> **Base caveat.** The audit froze the code at `5d64146`.
+> **During the audit, main advanced** to `686e29a` (2026-10-31
+> 16:34), which pushes restart unit 3 (`draw/page_clean.py`
+> new + changes in `draw/app.py`: page-clean as the default ink,
+> heuristic behind `--legacy-ink`). The unit 3 code **was not
+> audited line by line** — page-clean enters through the laboratory
+> reports (`page-clean-v0/UNIT3_REPORT.md`) — and the sequence
+> (default first, real judgment afterwards) is itself a finding
 > (R2/R8).
 
 ---
 
-## 1. Sumário executivo
+## 1. Executive summary
 
-O projeto mudou de tamanho: são **11 modelos** na linhagem (folha
-v1–v4, piloto de 4 classes, tinta U-Net v1/v2, tinta pareada v3,
-flagship pareada, page-clean v0, mais o precursor CornerNet), um runner
-de experimentos (`tools/runner`), uma ponte de julgamento
-(`draw-bridge`, absorvida em parte pelo runner) e dezenas de relatórios
-de laboratório. **Só um modelo está em produção** (folha v3) e **só um
-virou padrão sem julgamento real** (page-clean v0 — entrou na main
-durante esta auditoria, `686e29a`).
+The project has changed in size: there are **11 models** in the lineage (sheet
+v1–v4, 4-class pilot, ink U-Net v1/v2, paired ink v3,
+paired flagship, page-clean v0, plus the CornerNet precursor), an
+experiment runner (`tools/runner`), a judgment bridge
+(`draw-bridge`, partly absorbed by the runner) and dozens of laboratory
+reports. **Only one model is in production** (sheet v3) and **only one
+became the default without real judgment** (page-clean v0 — it entered main
+during this audit, `686e29a`).
 
-Os três problemas estruturais que a auditoria encontra, em ordem:
+The three structural problems the audit finds, in order:
 
-1. **Reprodutibilidade**: o modelo de produção não está no repo, não há
-   verificação de integridade na carga, e o módulo da flag `--ink-model`
-   nunca foi empurrado. Quem clona o projeto não reproduz o sistema que
-   roda na mesa do Lucas (R1, R8).
-2. **Julgamento**: a métrica interna **nunca** previu a cena real — em
-   nenhuma das famílias, com um caso documentado por família (§3.2). A
-   folha v3 está em produção **sem nenhum número de outro setup**; o
-   protocolo externo por setup desenhado em 2026-10-29 nunca foi
-   executado. O page-clean tem **zero** medição real e latência no Ryzen
-   nunca medida (R2, R4).
-3. **Latência da tinta é estrutural**: quatro formulações de tinta em
-   página cheia medem 323–355 ms no Ryzen; a flagship mede 431,3 ms,
-   acima do teto de 400. Somada à detecção, a estimativa do frame é
-   ~428–459 ms (partes medidas separadas; a integração no mesmo loop
-   nunca foi medida). Não é um problema de um modelo — é da formulação
-   "página cheia por frame" (R3).
+1. **Reproducibility**: the production model is not in the repo, there is no
+   integrity check on loading, and the module for the `--ink-model` flag
+   was never pushed. Whoever clones the project does not reproduce the system that
+   runs on Lucas's desk (R1, R8).
+2. **Judgment**: the internal metric **never** predicted the real scene — in
+   none of the families, with one documented case per family (§3.2). The
+   sheet v3 is in production **with no number from another setup**; the
+   external per-setup protocol designed on 2026-10-29 was never
+   executed. Page-clean has **zero** real measurement and latency on the Ryzen
+   never measured (R2, R4).
+3. **Ink latency is structural**: four full-page ink formulations measure 323–355 ms on the Ryzen; the flagship measures 431.3 ms,
+   above the 400 cap. Added to detection, the frame estimate is
+   ~428–459 ms (parts measured separately; integration in the same loop
+   was never measured). It is not a problem of one model — it is of the
+   "full page per frame" formulation (R3).
 
-O que está **saudável** e a auditoria confirma: a disciplina de réguas
-reais (harness, replay, régua de cena) já salvou o projeto de três
-trocas ruins (folha v2, tinta v1, folha v4); a cascata da ponte codifica
-corretamente o aprendizado (interno só detecta morte; quem ranqueia é a
-régua); e as guardas geométricas publicadas seguram o jitter medido
-(TR.x std 129,6 → 65,6 px nas séries gravadas).
+What is **healthy** and the audit confirms: the discipline of real
+rulers (harness, replay, scene ruler) has already saved the project from three
+bad swaps (sheet v2, ink v1, sheet v4); the bridge cascade correctly encodes
+the learning (internal only detects death; the ruler is what ranks); and the
+published geometric guards hold the measured jitter
+(TR.x std 129.6 → 65.6 px in the recorded series).
 
 ---
 
-## 2. Inventário de modelos (linhagem condensada)
+## 2. Model inventory (condensed lineage)
 
-Detalhe completo, com n e régua de cada número, no laboratório
+Complete detail, with n and the ruler for each number, in the laboratory
 (`ink-flagship/REPORT.md`, `ink-model/BUILD_REPORT*.md`,
 `neural/v*/TRAIN_REPORT.md`/`RUN_REPORT.md`, `page-clean-v0/*.md`).
 
-| Modelo | O que é | Julgamento (régua principal) | Status |
+| Model | What it is | Judgment (main ruler) | Status |
 |---|---|---|---|
-| Folha v1 | SegFormer-B0, máscara + presença | MIDV held-out IoU 0,987 (200/96); holdout Lucas n=3 IoU 0,92 | Superada |
-| Folha v2 | Idêntica; dados corrigidos (school + SmartDoc) | Modelo cru empata/vence; **pelo app: 41/43** — NÃO TROCAR | Dormente |
-| **Folha v3** | Idêntica; SmartDoc rotativo + negativos COCO + copy-paste | Harness 43/43, 0 FP, IoU 0,962/0,841 (11 máscaras); treino 44,7 min (v2: 3h51) | **PRODUÇÃO** (`draw_seg_v3_dyn.onnx`, 384 px dinâmico) |
-| Folha v4 | SegFormer-B0 multitarefa + heatmaps de cantos | Pela SPEC: presença **7/43**; cabeça de cantos colapsada (picos 0,09–0,15) — NÃO TROCAR | Reprovada |
-| Piloto 4 classes (PR #7) | SegFormer-B0 fundo/papel/mão/tinta | Sintético IoU 0,9137; **real: 42/43, FP 6/6, IoU quad 0,478** | Dormente, opt-in |
-| Tinta U-Net v1 | U-Net 483k params, página cheia | Sintético 17/18 réguas verdes; **replay real: 0/8 regiões, P(tinta) mediana 0,0000 no real** | Reprovada p/ troca |
-| Tinta U-Net v2 | Mesma U-Net; aparência corrigida + pseudo-rótulos reais | Replay parcial: cobertura 99,3%, bolhas 54,4%; vazamento de impresso 1,41% (régua 0,5%) | Reprovada p/ troca |
-| Tinta pareada U-Net v3 | Par (antes, depois) → tinta nova | Estratos sintéticos ok; **régua de cena: sombra reprova por 5–15×** | Dormente |
-| Tinta flagship pareada | SegFormer-B0 pareado + cabeça de oclusão | Cena: sombra **0,00%** falsa, recall sob sombra 0,804; recall limpo **0,755 < 0,85**; latência **431,3 ms** | Pendente (iterar protocolo v6) |
-| **Page-clean U-Net v0** | Página retificada → máscara de tinta | Sintético→sintético: IoU **0,800** × 0,177 do limiar (48 págs). **Real: nada medido** | **Padrão no app (main `686e29a`)**, julgamento real pendente (unidade 4) |
-| CornerNet (precursor) | U-Net pequeno, heatmaps de cantos | Só sintético (erro 11,3 px, n=40) | Superado |
+| Sheet v1 | SegFormer-B0, mask + presence | MIDV held-out IoU 0.987 (200/96); Lucas holdout n=3 IoU 0.92 | Superseded |
+| Sheet v2 | Identical; corrected data (school + SmartDoc) | Raw model ties/wins; **through the app: 41/43** — DO NOT SWAP | Dormant |
+| **Sheet v3** | Identical; rotating SmartDoc + COCO negatives + copy-paste | Harness 43/43, 0 FP, IoU 0.962/0.841 (11 masks); training 44.7 min (v2: 3h51) | **PRODUCTION** (`draw_seg_v3_dyn.onnx`, 384 px dynamic) |
+| Sheet v4 | SegFormer-B0 multitask + corner heatmaps | By the SPEC: presence **7/43**; corner head collapsed (peaks 0.09–0.15) — DO NOT SWAP | Failed |
+| 4-class pilot (PR #7) | SegFormer-B0 background/paper/hand/ink | Synthetic IoU 0.9137; **real: 42/43, FP 6/6, quad IoU 0.478** | Dormant, opt-in |
+| Ink U-Net v1 | U-Net 483k params, full page | Synthetic 17/18 rulers green; **real replay: 0/8 regions, median P(ink) 0.0000 on real** | Failed for swap |
+| Ink U-Net v2 | Same U-Net; corrected appearance + real pseudo-labels | Partial replay: coverage 99.3%, bubbles 54.4%; printed leakage 1.41% (ruler 0.5%) | Failed for swap |
+| Paired ink U-Net v3 | Pair (before, after) → new ink | Synthetic strata ok; **scene ruler: shadow fails by 5–15×** | Dormant |
+| Paired ink flagship | Paired SegFormer-B0 + occlusion head | Scene: shadow **0.00%** false, recall under shadow 0.804; clean recall **0.755 < 0.85**; latency **431.3 ms** | Pending (iterate protocol v6) |
+| **Page-clean U-Net v0** | Rectified page → ink mask | Synthetic→synthetic: IoU **0.800** × 0.177 for the threshold (48 pages). **Real: nothing measured** | **Default in the app (main `686e29a`)**, real judgment pending (unit 4) |
+| CornerNet (precursor) | Small U-Net, corner heatmaps | Synthetic only (error 11.3 px, n=40) | Superseded |
 
-**Colisão de nomes (risco real de confusão):** "v3" nomeia três coisas
-sem relação — a folha SegFormer, a tinta pareada U-Net e a corrida
-válida da flagship (versão 3 do kernel dela). Idem "v1/v2" da tinta ×
-da folha. Ver R9.
+**Name collision (real confusion risk):** "v3" names three
+unrelated things — the SegFormer sheet, the paired ink U-Net and the
+valid run of the flagship (version 3 of its kernel). Likewise "v1/v2" of ink ×
+of sheet. See R9.
 
 ---
 
-## 3. Achados
+## 3. Findings
 
-### 3.1 O modelo de produção não mora no repo (severidade alta)
+### 3.1 The production model does not live in the repo (high severity)
 
-- `models/` do repo contém **só o piloto experimental** (15,2 MB).
-  O `draw_seg_v3_dyn.onnx` de produção vive apenas no laboratório e na
-  máquina do Lucas. Medido nesta auditoria: dyn = 15.191.109 B,
-  sha256 `751e74da…` (confere com o registro de laboratório), entrada
-  simbólica `[1,3,H,W]`, 1.585 nós, 3.714.402 parâmetros; o v3 fixo
-  (512) tem 959 nós e os mesmos parâmetros.
-- `_load_session` (`draw/neural.py:153-171`) **não verifica integridade
-  nenhuma**: qualquer arquivo com o nome certo é aceito. Não há
-  manifesto de modelos (nome + hash + régua que o aprovou) no repo.
-- **Política invertida**: o artefato versionado em git é justamente o
-  modelo experimental que não pode virar padrão, enquanto o de produção
-  fica fora.
-- A flag `--ink-model` é **morta num clone fresco**: `draw/app.py`
-  importa `draw/ink_model.py` atrás de try/except porque o módulo nunca
-  foi empurrado — o app avisa "não está presente neste pacote" e segue
-  na heurística. Flag sem módulo é dívida silenciosa.
+- `models/` in the repo contains **only the experimental pilot** (15.2 MB).
+  The production `draw_seg_v3_dyn.onnx` lives only in the laboratory and on
+  Lucas's machine. Measured in this audit: dyn = 15,191,109 B,
+  sha256 `751e74da…` (matches the laboratory record), symbolic
+  input `[1,3,H,W]`, 1,585 nodes, 3,714,402 parameters; the fixed v3
+  (512) has 959 nodes and the same parameters.
+- `_load_session` (`draw/neural.py:153-171`) **checks no integrity
+  whatsoever**: any file with the right name is accepted. There is no
+  model manifest (name + hash + ruler that approved it) in the repo.
+- **Inverted policy**: the artifact versioned in git is precisely the
+  experimental model that cannot become the default, while the production one
+  stays outside.
+- The `--ink-model` flag is **dead in a fresh clone**: `draw/app.py`
+  imports `draw/ink_model.py` behind a try/except because the module was never
+  pushed — the app warns "not present in this package" and continues
+  on the heuristic. A flag without a module is silent debt.
 
-### 3.2 A métrica interna nunca previu a cena (severidade alta, padrão)
+### 3.2 The internal metric never predicted the scene (high severity, pattern)
 
-Um caso documentado por família, todos nos relatórios do laboratório:
+One documented case per family, all in the laboratory reports:
 
-- **Tinta v1**: 17/18 réguas sintéticas verdes → replay real com
-  P(tinta) mediana **0,0000** sobre a tinta verdadeira.
-- **Piloto**: recall de papel sintético 0,9888 → no real, a máscara
-  cobre 29–34% do frame onde a folha domina; IoU 0,9137 → 0,478.
-- **Folha v4**: o escore interno **subiu até a época 20** enquanto a
-  cabeça de cantos (a saída decisiva da SPEC) já colapsava no próprio
-  held-out do treino (erro 173,4/1000 × 44,3/1000 do ajuste por
-  máscara). A régua interna não tinha termo capaz de reprovar a cabeça
-  que mandava no caminho.
-- **Flagship × pareada v3**: paridade nos estratos sintéticos; a régua
-  de cena separa as duas por 5–15× nos portões de sombra.
+- **Ink v1**: 17/18 synthetic rulers green → real replay with
+  median P(ink) **0.0000** over the true ink.
+- **Pilot**: synthetic paper recall 0.9888 → in real use, the mask
+  covers 29–34% of the frame where the sheet dominates; IoU 0.9137 → 0.478.
+- **Sheet v4**: the internal score **rose until epoch 20** while the
+  corner head (the decisive output of the SPEC) was already collapsing on the
+  training's own held-out (error 173.4/1000 × 44.3/1000 for the mask
+  fit). The internal ruler had no term capable of failing the head
+  that ruled the path.
+- **Flagship × paired v3**: parity in the synthetic strata; the
+  scene ruler separates the two by 5–15× at the shadow gates.
 
-Corolário já medido duas vezes: quando a régua interna e a de cena
-discordam, **a de cena é a que decide** (folha v2 e tinta v1). A
-cascata da ponte (`tools/runner` + `draw-bridge`) já codifica isso —
-interno só detecta corrida morta; mini-régua ranqueia (provada em 5/6
-métricas-chave); réguas completas julgam; holdout real é o portão
-final. A auditoria recomenda **formalizar essa regra como política de
-troca escrita** (R4), porque ela hoje vive em documentos da ponte, não
-no caminho de decisão do repo principal.
+Corollary already measured twice: when the internal ruler and the scene ruler
+disagree, **the scene ruler is the one that decides** (sheet v2 and ink v1). The
+bridge cascade (`tools/runner` + `draw-bridge`) already encodes this —
+internal only detects a dead run; the mini-ruler ranks (proven on 5/6
+key metrics); full rulers judge; the real holdout is the final
+gate. The audit recommends **formalizing this rule as a written swap
+policy** (R4), because today it lives in bridge documents, not
+in the decision path of the main repo.
 
-### 3.3 Generalização: o número que falta é o de outro setup (alta)
+### 3.3 Generalization: the missing number is from another setup (high)
 
-- A folha v3 está em produção **sem nenhum número fora da mesa do
-  Lucas**. O protocolo externo por setup (3–5 setups, 40–60 frames por
-  setup, portão por setup: presença ≥95%, 0 FP, IoU ≥0,85, pior setup
-  como manchete) foi desenhado em `research-v3/REPORT.md` §3.3 em
-  2026-10-29 e **nunca foi executado**.
-- O holdout real da folha são **3 frames de uma única sessão** (uma
-  mesa, uma câmera), com gabarito de ±20 px. Os 6 negativos dos 49
-  frames participaram do treino de presença (oversampling ×12): todo
-  "0 FP nos negativos dele" é leitura **em-amostra**. A evidência
-  fora-de-amostra contra FP é o held-out do MIDV (96 negativos).
-- A caixa branca segue sendo o FP conhecido: a v3 crua dispara fraco
-  nela (logit +0,41 a +0,98 a 512 px) e a v4 disparava forte
-  (+4,84 a +5,39) — um dos motivos do NÃO TROCAR da v4.
-- O page-clean **não tem nenhuma medição real**: IoU 0,800 é
-  sintético→sintético, exatamente a posição em que a tinta v1 estava
-  quando reprovou no real. E a latência dele foi medida só nesta VM
-  (mediana 1.542 ms/página, mosaico de recortes 256 sem sobreposição —
-  número de VM, não transfere, mas indica que a estratégia de mosaico
-  precisa de medição própria no Ryzen antes de qualquer conclusão).
-  Durante esta auditoria o page-clean virou o caminho padrão na main
-  (`686e29a`): o teste ao vivo (unidade 4) deixou de ser portão de
-  entrada e virou julgamento de um padrão já vigente — a recomendação
-  R2 fica mais urgente, não menos.
+- Sheet v3 is in production **with no number outside Lucas's
+  desk**. The external per-setup protocol (3–5 setups, 40–60 frames per
+  setup, per-setup gate: presence ≥95%, 0 FP, IoU ≥0.85, worst setup
+  as the headline) was designed in `research-v3/REPORT.md` §3.3 on
+  2026-10-29 and **was never executed**.
+- The real holdout for the sheet is **3 frames from a single session** (one
+  desk, one camera), with a ±20 px ground truth. The 6 negatives of the 49
+  frames took part in presence training (oversampling ×12): every
+  "0 FP on its negatives" is an **in-sample** reading. The
+  out-of-sample evidence against FP is the MIDV held-out (96 negatives).
+- The white box remains the known FP: the raw v3 fires weakly on it
+  (logit +0.41 to +0.98 at 512 px) and v4 fired strongly
+  (+4.84 to +5.39) — one of the reasons for v4's DO NOT SWAP.
+- Page-clean **has no real measurement**: IoU 0.800 is
+  synthetic→synthetic, exactly the position ink v1 was in
+  when it failed in real use. And its latency was measured only on this VM
+  (median 1,542 ms/page, mosaic of 256 crops without overlap —
+  a VM number, not transferable, but indicating that the mosaic strategy
+  needs its own measurement on the Ryzen before any conclusion).
+  During this audit page-clean became the default path in main
+  (`686e29a`): the live test (unit 4) stopped being an entry gate
+  and became judgment of a default already in force — recommendation
+  R2 becomes more urgent, not less.
 
-### 3.4 Latência: a conta inteira (alta)
+### 3.4 Latency: the whole account (high)
 
-Conta corrigida e aceita (medições do Ryzen, relatórios de laboratório):
+Corrected and accepted account (Ryzen measurements, laboratory reports):
 
-| Parcela | ms |
+| Portion | ms |
 |---|---|
-| Detecção neural (folha v3 dyn, 384) | 91,0 |
-| Tinta heurística | 23,1 |
-| Acumulador | 8,7 |
-| Warp de exibição | 2,6 |
-| **Componentes somados** | **125,4** |
-| Resíduo não decomposto na auditoria de latência | ~1,8 |
-| **Frame de detecção medido** | **127,2** |
+| Neural detection (sheet v3 dyn, 384) | 91.0 |
+| Heuristic ink | 23.1 |
+| Accumulator | 8.7 |
+| Display warp | 2.6 |
+| **Summed components** | **125.4** |
+| Undecomposed residue in the latency audit | ~1.8 |
+| **Measured detection frame** | **127.2** |
 
-- Tinta neural em página cheia, quatro formulações: **323–355 ms**.
-  Flagship: **431,3 ms**. Trocando a heurística pela neural, o frame
-  estimado vai a **~428–459 ms** (soma de partes medidas separadas; a
-  integração dos dois modelos no mesmo loop **nunca foi medida**),
-  acima do teto de 400 e longe da meta de 250.
-- A latência **vidro-à-tinta** (câmera → tinta visível) nunca foi
-  medida ponta a ponta, com nenhum modelo. Existe kit para isso
-  (`draw-lab/desk-session/latency_probe.py`), nunca rodado na mesa.
-- Saída conhecida e ainda não executada como desenho: **desacoplar a
-  tinta da detecção** — detecção rara (a cada N frames) com homografia
-  rastreada entre elas (XFeat/ECC medidos no laboratório), tinta
-  rodando na cadência dela. Sem desacoplar, baratear a detecção atrasa
-  a tinta junto, porque hoje as duas só rodam no frame de detecção
-  (a cada 5 frames, `draw/app.py`).
-- Microcustos reais no caminho neural (código): softmax desnecessário
-  no ramo legado (prob > 0,5 ⇔ logit papel > logit fundo; hoje há
-  `np.exp` sobre 2×512×512 por chamada), duas conversões de frame
-  inteiro por detecção (BGR→RGB no predict + BGR→GRAY no refino, com o
-  resize só depois de converter) e `_refit_corners` em O(pontos×4)
-  sobre o contorno sem simplificação prévia.
+- Neural ink on a full page, four formulations: **323–355 ms**.
+  Flagship: **431.3 ms**. Swapping the heuristic for the neural one, the estimated frame
+  goes to **~428–459 ms** (sum of separately measured parts; the
+  integration of the two models in the same loop **was never measured**),
+  above the 400 cap and far from the 250 goal.
+- **Glass-to-ink** latency (camera → visible ink) was never
+  measured end to end, with any model. There is a kit for this
+  (`draw-lab/desk-session/latency_probe.py`), never run on the desk.
+- Known output not yet executed as a design: **decoupling ink from
+  detection** — rare detection (every N frames) with tracked homography
+  between them (XFeat/ECC measured in the laboratory), ink
+  running at its own cadence. Without decoupling, making detection cheaper
+  delays ink along with it, because today the two only run on the detection frame
+  (every 5 frames, `draw/app.py`).
+- Real micro-costs in the neural path (code): unnecessary softmax
+  in the legacy branch (prob > 0.5 ⇔ paper logit > background logit; today there is
+  `np.exp` over 2×512×512 per call), two whole-frame conversions
+  per detection (BGR→RGB in predict + BGR→GRAY in refinement, with the
+  resize only after converting) and `_refit_corners` in O(points×4)
+  over the contour without prior simplification.
 
-### 3.5 Contrato ONNX frágil no adaptador (média)
+### 3.5 Fragile ONNX contract in the adapter (medium)
 
-O detector aceita dois contratos (legado 2 saídas × 4 classes do
-piloto) e os testes de contrato passam — mas a robustez é desigual:
+The detector accepts two contracts (legacy 2 outputs × 4-class pilot)
+and the contract tests pass — but robustness is uneven:
 
-- **Nome da entrada hardcoded `"image"`** (`draw/neural.py:573`).
-  `get_inputs()` é consultado só pelo shape. Um export futuro com
-  entrada `input`/`x` quebra no primeiro frame, não na carga.
-- **Ramo legado não valida canais**: fatia `logits[0,0]`/`[0,1]` como
-  fundo/papel sem conferir que `mask_logits` tem exatamente 2 canais.
-  Um export híbrido de 4 canais com presença seria lido **em silêncio**
-  como fundo × classe-1 — máscara errada sem erro nenhum. O ramo de 4
-  classes, ao contrário, valida shape (assimetria).
-- **Ramo de 4 classes exige a lista de saídas ser exatamente
-  `["logits"]`** (`neural.py:586`): qualquer saída auxiliar vira
-  `ValueError` fatal no primeiro frame, em vez de degradação.
-- **Resolução lê só `shape[2]` e pressupõe quadrado**
-  (`neural.py:192-198`): um export retangular seria esmagado para
-  quadrado sem aviso.
-- **Presença do piloto é sintética** (`neural.py:593-601`): sem cabeça
-  treinada, o adaptador fabrica +1,0/−10,0 da razão de área ≥1%. O
-  −10,0 veta o clássico com a força de um logit treinado forte — mas é
-  um limiar de área, não calibração; e o +1,0 deixa os FPs conhecidos
-  do piloto (caixa branca com presença +1,00; FP em 6/6 negativos no
-  harness real) passarem sem atrito, porque o veto só bloqueia
-  negativos. Seguro hoje **só porque o piloto é opt-in**.
-- **O piloto não é dinâmico no espaço**: entrada `[N,3,512,512]` — só
-  o batch é simbólico; roda sempre a 512 (confirmado por sonda), e a
-  máscara nasce a ¼ da resolução (128) ampliada com NEAREST: célula de
-  ~10×5,6 px num frame 720p alimentando o ajuste de cantos.
+- **Hardcoded input name `"image"`** (`draw/neural.py:573`).
+  `get_inputs()` is consulted only for the shape. A future export with
+  input `input`/`x` breaks on the first frame, not on loading.
+- **Legacy branch does not validate channels**: it slices `logits[0,0]`/`[0,1]` as
+  background/paper without checking that `mask_logits` has exactly 2 channels.
+  A hybrid 4-channel export with presence would be read **silently**
+  as background × class-1 — a wrong mask with no error at all. The 4-class
+  branch, by contrast, validates shape (asymmetry).
+- **4-class branch requires the output list to be exactly
+  `["logits"]`** (`neural.py:586`): any auxiliary output becomes a
+  fatal `ValueError` on the first frame, instead of degradation.
+- **Resolution reads only `shape[2]` and assumes square**
+  (`neural.py:192-198`): a rectangular export would be squashed to
+  square without warning.
+- **Pilot presence is synthetic** (`neural.py:593-601`): with no trained
+  head, the adapter fabricates +1.0/−10.0 from an area ratio ≥1%. The
+  −10.0 vetoes the classic path with the force of a strong trained logit — but it is
+  an area threshold, not calibration; and the +1.0 lets the pilot's known
+  FPs (white box with presence +1.00; FP on 6/6 negatives in the real harness) pass without friction, because the veto only blocks
+  negatives. Safe today **only because the pilot is opt-in**.
+- **The pilot is not dynamic in space**: input `[N,3,512,512]` — only
+  the batch is symbolic; it always runs at 512 (confirmed by probe), and the
+  mask is born at ¼ resolution (128) enlarged with NEAREST: a cell of
+  ~10×5.6 px in a 720p frame feeding the corner fit.
 
-### 3.6 Guardas geométricas: furos pontuais (média)
+### 3.6 Geometric guards: specific holes (medium)
 
-As guardas publicadas (`_fit_plausible`, `_SheetTracker`) funcionam nas
-séries gravadas, mas a auditoria de código achou furos:
+The published guards (`_fit_plausible`, `_SheetTracker`) work on the
+recorded series, but the code audit found holes:
 
-- **`_fit_plausible` aceita NaN**: toda comparação com NaN é falsa, logo
-  nenhuma regra dispara e a guarda **aprova** um quad com NaN. Falta
-  também área mínima e razão entre arestas adjacentes (uma faixa fina e
-  longa passa).
-- A função pública `fit_quad` **pula a guarda inteira** — quem chamar
-  por ela recebe quad sem plausibilidade nenhuma.
-- Renovação do `_SheetTracker` só por presença pode segurar um
-  quadrilátero velho **indefinidamente** se o modelo insistir em
-  "paper" sem o ajuste fechar: falta um teto temporal para o quad
-  congelado.
-- Estado morto: `_pending_hits` do tracker é escrito em 5 lugares e
-  lido em nenhum. Singleton global do detector sem fechamento de sessão
-  e com memória de arestas compartilhada entre instâncias; a memória de
-  arestas não é limpa em frame vazio/presença negativa (a herança entre
-  cenas decide-se por um único IoU ≥ 0,7).
+- **`_fit_plausible` accepts NaN**: every comparison with NaN is false, so
+  no rule fires and the guard **approves** a quad with NaN. It also lacks
+  a minimum area and a ratio between adjacent edges (a long thin strip
+  passes).
+- The public function `fit_quad` **skips the entire guard** — whoever calls
+  through it receives a quad with no plausibility at all.
+- Renewal of `_SheetTracker` by presence alone can hold an
+  old quadrilateral **indefinitely** if the model insists on
+  "paper" without the fit closing: a temporal cap for the frozen
+  quad is missing.
+- Dead state: the tracker's `_pending_hits` is written in 5 places and
+  read in none. Global detector singleton with no session close
+  and with edge memory shared between instances; the edge memory is not
+  cleared on an empty frame/negative presence (inheritance between
+  scenes is decided by a single IoU ≥ 0.7).
 
-### 3.7 Treinos: os bugs moram no caminho não exercitado (média, padrão)
+### 3.7 Training runs: the bugs live in the unexercised path (medium, pattern)
 
-Quatro corridas, quatro bugs que só apareceram em corrida longa ou
-caminho não testado antes do lançamento:
+Four runs, four bugs that only appeared on a long run or a path not
+tested before launch:
 
-| Corrida | Bug | Custo |
+| Run | Bug | Cost |
 |---|---|---|
-| Folha v1 | school-notebooks com **0 amostras** (bug de caminho; 600 erros de leitura no log) | Corrida inteira sem a fonte que a v2 mostraria importar |
-| Folha v3, tentativa 1 | `Image.draft()` ampliando máscaras | IoU MIDV 0,476; corrida descartada |
-| Flagship v2 | Scheduler com LR efetiva ~1e-8 | **4h02 de GPU** numa corrida inválida; o self-test existia e não afirmava a LR efetiva |
-| Folha v4 | COCO **silenciosamente ausente** (`coco.ok=false`): 400 negativos de cena e 300 fundos viraram fundo MIDV | A corrida julgada não é a corrida desenhada |
+| Sheet v1 | school-notebooks with **0 samples** (path bug; 600 read errors in the log) | Whole run without the source v2 would show mattered |
+| Sheet v3, attempt 1 | `Image.draft()` enlarging masks | MIDV IoU 0.476; run discarded |
+| Flagship v2 | Scheduler with effective LR ~1e-8 | **4h02 of GPU** on an invalid run; the self-test existed and did not assert the effective LR |
+| Sheet v4 | COCO **silently absent** (`coco.ok=false`): 400 scene negatives and 300 backgrounds became MIDV background | The judged run is not the designed run |
 
-Padrão irmão: downloads truncados e drivers que morrem viraram ritual
-manual em pelo menos 3 corridas, e a tinta v1 **não salvou checkpoint
-torch** (só ONNX) — a v2 precisou treinar do zero. O runner novo
-(`tools/runner`) já ataca parte disso (coleta com resume + sha256,
-vigia de colapso, arquivo de candidatos), e a v6 já nasceu com
-self-test afirmando a LR efetiva. Falta o **preflight de dados**: afirmar
-contagem por fonte (>0 para toda fonte declarada na receita) e o
-contrato do export, antes da época 1.
+Sibling pattern: truncated downloads and dying drivers became a manual
+ritual in at least 3 runs, and ink v1 **did not save a torch
+checkpoint** (ONNX only) — v2 had to train from scratch. The new runner
+(`tools/runner`) already attacks part of this (collection with resume + sha256,
+collapse watch, candidate file), and v6 was already born with a
+self-test asserting the effective LR. What is missing is the **data preflight**: asserting
+counts per source (>0 for every source declared in the recipe) and the
+export contract, before epoch 1.
 
-### 3.8 Suíte de testes não é hermética (média)
+### 3.8 Test suite is not hermetic (medium)
 
-Medido nesta auditoria, no clone fresco (OpenCV 5.0.0, ambiente igual
-ao do Lucas): `pytest tests/` **morre na coleta** com INTERNALERROR
-porque `tests/test_accumulator_stamps.py` executa `sys.exit(2)` no
-import quando falta um arquivo manual (`/tmp/ink_pre_stamp.py`, cópia
-pré-mudança de `draw/ink.py` que o operador deve preparar à mão).
-Ignorando esse módulo: **44 passed, 3 skipped**, com um
-`PytestUnhandledThreadExceptionWarning` (exceção em thread de captura
-não tratada no teste). Um teste que exige preparo manual não pode morar
-em `tests/` com prefixo `test_` sem virar `skip` gracioso — num clone
-limpo, a suíte inteira parece quebrada.
+Measured in this audit, on a fresh clone (OpenCV 5.0.0, environment same
+as Lucas's): `pytest tests/` **dies on collection** with INTERNALERROR
+because `tests/test_accumulator_stamps.py` executes `sys.exit(2)` on
+import when a manual file is missing (`/tmp/ink_pre_stamp.py`, a pre-change copy
+of `draw/ink.py` that the operator must prepare by hand).
+Ignoring that module: **44 passed, 3 skipped**, with a
+`PytestUnhandledThreadExceptionWarning` (exception in an unhandled capture
+thread in the test). A test that requires manual preparation cannot live
+in `tests/` with a `test_` prefix without becoming a graceful `skip` — in a clean
+clone, the whole suite looks broken.
 
-### 3.9 Coerência documental e de versões (baixa/média)
+### 3.9 Documentary and version coherence (low/medium)
 
-- A decisão de trocar para a folha v3 foi tomada **fora** do relatório
-  da corrida dela (que recomendava "não trocar por enquanto",
-  condicionado a um conjunto externo que nunca existiu). O relatório
-  da v4 já a trata como produção: há um salto documental sem ato
-  registrado ligando os dois.
-- "MIDV held-out" é **protocolo diferente** entre gerações da folha:
-  v1–v3 usam n=200/96 (IoU 0,982–0,988); a v4 usa split %10, n=100
-  (0,786). Os números não são comparáveis entre si, mas moram lado a
-  lado nas tabelas sem a ressalva junto.
-- O placar "17 de 18" da tinta significa coisas diferentes na v1
-  (vermelho fora das células) e na v2 (dois vermelhos). O
-  BUILD_REPORT_V2 §7 diz "latência não medida" e o adendo no mesmo
-  arquivo a mede — quem lê só a seção leva a conclusão errada.
-- Os IoUs 0,800 e 0,8465 do page-clean são conjuntos/agregações
-  diferentes (48 páginas inteiras × prova do wrapper em 20 páginas do
-  protocolo de treino) tratados como referência um do outro.
-
----
-
-## 4. Recomendações priorizadas
-
-**R1 — Versionar a produção de verdade.** Trazer o
-`draw_seg_v3_dyn.onnx` para o repositório (ou para um dataset/release
-canônico com link), com manifesto `models/MANIFEST.json`: nome, sha256,
-régua que aprovou, data. `_load_session` confere o hash do manifesto
-quando ele existe e **avisa alto** em divergência. Empurrar
-`draw/ink_model.py` ou remover a flag `--ink-model` da main — flag sem
-módulo não fica.
-
-**R2 — Executar o protocolo por setup antes da próxima troca.**
-3–5 setups externos (pessoa + mesa + webcam + cômodo), 40–60 frames
-por setup, portões por setup e **pior setup como número principal** —
-para a folha v3 (que está em produção sem esse número) e para o
-page-clean, cujo teste ao vivo (unidade 4) agora julga um padrão que
-já entrou na main durante esta auditoria.
-
-**R3 — Tratar a latência da tinta como problema de formulação.**
-(a) Medir a integração folha + tinta neural **no mesmo loop** no Ryzen
-(a conta atual é soma de partes). (b) Medir o page-clean no Ryzen com a
-estratégia de mosaico atual e com sobreposição — 1.542 ms/página na VM
-não decide nada, mas manda medir. (c) Desenhar o desacoplamento
-detecção × tinta com homografia rastreada (a saída que o Lucas propôs
-em 2026-10-30), porque nenhuma U-Net de página cheia cabe no frame.
-(d) Medir vidro-à-tinta com o `latency_probe.py` do kit de mesa.
-
-**R4 — Política de troca escrita no repo.** Nenhuma troca de modelo sem:
-régua de cena verde + holdout real (selado, quando existir) + latência
-medida no alvo dentro do teto. Métrica interna serve só para detectar
-corrida morta. Isso já é a prática; falta estar escrito onde a decisão
-acontece.
-
-**R5 — Endurecer o contrato do adaptador (barato, uma tarde).**
-Usar `get_inputs()[0].name` no feed; validar canais/shape nos dois
-ramos; aceitar 4 classes por presença de `logits` (não por igualdade
-de lista); ler H e W separadamente e validar quadrado-ou-dinâmico na
-carga. Cada item com teste no `test_neural_onnx_contract.py` existente.
-
-**R6 — Fechar os furos das guardas.** `isfinite` + área mínima + razão
-de arestas adjacentes em `_fit_plausible`; `fit_quad` público passa
-pela guarda; teto temporal para quad congelado no `_SheetTracker`;
-remover `_pending_hits` (estado morto) ou ligá-lo a uma leitura real.
-
-**R7 — Suíte hermética.** `test_accumulator_stamps.py` vira skip
-gracioso sem o arquivo manual (ou sai de `tests/` para `tools/`);
-tratar a exceção da thread de captura no teste. Meta verificável:
-clone fresco → `pytest` verde sem preparo manual.
-
-**R8 — Auditar a unidade 3 e manter uma fonte de verdade.** O diff da
-unidade 3 (`draw/page_clean.py`, 111 linhas, + `draw/app.py` em
-`686e29a`) entrou na main durante esta auditoria e não foi coberto por
-ela: vira a primeira unidade de uma auditoria de seguimento, com a
-latência do mosaico no Ryzen como item obrigatório (R3b). E os
-espelhos locais (snapshot sem git, árvore do Lucas) divergem da main a
-ponto de linhas inteiras diferirem (`draw/neural.py`: 655 linhas na
-main × ~1.070 no espelho) — auditoria futura precisa saber qual árvore
-é o produto.
-
-**R9 — Registro de modelos com nomes canônicos.** Adotar no
-`tools/runner/candidates.jsonl` (e em todo relatório novo) nomes sem
-colisão: `sheet-seg-v3`, `ink-paired-unet-v3`, `ink-flagship-v3`,
-`pageclean-unet-v0` — e aposentar o "vN" puro, que já nomeou três
-modelos diferentes.
-
-**R10 — Preflight de corrida no runner.** Antes da época 1: afirmar
-contagem de amostras por fonte declarada na receita (toda fonte > 0),
-LR efetiva após o primeiro passo do scheduler, e contrato do export
-(teste de 1 batch com o ONNX carregado pelo adaptador de verdade).
-Salvar checkpoint torch sempre — ONNX sozinho não permite continuar.
-
-**R11 — Micro-otimizações medidas, depois.** Remover o softmax do ramo
-legado, converter cor depois do resize (ou numa passada só) e
-simplificar o contorno antes do `_refit_corners` — nesta ordem, cada
-uma com medição no Ryzen antes/depois. Nada aqui muda sem número.
-
-**R12 — Presença do piloto nunca reutilizar a semântica do logit.**
-Se o piloto (ou qualquer modelo sem cabeça de presença) for candidato
-um dia, o sinal derivado de área ganha nome e limiar próprios,
-documentados como heurística — e o veto ao clássico passa a usar esse
-limiar, não o `PRESENCE_VETO_LOGIT` dos modelos treinados.
+- The decision to switch to sheet v3 was taken **outside** the
+  report of its own run (which recommended "do not switch for now",
+  conditioned on an external set that never existed). The
+  v4 report already treats it as production: there is a documentary leap with no
+  recorded act linking the two.
+- "MIDV held-out" is a **different protocol** between sheet generations:
+  v1–v3 use n=200/96 (IoU 0.982–0.988); v4 uses a 10% split, n=100
+  (0.786). The numbers are not comparable with each other, but they live side by side
+  in the tables without the caveat alongside.
+- The "17 of 18" score for ink means different things in v1
+  (red outside the cells) and in v2 (two reds). The
+  BUILD_REPORT_V2 §7 says "latency not measured" and the addendum in the same
+  file measures it — whoever reads only the section takes away the wrong conclusion.
+- The page-clean IoUs 0.800 and 0.8465 are different sets/aggregations
+  (48 whole pages × wrapper proof on 20 pages of the training protocol)
+  treated as references to each other.
 
 ---
 
-## 5. O que esta auditoria não fez
+## 4. Prioritized recommendations
 
-- Não remedeu nenhuma régua (harness, replay, cena) — os vereditos são
-  os dos relatórios do laboratório, com fonte e n declarados.
-- Não mediu latência no Ryzen (VM não transfere) nem rodou eval de
-  página cheia nesta VM (regra da casa: uma eval por vez, e nenhuma
-  era necessária para os achados).
-- Não auditou a ponte de cursor/Windows (`bridge/`), o app Replit do
-  hackathon, nem o `draw-bridge` além do que o runner absorveu.
-- O código da unidade 3 (`686e29a`) entrou na main durante a auditoria
-  e não foi auditado linha a linha; o page-clean foi auditado pelos
-  relatórios do laboratório (R8).
+**R1 — Version the real production.** Bring the
+`draw_seg_v3_dyn.onnx` into the repository (or to a canonical dataset/release
+with a link), with a `models/MANIFEST.json` manifest: name, sha256,
+ruler that approved it, date. `_load_session` checks the manifest hash
+when it exists and **warns loudly** on divergence. Push
+`draw/ink_model.py` or remove the `--ink-model` flag from main — a flag without a
+module does not stay.
 
-*Relatório gerado a pedido do Lucas, em branch separada, para revisão.
-Nenhum código foi alterado por esta auditoria.*
+**R2 — Execute the per-setup protocol before the next swap.**
+3–5 external setups (person + desk + webcam + room), 40–60 frames
+per setup, per-setup gates and **worst setup as the main number** —
+for sheet v3 (which is in production without this number) and for
+page-clean, whose live test (unit 4) now judges a default that
+already entered main during this audit.
+
+**R3 — Treat ink latency as a formulation problem.**
+(a) Measure the sheet + neural ink integration **in the same loop** on the Ryzen
+(the current account is a sum of parts). (b) Measure page-clean on the Ryzen with the
+current mosaic strategy and with overlap — 1,542 ms/page on the VM
+decides nothing, but calls for measuring. (c) Design the decoupling
+detection × ink with tracked homography (the output Lucas proposed
+on 2026-10-30), because no full-page U-Net fits in the frame.
+(d) Measure glass-to-ink with the `latency_probe.py` of the desk kit.
+
+**R4 — Written swap policy in the repo.** No model swap without:
+green scene ruler + real holdout (sealed, when it exists) + latency
+measured on the target within the cap. The internal metric serves only to detect
+a dead run. This is already the practice; it is missing being written where the decision
+happens.
+
+**R5 — Harden the adapter contract (cheap, one afternoon).**
+Use `get_inputs()[0].name` in the feed; validate channels/shape in both
+branches; accept 4 classes by the presence of `logits` (not by list
+equality); read H and W separately and validate square-or-dynamic on
+loading. Each item with a test in the existing `test_neural_onnx_contract.py`.
+
+**R6 — Close the guard holes.** `isfinite` + minimum area + ratio
+of adjacent edges in `_fit_plausible`; public `fit_quad` goes through
+the guard; temporal cap for the frozen quad in `_SheetTracker`;
+remove `_pending_hits` (dead state) or tie it to a real read.
+
+**R7 — Hermetic suite.** `test_accumulator_stamps.py` becomes a graceful
+skip without the manual file (or leaves `tests/` for `tools/`);
+handle the capture-thread exception in the test. Verifiable goal:
+fresh clone → green `pytest` with no manual preparation.
+
+**R8 — Audit unit 3 and keep one source of truth.** The unit 3 diff
+(`draw/page_clean.py`, 111 lines, + `draw/app.py` in
+`686e29a`) entered main during this audit and was not covered by
+it: it becomes the first unit of a follow-up audit, with the
+mosaic latency on the Ryzen as a mandatory item (R3b). And the
+local mirrors (snapshot without git, Lucas's tree) diverge from main to
+the point that whole lines differ (`draw/neural.py`: 655 lines on
+main × ~1,070 in the mirror) — a future audit needs to know which tree
+is the product.
+
+**R9 — Model registry with canonical names.** Adopt in
+`tools/runner/candidates.jsonl` (and in every new report) collision-free names: `sheet-seg-v3`, `ink-paired-unet-v3`, `ink-flagship-v3`,
+`pageclean-unet-v0` — and retire the bare "vN", which has already named three
+different models.
+
+**R10 — Run preflight in the runner.** Before epoch 1: assert
+sample counts per source declared in the recipe (every source > 0),
+effective LR after the scheduler's first step, and the export contract
+(1-batch test with the ONNX loaded by the real adapter).
+Always save a torch checkpoint — ONNX alone does not allow resuming.
+
+**R11 — Measured micro-optimizations, afterwards.** Remove the softmax from the
+legacy branch, convert color after the resize (or in a single pass) and
+simplify the contour before `_refit_corners` — in this order, each
+with a Ryzen before/after measurement. Nothing here changes without a number.
+
+**R12 — Pilot presence must never reuse logit semantics.**
+If the pilot (or any model without a presence head) is a candidate
+one day, the area-derived signal gets its own name and threshold,
+documented as a heuristic — and the veto on the classic path starts using that
+threshold, not the trained models' `PRESENCE_VETO_LOGIT`.
+
+---
+
+## 5. What this audit did not do
+
+- It did not remeasure any ruler (harness, replay, scene) — the verdicts are
+  those of the laboratory reports, with source and n declared.
+- It did not measure latency on the Ryzen (VM does not transfer) nor run a
+  full-page eval on this VM (house rule: one eval at a time, and none
+  was needed for the findings).
+- It did not audit the cursor/Windows bridge (`bridge/`), the hackathon Replit app,
+  nor `draw-bridge` beyond what the runner absorbed.
+- Unit 3 code (`686e29a`) entered main during the audit
+  and was not audited line by line; page-clean was audited through the
+  laboratory reports (R8).
+
+*Report generated at Lucas's request, on a separate branch, for review.
+No code was changed by this audit.*

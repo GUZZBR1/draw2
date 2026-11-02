@@ -1,33 +1,33 @@
-# Execução do treinamento no Kaggle
+# Running training on Kaggle
 
-Este roteiro descreve a execução do pipeline em `training/train.py`. O código e
-`training/config.json` são a fonte do contrato; este documento não afirma que um
-treino completo ou um modelo já tenham sido produzidos.
+This runbook describes running the pipeline in `training/train.py`. The code and
+`training/config.json` are the source of the contract; this document does not assert that a
+full training or a model has already been produced.
 
-## Preparar o ambiente
+## Prepare the environment
 
-Use Python 3.11 ou 3.12 e as dependências de `training/requirements.txt`, com a
-wheel de PyTorch compatível com a GPU CUDA do runtime. O notebook faz preflight
-das versões e falha se alguma dependência direta estiver ausente ou divergente.
-O backbone `nvidia/mit-b0` precisa estar em cache ou acessível na primeira
-execução.
+Use Python 3.11 or 3.12 and the dependencies in `training/requirements.txt`, with the
+PyTorch wheel compatible with the runtime's CUDA GPU. The notebook preflights
+versions and fails if any direct dependency is missing or divergent.
+The `nvidia/mit-b0` backbone must be in cache or accessible on the first
+run.
 
-Anexe ao notebook:
+Attach to the notebook:
 
-- o dataset sintético com `train/`, `val/`, `test/` e, se disponível,
+- the synthetic dataset with `train/`, `val/`, `test/` and, if available,
   `split_manifest.json`;
-- o pacote privado de pseudo-rótulos reais, quando disponível. As duas sessões
-  reais atuais entram apenas no treino por `--real-train-dir`.
+- the private real pseudo-label package, when available. The two current real
+  sessions enter training only via `--real-train-dir`.
 
-Não use essas duas sessões como holdout. As máscaras reais atuais são propostas
-automáticas e ainda precisam de revisão pixel a pixel; resultados com elas são
-exploratórios. Reserve uma nova sessão real para avaliação independente.
+Do not use these two sessions as holdout. The current real masks are automatic
+proposals and still need pixel-by-pixel review; results with them are
+exploratory. Reserve a new real session for independent evaluation.
 
-## Executar
+## Run
 
-Confirme que a GPU aparece no runtime, que os caminhos dos datasets existem e
-que `training/config.json` está disponível. O comando abaixo usa os
-hiperparâmetros da config:
+Confirm the GPU appears in the runtime, that the dataset paths exist and
+that `training/config.json` is available. The command below uses the
+config's hyperparameters:
 
 ```bash
 python training/train.py \
@@ -37,34 +37,34 @@ python training/train.py \
   --out-dir /kaggle/working/out
 ```
 
-O argumento `--real-train-dir` é opcional. Para verificar pareamento, máscaras
-com `255`, loss e estrutura sem treinar, rode:
+The `--real-train-dir` argument is optional. To check pairing, `255`
+masks, loss and structure without training, run:
 
 ```bash
 python training/train.py --config training/config.json --smoke
 ```
 
-O treino usa augmentation geométrica pareada, nearest-neighbor nas máscaras,
-warmup linear e decaimento cosseno por atualização do otimizador, acumulação de
-gradiente conforme a config e bf16/fp16 em GPU ou fp32 em CPU. Validação dirige
-early stopping e seleção do melhor checkpoint. O split test é calculado uma
-única vez após a seleção; nunca use test para ajustar pesos ou limiares.
+Training uses paired geometric augmentation, nearest-neighbor on masks,
+linear warmup and cosine decay per optimizer update, gradient
+accumulation per the config and bf16/fp16 on GPU or fp32 on CPU. Validation drives
+early stopping and best-checkpoint selection. The test split is computed a
+single time after selection; never use test to adjust weights or thresholds.
 
-## Artefatos e critérios
+## Artifacts and criteria
 
-O diretório de saída contém checkpoints, `classes.json`, `metrics.json`,
-`training_config.json`, `split_manifest.json` e, se a exportação funcionar,
-`draw_segmentation_v1.onnx`. O contrato ONNX é entrada `image` `[N,3,512,512]`
-e logits `logits` `[N,4,512,512]`; o wrapper redimensiona a saída SegFormer
-para a resolução da entrada.
+The output directory contains checkpoints, `classes.json`, `metrics.json`,
+`training_config.json`, `split_manifest.json` and, if export works,
+`draw_segmentation_v1.onnx`. The ONNX contract is input `image` `[N,3,512,512]`
+and logits `logits` `[N,4,512,512]`; the wrapper resizes the SegFormer output
+to the input resolution.
 
-`metrics.json` registra métricas por classe, pixels ignorados, ink com
-tolerância espacial agregada sobre todas as imagens, métricas do split test e
-estado da validação ONNX. A validação compara shape, diferença máxima dos
-logits e IoU mínima de argmax contra PyTorch. `skipped`, `failed` ou `degraded`
-não significa que o ONNX foi validado.
+`metrics.json` records per-class metrics, ignored pixels, ink with
+spatial tolerance aggregated over all images, test-split metrics and
+ONNX validation state. Validation compares shape, maximum logit
+difference and minimum argmax IoU against PyTorch. `skipped`, `failed` or `degraded`
+does not mean the ONNX was validated.
 
-Não publique alegações de qualidade real sem revisão dos rótulos e avaliação
-em holdout real independente. O pipeline e os testes locais não substituem um
-treino completo em GPU, a conferência do artefato ONNX nem a avaliação visual
-dos 15 cenários definidos pelo projeto.
+Do not publish real-quality claims without label review and evaluation
+on an independent real holdout. The pipeline and local tests do not replace a
+full GPU training run, checking the ONNX artifact, or visual
+evaluation of the 15 scenarios defined by the project.

@@ -1,100 +1,102 @@
-# Setup da câmera no Windows com WSL
+# Camera setup on Windows with WSL
 
-Guia universal: vale para qualquer pessoa com Windows e WSL2 que
-queira rodar o Draw com a própria webcam. Nenhum passo depende de
-uma máquina, uma câmera ou um fabricante específicos.
+Universal guide: it applies to anyone with Windows and WSL2 who
+wants to run Draw with their own webcam. No step depends on
+a specific machine, camera, or manufacturer.
 
-## Requisitos
+## Requirements
 
-- Windows 10 ou Windows 11.
-- WSL2 instalado e atualizado (`wsl --update` no PowerShell).
-- Uma webcam USB ou a câmera integrada do notebook.
-- O repositório do Draw clonado dentro do WSL.
+- Windows 10 or Windows 11.
+- WSL2 installed and updated (`wsl --update` in PowerShell).
+- A USB webcam or the notebook's built-in camera.
+- The Draw repository cloned inside WSL.
 
-## Instalação em um comando
+## One-command installation
 
-De dentro do WSL, na raiz do projeto:
+From inside WSL, at the project root:
 
 ```bash
 ./scripts/setup_camera_wsl.sh
 ```
 
-Só isso. O script pede confirmações de administrador do Windows
-em alguns passos (é o UAC abrindo). Clique em **Sim**. No fim, ele
-roda o teste de aceitação do próprio Draw e imprime o veredito.
+That is all. The script asks for Windows administrator
+confirmations in some steps (that is UAC opening). Click **Yes**. At
+the end, it runs Draw's own acceptance test and prints the verdict.
 
-Opções úteis:
+Useful options:
 
-- `./scripts/setup_camera_wsl.sh --busid 1-4` aponta uma câmera
-  específica pelo BUSID dela no `usbipd list`.
-- `./scripts/setup_camera_wsl.sh --dry-run` só mostra o que o
-  script faria, sem executar nada.
+- `./scripts/setup_camera_wsl.sh --busid 1-4` points to a
+  specific camera by its BUSID in `usbipd list`.
+- `./scripts/setup_camera_wsl.sh --dry-run` only shows what the
+  script would do, without executing anything.
 
-Depois de reiniciar o WSL, rode o script de novo. Só o attach
-precisa ser refeito.
+After restarting WSL, run the script again. Only the attach
+needs to be redone.
 
-## O que o script faz, e por quê
+## What the script does, and why
 
-1. **Confere o WSL.** Os módulos `vhci_hcd` (USB virtual) e
-   `uvcvideo` (câmera) precisam existir no kernel. Sem eles, nada
-   funciona. Instala `usbip` e `lsusb` se faltarem.
-2. **Confere o Windows.** O `usbipd-win` precisa estar instalado.
-   Se não estiver, o script instala via `winget` e imprime a
-   versão encontrada.
-3. **Acha a câmera.** Lê o `usbipd list`. Se o nome for ambíguo,
-   confirma pelas classes Camera e Image do Windows. Com uma
-   câmera só, escolhe sozinho. Com várias, pergunta pelo número.
-   Sem nenhuma, para com uma mensagem clara.
-4. **Compartilha e anexa.** Faz o `bind` e o `attach` da câmera
-   para dentro do WSL e limpa registros antigos de attach.
-5. **Confere o resultado.** Espera o dispositivo de vídeo aparecer
-   no WSL e corrige a permissão: quem roda o Draw precisa estar no
-   grupo `video`.
-6. **Roda o teste de aceitação.** `python3 main.py --check` diz se
-   o Draw enxerga e abre a câmera de verdade.
+1. **Checks WSL.** The `vhci_hcd` (virtual USB) and
+   `uvcvideo` (camera) modules need to exist in the kernel. Without
+   them, nothing works. It installs `usbip` and `lsusb` if missing.
+2. **Checks Windows.** `usbipd-win` needs to be installed.
+   If it is not, the script installs it via `winget` and prints the
+   version found.
+3. **Finds the camera.** It reads `usbipd list`. If the name is
+   ambiguous, it confirms via the Windows Camera and Image classes.
+   With a single camera, it chooses on its own. With several, it asks
+   by number. With none, it stops with a clear message.
+4. **Shares and attaches.** It does the camera's `bind` and `attach`
+   into WSL and clears old attach records.
+5. **Checks the result.** It waits for the video device to appear
+   in WSL and fixes the permission: whoever runs Draw needs to be in
+   the `video` group.
+6. **Runs the acceptance test.** `python3 main.py --check` says whether
+   Draw really sees and opens the camera.
 
-### Por que às vezes o Windows segura a câmera (o veto de áudio)
+### Why Windows sometimes holds the camera (the audio veto)
 
-Muitas webcams são dispositivos compostos: num cabo só elas têm a
-função de vídeo e a função de microfone. Os serviços de áudio do
-Windows mantêm a função de microfone aberta o tempo todo. Quando
-o usbipd tenta levar o dispositivo inteiro para o WSL, o Windows
-recusa a remoção por causa dessa função aberta. O erro aparece
-como **Device busy**.
+Many webcams are composite devices: on a single cable they have the
+video function and the microphone function. Windows audio services
+keep the microphone function open all the time. When
+usbipd tries to take the whole device to WSL, Windows
+refuses the removal because of that open function. The error appears
+as **Device busy**.
 
-Quando isso acontece, o script lê o log de eventos do próprio
-usbipd-win. O log nomeia a função exata que vetou a remoção. Aí:
+When that happens, the script reads usbipd-win's own
+event log. The log names the exact function that vetoed the removal.
+Then:
 
-- Se a função for de **áudio**, o script para os serviços de áudio
-  do Windows, anexa a câmera, tenta desabilitar só essa função de
-  microfone (a de vídeo fica intacta) e religa os serviços de
-  áudio, conferindo se a câmera sobreviveu com o áudio de volta.
-  Com a função desabilitada, as próximas execuções nem precisam
-  parar o áudio.
-- Se a função for de **vídeo**, o script para o serviço
-  FrameServer, que é quem costuma segurar câmeras no Windows, e
-  tenta o attach de novo. Função de vídeo nunca é desabilitada.
-- Se o veto nomear um **filtro USB incompatível** (drivers de
-  captura de rede, por exemplo), o script nomeia o filtro e pede
-  a desinstalação do produto dono dele. Não há correção segura
-  por script nesse caso.
+- If the function is **audio**, the script stops the Windows audio
+  services, attaches the camera, tries to disable only that
+  microphone function (the video one stays intact) and turns the audio
+  services back on, checking whether the camera survived with audio
+  back on. With the function disabled, later runs do not even need
+  to stop the audio.
+- If the function is **video**, the script stops the
+  FrameServer service, which is the one that usually holds cameras on
+  Windows, and tries the attach again. A video function is never
+  disabled.
+- If the veto names an **incompatible USB filter** (network capture
+  drivers, for example), the script names the filter and asks
+  for the uninstallation of the product that owns it. There is no safe
+  fix by script in that case.
 
-## Problemas conhecidos
+## Known problems
 
-| Sintoma | Causa provável | Correção |
+| Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| Nenhuma câmera encontrada | Câmera desconectada, desligada ou em uso exclusivo por outro aplicativo | Conecte a câmera, feche aplicativos que a usam e rode o script de novo. Ou ache o BUSID com `usbipd list` no PowerShell e rode com `--busid <BUSID>`. |
-| Device busy que sobrevive ao script | Um componente que o script não conhece está segurando a câmera | O script imprime um bloco de diagnóstico no fim da execução. Copie o bloco inteiro e mande para quem for te ajudar. Ele nomeia o componente do veto. |
-| Permission denied ao abrir a câmera no Draw | Seu usuário do WSL ainda não está no grupo `video` nesta sessão | O script já adiciona o usuário ao grupo. Na sessão atual, rode `sg video -c "python3 main.py"`. Nas próximas sessões, a permissão já vale. |
-| A câmera abre, mas não entrega quadros | Formato de vídeo pesado demais para o USB virtual | Atualize o repositório (`git pull`). O Draw atual já pede MJPEG em 1280x720 para a câmera local, que é o formato que passa bem pelo usbipd. |
-| Windows ficou sem som depois do setup | Os serviços de áudio foram parados durante o attach e não voltaram | No PowerShell como administrador: `Start-Service Audiosrv`. O script religa o áudio sozinho quando foi ele quem parou. Se religar o áudio derrubar a câmera, rode o script de novo. |
-| Erro de módulo `vhci_hcd` ou `uvcvideo` faltando | Kernel do WSL antigo ou sem suporte a câmera | Rode `wsl --update` no PowerShell, reinicie o WSL e tente de novo. Persistindo, use a rota reserva abaixo. |
+| No camera found | Camera disconnected, turned off, or in exclusive use by another application | Connect the camera, close applications using it, and run the script again. Or find the BUSID with `usbipd list` in PowerShell and run with `--busid <BUSID>`. |
+| Device busy that survives the script | A component the script does not know is holding the camera | The script prints a diagnostic block at the end of execution. Copy the whole block and send it to whoever will help you. It names the vetoing component. |
+| Permission denied when opening the camera in Draw | Your WSL user is not yet in the `video` group in this session | The script already adds the user to the group. In the current session, run `sg video -c "python3 main.py"`. In later sessions, the permission already applies. |
+| The camera opens, but delivers no frames | Video format too heavy for virtual USB | Update the repository (`git pull`). Current Draw already requests MJPEG at 1280x720 for the local camera, which is the format that works well over usbipd. |
+| Windows left without sound after setup | Audio services were stopped during attach and did not return | In PowerShell as administrator: `Start-Service Audiosrv`. The script turns audio back on by itself when it was the one that stopped it. If turning audio back on drops the camera, run the script again. |
+| `vhci_hcd` or `uvcvideo` module error missing | Old WSL kernel or one without camera support | Run `wsl --update` in PowerShell, restart WSL, and try again. If it persists, use the fallback route below. |
 
-## Rota reserva
+## Fallback route
 
-Se o usbipd não funcionar na sua máquina por qualquer motivo, a
-pasta [`bridge/`](../bridge/) traz a ponte de captura: um
-`ffmpeg.exe` no Windows serve a webcam como stream MJPEG e o Draw,
-no WSL, consome esse stream com `--source`. Nenhum dispositivo USB
-é movido entre os sistemas. Veja o `bridge/README.md` para o passo
-a passo.
+If usbipd does not work on your machine for any reason, the
+[`bridge/`](../bridge/) folder provides the capture bridge: an
+`ffmpeg.exe` on Windows serves the webcam as an MJPEG stream and Draw,
+in WSL, consumes that stream with `--source`. No USB device
+is moved between the systems. See `bridge/README.md` for the step
+by step.

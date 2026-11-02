@@ -1,65 +1,66 @@
-# Draw — Visão
+# Draw — Vision
 
-*Documento de visão escrito a partir da ideia original de Lucas Santleme, registrado em 28/10/2026.*
+*Vision document written from Lucas Santleme's original idea, recorded on 28/10/2026.*
 
-## A ideia em uma frase
+## The idea in one sentence
 
-O Draw é uma ponte em tempo real entre o desenho no papel e os sistemas
-digitais profissionais: a pessoa desenha no papel, do jeito natural, e o
-sistema captura, interpreta e reproduz esse desenho em softwares de CAD e
-simuladores — devolvendo feedback imediato enquanto a pessoa ainda está
-desenhando.
+Draw is a real-time bridge between drawing on paper and professional
+digital systems: the person draws on paper, the natural way, and the
+system captures, interprets, and reproduces that drawing in CAD software
+and simulators — giving immediate feedback while the person is still
+drawing.
 
-## Por que papel?
+## Why paper?
 
-Engenheiros, arquitetos e, na prática, a maior parte das pessoas pensa
-primeiro no papel. Desenhar no papel não tem fricção: não há menus,
-ferramentas, camadas nem mouse. É o pensamento indo direto para o traço.
+Engineers, architects, and, in practice, most people think
+first on paper. Drawing on paper has no friction: there are no menus,
+tools, layers, or mouse. It is thought going straight to the stroke.
 
-Os sistemas poderosos — AutoCAD, NVIDIA Isaac Sim / Isaac Lab, simuladores
-de física e de materiais — cobram o preço oposto: para usá-los, é preciso
-parar de pensar no problema e pensar na ferramenta, desenhando com o mouse,
-ponto a ponto.
+The powerful systems — AutoCAD, NVIDIA Isaac Sim / Isaac Lab, physics
+and materials simulators — charge the opposite price: to use them, you
+need to stop thinking about the problem and think about the tool,
+drawing with the mouse, point by point.
 
-O Draw elimina essa troca. O papel vira a interface de entrada que esses
-sistemas nunca tiveram.
+Draw eliminates this trade-off. Paper becomes the input interface these
+systems never had.
 
-## O loop central
+## The central loop
 
-1. **Desenhar no papel** — com lápis, caneta e borracha, como sempre.
-2. **Capturar e entender** — uma webcam apontada para a mesa captura cada
-   traço. Visão computacional, redes neurais e modelos de visão transformam
-   o traço bruto em um modelo estruturado: uma linha deixa de ser "tinta"
-   e passa a ser uma parede, uma viga, uma aresta de peça ou a trajetória
-   de um braço robótico.
-3. **Reproduzir no sistema alvo** — o modelo entra automaticamente no
-   AutoCAD, em um simulador de robótica ou em outro sistema profissional,
-   como se a pessoa estivesse desenhando lá dentro com o mouse — só que
-   está desenhando no papel.
-4. **Receber feedback na hora** — a simulação roda sobre o desenho enquanto
-   ele é feito: a resistência dos materiais faz sentido? O formato faz
-   sentido? Há colisão, sobrecarga, um ponto de estresse? A pessoa vê o
-   resultado, apaga com a borracha, corrige no papel — e a correção também
-   é capturada e aplicada ao modelo.
+1. **Draw on paper** — with pencil, pen, and eraser, as always.
+2. **Capture and understand** — a webcam pointed at the table captures
+   each stroke. Computer vision, neural networks, and vision models
+   transform the raw stroke into a structured model: a line stops being
+   "ink" and becomes a wall, a beam, a part edge, or the trajectory
+   of a robotic arm.
+3. **Reproduce in the target system** — the model enters automatically
+   into AutoCAD, a robotics simulator, or another professional system,
+   as if the person were drawing inside it with the mouse — only they
+   are drawing on paper.
+4. **Receive feedback right away** — the simulation runs over the
+   drawing while it is being made: does the resistance of the materials
+   make sense? Does the shape make sense? Is there a collision, an
+   overload, a stress point? The person sees the result, erases with
+   the eraser, corrects it on paper — and the correction is also
+   captured and applied to the model.
 
-## As camadas
+## The layers
 
-A visão é grandiosa, e ela se constrói em camadas, cada uma entregando algo
-real:
+The vision is grand, and it is built in layers, each one delivering
+something real:
 
-| Camada | O que faz | Estado |
+| Layer | What it does | Status |
 |---|---|---|
-| 1. Captura | Webcam → folha retificada → tinta digital em tempo real (a "mesa digitalizadora sem mesa") | **v0 — em construção** |
-| 2. Interpretação | Traço bruto → primitivas e objetos com significado, escala e parâmetros | futura |
-| 3. Integração | Modelo → AutoCAD, Isaac Sim/Lab e outros simuladores | futura |
-| 4. Feedback | Simulação (materiais, física, colisão) devolvendo resultado em tempo real para quem desenha | futura |
+| 1. Capture | Webcam → rectified sheet → digital ink in real time (the "digitizing table without a table") | **v0 — under construction** |
+| 2. Interpretation | Raw stroke → primitives and objects with meaning, scale, and parameters | future |
+| 3. Integration | Model → AutoCAD, Isaac Sim/Lab and other simulators | future |
+| 4. Feedback | Simulation (materials, physics, collision) returning results in real time to the person drawing | future |
 
-## A primeira barreira
+## The first barrier
 
-Tudo começa pela camada 1: provar, na mesa real, que uma webcam comum
-consegue transformar o que é desenhado numa folha de papel em traço digital
-fiel, em tempo real — incluindo apagar com a borracha e continuar
-desenhando. Sem captura confiável, não há interpretação; sem interpretação,
-não há simulação.
+Everything starts with layer 1: proving, on a real table, that an
+ordinary webcam can transform what is drawn on a sheet of paper into a
+faithful digital stroke, in real time — including erasing with the
+eraser and continuing to draw. Without reliable capture, there is no
+interpretation; without interpretation, there is no simulation.
 
-É essa barreira que a v0 ataca.
+It is this barrier that v0 tackles.

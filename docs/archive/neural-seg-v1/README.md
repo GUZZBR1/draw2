@@ -1,7 +1,7 @@
-# Segmentação neural v1 do Draw — background / paper / hand / ink
+# Draw neural segmentation v1 — background / paper / hand / ink
 
-Modelo de segmentação semântica com 4 classes, treinado no Kaggle,
-para o pipeline do Draw:
+Semantic segmentation model with 4 classes, trained on Kaggle,
+for the Draw pipeline:
 
 ```text
 frame
@@ -11,7 +11,7 @@ SegFormer-B0 (transfer learning)
 background / paper / hand / ink
 ```
 
-Depois, no Draw (fora deste projeto), o Codex usará assim:
+Then, in Draw (outside this project), Codex will use it as follows:
 
 ```text
 paper      → área da folha e homografia
@@ -20,14 +20,14 @@ ink        → desenho visível
 background → ignorado
 ```
 
-Quando a mão cobrir o desenho, o modelo retorna `hand` — nunca
-"enxerga através da mão". A memória temporal do Draw, que preserva
-o último estado confiável do traço até a mão sair, é trabalho
-futuro, fora daqui.
+When the hand covers the drawing, the model returns `hand` — never
+"sees through the hand". Draw's temporal memory, which preserves
+the last reliable state of the stroke until the hand leaves, is future
+work, outside this project.
 
-## Foco deste projeto
+## Focus of this project
 
-Exclusivamente:
+Exclusively:
 
 ```text
 câmera
@@ -37,10 +37,10 @@ câmera
 → manter o desenho digital coerente
 ```
 
-Não considerar CAD, simuladores ou integrações futuras neste
-projeto. O escopo do Muse aqui é só o modelo e a sua documentação.
+Do not consider CAD, simulators or future integrations in this
+project. Muse's scope here is only the model and its documentation.
 
-## Escopo do Muse (só isto)
+## Muse's scope (only this)
 
 ```text
 dados
@@ -51,135 +51,135 @@ dados
 → documentação
 ```
 
-## O que está explicitamente FORA (e quem fará depois)
+## What is explicitly OUT (and who will do it later)
 
-Tudo abaixo é trabalho posterior, do **Codex**, não deste projeto.
-Nada disso é implementado aqui, nem nesta pasta, nem neste branch,
-além da documentação de interface:
+Everything below is later work, by **Codex**, not by this project.
+None of this is implemented here, neither in this folder, nor in this branch,
+beyond the interface documentation:
 
 - webcam
-- integração do modelo no aplicativo (`draw/neural.py`, `draw/app.py`)
-- tracking temporal
-- memória dos traços
-- lógica de oclusão em tempo real
+- integration of the model into the application (`draw/neural.py`, `draw/app.py`)
+- temporal tracking
+- stroke memory
+- real-time occlusion logic
 - interface
 - CAD
-- simuladores
+- simulators
 
-A única ponte para esse trabalho futuro é
-[`INTEGRATION.md`](INTEGRATION.md), que documenta como o Codex
-deverá trocar o detector neural atual pelo modelo v1, sem que o
-Muse implemente essa troca.
+The only bridge to this future work is
+[`INTEGRATION.md`](INTEGRATION.md), which documents how Codex
+should replace the current neural detector with the v1 model, without
+Muse implementing that replacement.
 
 ## Classes
 
-| Índice | Classe | Significado |
+| Index | Class | Meaning |
 |---|---|---|
-| 0 | `background` | Tudo que não é folha, mão ou traço |
-| 1 | `paper` | Papel visível |
-| 2 | `hand` | Mão visível |
-| 3 | `ink` | Traço visível |
+| 0 | `background` | Everything that is not paper, hand or stroke |
+| 1 | `paper` | Visible paper |
+| 2 | `hand` | Visible hand |
+| 3 | `ink` | Visible stroke |
 
-Regra de rótulo, sem exceção: a segmentação representa o que a
-câmera vê. Mão por cima de traço = `hand`, nunca `ink`. A máscara
-do desenho completo (`ink_full_mask`, com o traço inclusive onde
-a mão o esconde) é um artefato opcional da geração sintética,
-**não** é classe de treinamento e **não** entra no ONNX — servirá
-no futuro para avaliar a memória do Draw.
+Label rule, without exception: the segmentation represents what the
+camera sees. Hand over stroke = `hand`, never `ink`. The mask
+of the complete drawing (`ink_full_mask`, with the stroke including where
+the hand hides it) is an optional artifact of synthetic generation,
+**not** a training class and **does not** enter the ONNX — it will serve
+in the future to evaluate Draw's memory.
 
-## Entregáveis prioritários (obrigatórios)
+## Priority deliverables (mandatory)
 
-1. **Gerador sintético reproduzível** — mãos FreiHAND + folhas +
-   fundos/mesas + traços + augmentations, com seeds reproduzíveis,
-   e splits feitos **antes** da geração (fontes originais divididas
-   entre train/val/test, para que variações da mesma mão, folha ou
-   fundo não vazem entre conjuntos).
-2. **Notebook Kaggle reproduzível** — SegFormer-B0 com transfer
-   learning, entrada RGB 512×512, saída de 4 classes.
-3. **Configuração completa do treinamento** (`training_config.json`).
-4. **Definição dos splits** (`split_manifest.json`, com seeds e IDs
-   das fontes por conjunto; sugestão inicial 80/10/10).
-5. **Métricas por classe** (`metrics.json`) — IoU por classe,
-   Dice de paper/hand/ink, precision e recall. Nunca só accuracy
-   global.
-6. **Métrica de ink com tolerância** — precision/recall de traço
-   com tolerância espacial de 2–3 px (dilatação, distance transform
-   ou esqueleto), porque traço fino deslocado poucos pixels tem
-   IoU artificialmente baixa mesmo estando visualmente certo.
-7. **Avaliação no holdout real** — pequeno conjunto de frames reais
-   do Draw, manualmente anotado, separado, nunca usado no treino
-   nem em augmentation. Métricas sintéticas e reais reportadas
-   **separadamente**; queda grande no real é domain gap a
-   documentar, não a esconder.
-8. **Amostras visuais** — bateria fixa de pelo menos 15 cenários
-   (folha limpa, folha com desenho, folha muito desenhada, mão
-   cobrindo canto/centro/traço, mão parcialmente fora, fundo
-   claro/escuro, sombra forte, folha parcialmente fora, mão sem
-   folha, objeto branco sem folha, traço fino de lápis, traço
-   grosso de caneta), com predições salvas para comparação entre
-   versões.
-9. **Modelo ONNX** — `draw_segmentation_v1.onnx`, validado contra
-   o modelo original (mesmos frames, saídas comparadas, sem
-   degradação significativa).
-10. **Documentação da interface ONNX** — [`INTEGRATION.md`](INTEGRATION.md):
-    input, shape, normalização, outputs, ordem das classes,
-    thresholds, extração de cada máscara e `paper_presence`.
-11. **Documentação de compatibilidade com `draw/neural.py`** —
-    também em [`INTEGRATION.md`](INTEGRATION.md): conversão de
-    `paper` para o contrato atual (máscara → maior contorno →
-    quadrilátero) e a lista do que o Codex precisará mudar depois.
+1. **Reproducible synthetic generator** — FreiHAND hands + paper +
+   backgrounds/tables + strokes + augmentations, with reproducible seeds,
+   and splits made **before** generation (original sources divided
+   between train/val/test, so that variations of the same hand, paper or
+   background do not leak between sets).
+2. **Reproducible Kaggle notebook** — SegFormer-B0 with transfer
+   learning, RGB 512×512 input, 4-class output.
+3. **Complete training configuration** (`training_config.json`).
+4. **Split definition** (`split_manifest.json`, with seeds and IDs
+   of the sources per set; initial suggestion 80/10/10).
+5. **Metrics per class** (`metrics.json`) — IoU per class,
+   Dice for paper/hand/ink, precision and recall. Never global accuracy
+   alone.
+6. **Ink metric with tolerance** — stroke precision/recall
+   with spatial tolerance of 2–3 px (dilation, distance transform
+   or skeleton), because a thin stroke displaced by a few pixels has
+   artificially low IoU even when visually correct.
+7. **Evaluation on the real holdout** — small set of real frames
+   from Draw, manually annotated, separate, never used in training
+   nor in augmentation. Synthetic and real metrics reported
+   **separately**; a large drop on real data is a domain gap to
+   document, not to hide.
+8. **Visual samples** — fixed battery of at least 15 scenarios
+   (clean paper, paper with drawing, heavily drawn paper, hand
+   covering corner/centre/stroke, hand partially out of frame, light/
+   dark background, strong shadow, paper partially out of frame, hand without
+   paper, white object without paper, thin pencil stroke, thick
+   pen stroke), with predictions saved for comparison between
+   versions.
+9. **ONNX model** — `draw_segmentation_v1.onnx`, validated against
+   the original model (same frames, outputs compared, without
+   significant degradation).
+10. **ONNX interface documentation** — [`INTEGRATION.md`](INTEGRATION.md):
+    input, shape, normalization, outputs, class order,
+    thresholds, extraction of each mask and `paper_presence`.
+11. **Compatibility documentation with `draw/neural.py`** —
+    also in [`INTEGRATION.md`](INTEGRATION.md): conversion of
+    `paper` to the current contract (mask → largest contour →
+    quadrilateral) and the list of what Codex will need to change later.
 
-## Decisão sobre `paper_presence` (resumo)
+## Decision on `paper_presence` (summary)
 
-Documentada em detalhe em `INTEGRATION.md`, seção 4:
+Documented in detail in `INTEGRATION.md`, section 4:
 
-**`paper_presence` é derivado da máscara de `paper`** — fração de
-pixels paper ≥ 0,01 **e** quadrilátero que fecha. **Não há cabeça
-auxiliar de presença no ONNX v1.** Motivo: uma única fonte de
-verdade, sem risco de presença e máscara discordarem. A
-compatibilidade com o contrato antigo não justifica um segundo
-sinal: **o modelo não é simplificado para manter o contrato
-antigo; o contrato é adaptado ao modelo.**
+**`paper_presence` is derived from the `paper` mask** — fraction of
+paper pixels ≥ 0.01 **and** a quadrilateral that closes. **There is no auxiliary
+presence head in ONNX v1.** Reason: a single source of
+truth, with no risk of presence and mask disagreeing. The
+compatibility with the old contract does not justify a second
+signal: **the model is not simplified to keep the old contract;
+the contract is adapted to the model.**
 
-## Dataset sintético (regra de tamanho)
+## Synthetic dataset (size rule)
 
-Não é obrigatório entregar todo o dataset gerado se isso
-ultrapassar limites razoáveis de armazenamento. Nesse caso,
-entregar gerador + seeds + configuração + manifest + amostra
-representativa, de forma que o dataset completo possa ser
-regenerado.
+It is not mandatory to deliver the entire generated dataset if that
+exceeds reasonable storage limits. In that case,
+deliver generator + seeds + configuration + manifest + representative
+sample, so that the complete dataset can be
+regenerated.
 
-## Dados e licenças (a verificar antes do treino)
+## Data and licences (to check before training)
 
-- **FreiHAND** (Kaggle, `danieldelro/freihand`): verificar antes
-  do pipeline completo se contém imagens RGB utilizáveis e
-  máscaras reais de segmentação da mão, formato, quantidade,
-  resolução, licença e termos. Se não contiver máscaras adequadas,
-  **não inventar rótulos**: documentar o problema e usar fonte
-  alternativa apropriada, registrando licença e origem.
-- **Frames reais do Draw**: fornecidos pelo Codex, manualmente
-  anotados, só para holdout. O Muse não captura câmera.
-- Negativos obrigatórios no sintético: mesa vazia, mão sem folha,
-  objetos brancos, retângulos claros, livro, caixa, monitor,
-  superfícies claras, folha muito pequena, folha praticamente
-  fora — para o modelo não aprender que "branco ou retangular
+- **FreiHAND** (Kaggle, `danieldelro/freihand`): check before
+  the full pipeline whether it contains usable RGB images and
+  real hand segmentation masks, format, quantity,
+  resolution, licence and terms. If it does not contain suitable masks,
+  **do not invent labels**: document the problem and use an
+  appropriate alternative source, recording licence and origin.
+- **Real Draw frames**: provided by Codex, manually
+  annotated, only for holdout. Muse does not capture camera.
+- Mandatory negatives in the synthetic set: empty table, hand without paper,
+  white objects, light rectangles, book, box, monitor,
+  light surfaces, very small paper, paper practically
+  out of frame — so that the model does not learn that "white or rectangular
   = paper".
 
-## Arquivos desta pasta
+## Files in this folder
 
-| Arquivo | Conteúdo |
+| File | Contents |
 |---|---|
-| `README.md` | Este documento: escopo, entregáveis, o que está fora |
-| `INTEGRATION.md` | Interface ONNX v1 e compatibilidade com `draw/neural.py` |
+| `README.md` | This document: scope, deliverables, what is out |
+| `INTEGRATION.md` | ONNX v1 interface and compatibility with `draw/neural.py` |
 
-Os arquivos do modelo (`draw_segmentation_v1.onnx`,
+The model files (`draw_segmentation_v1.onnx`,
 `classes.json`, `metrics.json`, `training_config.json`,
-`split_manifest.json`) são entregues pelos agentes de dados e
-treino, não por este documento.
+`split_manifest.json`) are delivered by the data and
+training agents, not by this document.
 
-## Estado
+## Status
 
-Documentação de interface criada, sem código alterado, sem
-commit, sem push, sem merge. O modelo v1 em si, o gerador, o
-notebook e as métricas são entregues pelos outros agentes deste
-projeto, nesta mesma branch (`feature/neural-seg-v1`).
+Interface documentation created, with no code changed, no
+commit, no push, no merge. The v1 model itself, the generator, the
+notebook and the metrics are delivered by the other agents of this
+project, in this same branch (`feature/neural-seg-v1`).

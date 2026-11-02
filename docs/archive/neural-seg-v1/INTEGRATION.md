@@ -1,73 +1,73 @@
-# Integração do modelo de segmentação v1 (4 classes) com o Draw
+# Integration of the v1 segmentation model (4 classes) with Draw
 
-> Documento de interface. Não é implementação.
-> Quem integra é o Codex, depois, em `draw/neural.py`.
-> Este documento não altera o contrato atual e não simplifica o modelo
-> para caber nele: o modelo de 4 classes é o que é, e a integração é
-> que se adapta a ele.
+> Interface document. Not an implementation.
+> Who integrates is Codex, later, in `draw/neural.py`.
+> This document does not change the current contract and does not simplify the model
+> to fit it: the 4-class model is what it is, and the integration
+> is what adapts to it.
 
-## 1. O que muda e o que não muda
+## 1. What changes and what does not change
 
-### Contrato atual (fase 2, em `draw/neural.py`, base `e2c866f`)
+### Current contract (phase 2, in `draw/neural.py`, base `e2c866f`)
 
-- Entrada: frame da câmera, esmagado para **512×512** (sem letterbox),
-  convertido de BGR para RGB, dividido por 255 e normalizado com a
-  média e o desvio do ImageNet.
-- Saída ONNX: dois tensores, `mask_logits` com **2 canais**
-  (background, paper) e `presence_logit` (1 valor).
-- Decisão: presença positiva (`presence_logit > 0`) **e** quadrilátero
-  que fecha. Sem um dos dois, o resultado é `(None, None)`.
-- Máscara: probabilidade do canal paper (softmax de 2 canais) com
-  limiar **0,5**, redimensionada para o tamanho do frame com
-  `INTER_NEAREST`, em uint8 0/255.
-- Quadrilátero: maior contorno da máscara, área mínima de 1% do frame,
-  escada de epsilon do detector clássico (`draw/paper.py`),
-  reajuste de cada aresta como reta sobre os pontos do contorno
-  (deslocamento máximo aceito de 100 px), refino subpixel só nos
-  cantos dentro do quadro, e exigência de quadrilátero convexo.
-  Tudo isso já existe em `neural.py:fit_quad` e **não deve ser
-  reescrito** — deve ser reutilizado.
-- Sessão ONNX preguiçosa: `onnxruntime` só é importado no primeiro
-  uso; sem ele, erro explícito. O caminho do modelo chega por
-  argumento ou pela variável `DRAW_NEURAL_MODEL`. O binário fica
-  fora do repositório.
+- Input: camera frame, squashed to **512×512** (no letterbox),
+  converted from BGR to RGB, divided by 255 and normalized with the
+  ImageNet mean and standard deviation.
+- ONNX output: two tensors, `mask_logits` with **2 channels**
+  (background, paper) and `presence_logit` (1 value).
+- Decision: positive presence (`presence_logit > 0`) **and** quadrilateral
+  that closes. Without one of the two, the result is `(None, None)`.
+- Mask: probability of the paper channel (softmax of 2 channels) with
+  threshold **0.5**, resized to the frame size with
+  `INTER_NEAREST`, in uint8 0/255.
+- Quadrilateral: largest contour of the mask, minimum area of 1% of the frame,
+  epsilon ladder of the classic detector (`draw/paper.py`),
+  refit of each edge as a line over the contour points
+  (maximum accepted displacement of 100 px), subpixel refinement only on the
+  corners inside the frame, and requirement of a convex quadrilateral.
+  All of this already exists in `neural.py:fit_quad` and **must not be
+  rewritten** — it must be reused.
+- Lazy ONNX session: `onnxruntime` is only imported on first
+  use; without it, explicit error. The model path arrives by
+  argument or via the `DRAW_NEURAL_MODEL` variable. The binary stays
+  outside the repository.
 
-### Contrato novo (v1, 4 classes)
+### New contract (v1, 4 classes)
 
-- O modelo passa a segmentar **o que a câmera vê, pixel a pixel**,
-  em 4 classes. Nada aqui é "o que está por baixo da mão" — ver
-  a regra de rótulo visível na seção 6.
-- A única saída do ONNX v1 é a segmentação. **Não há `presence_logit`
-  no ONNX v1** (decisão na seção 4). Quem precisar do sinal de
-  presença deriva-o da máscara de paper, de forma determinística.
-- O pipeline de quadrilátero (`fit_quad`) continua idêntico. O que
-  muda é só a origem da máscara: antes, canal paper de um modelo
-  de 2 canais; agora, canal paper de um modelo de 4 canais.
+- The model now segments **what the camera sees, pixel by pixel**,
+  into 4 classes. Nothing here is "what is underneath the hand" — see
+  the visible-label rule in section 6.
+- The only output of ONNX v1 is segmentation. **There is no `presence_logit`
+  in ONNX v1** (decision in section 4). Whoever needs the presence
+  signal derives it from the paper mask, deterministically.
+- The quadrilateral pipeline (`fit_quad`) remains identical. What
+  changes is only the origin of the mask: before, the paper channel of a
+  2-channel model; now, the paper channel of a 4-channel model.
 
-## 2. Input do ONNX v1
+## 2. ONNX v1 input
 
-| Item | Valor |
+| Item | Value |
 |---|---|
-| Nome do input | `image` (manter o mesmo nome do contrato atual) |
-| Formato | RGB, não BGR. O frame vem da câmera em BGR (OpenCV) e **deve** ser convertido com `cv2.COLOR_BGR2RGB` antes de entrar no modelo |
-| Redimensionamento | Esmagado para **512×512** com `INTER_LINEAR`, exatamente como hoje. Sem letterbox, sem crop, sem preservar aspecto. Isso distorce a proporção da imagem, e é assim que o modelo é treinado e avaliado — mudar isso na integração quebraria o modelo |
-| Escala | Dividir por 255,0 (float32) |
-| Normalização | ImageNet, igual à atual: média `[0.485, 0.456, 0.406]`, desvio `[0.229, 0.224, 0.225]` |
+| Input name | `image` (keep the same name as the current contract) |
+| Format | RGB, not BGR. The frame comes from the camera in BGR (OpenCV) and **must** be converted with `cv2.COLOR_BGR2RGB` before entering the model |
+| Resizing | Squashed to **512×512** with `INTER_LINEAR`, exactly as today. No letterbox, no crop, no aspect preservation. This distorts the image proportions, and that is how the model is trained and evaluated — changing this in the integration would break the model |
+| Scale | Divide by 255.0 (float32) |
+| Normalization | ImageNet, same as current: mean `[0.485, 0.456, 0.406]`, std `[0.229, 0.224, 0.225]` |
 | Layout | NCHW, float32, batch 1 |
-| Shape final | `[1, 3, 512, 512]` |
+| Final shape | `[1, 3, 512, 512]` |
 
-Ordem das operações, sem atalho: BGR → RGB → resize 512×512 →
-`/255` → `(x - mean) / std` → transpose para CHW → batch.
+Order of operations, with no shortcut: BGR → RGB → resize 512×512 →
+`/255` → `(x - mean) / std` → transpose to CHW → batch.
 
-## 3. Outputs do ONNX v1 e ordem das classes
+## 3. ONNX v1 outputs and class order
 
-| Item | Valor |
+| Item | Value |
 |---|---|
-| Nome do output | `logits` (único output do ONNX v1) |
-| Shape | `[1, 4, 512, 512]`, float32, logits (não probabilidades) |
-| Pós-processamento | softmax sobre o eixo dos canais (dimensão 1) e depois `argmax` sobre o mesmo eixo |
+| Output name | `logits` (sole output of ONNX v1) |
+| Shape | `[1, 4, 512, 512]`, float32, logits (not probabilities) |
+| Post-processing | softmax over the channel axis (dimension 1) and then `argmax` over the same axis |
 
-Ordem das classes, fixa e documentada em `classes.json`:
+Class order, fixed and documented in `classes.json`:
 
 ```json
 {
@@ -78,18 +78,18 @@ Ordem das classes, fixa e documentada em `classes.json`:
 }
 ```
 
-**Não reordenar, não renomear, não remover canal.** Qualquer modelo
-que troque essa ordem é um modelo diferente e precisa de uma nova
-versão do documento, não de um ajuste silencioso na integração.
+**Do not reorder, do not rename, do not remove a channel.** Any model
+that changes this order is a different model and needs a new
+version of the document, not a silent adjustment in the integration.
 
-## 4. Decisão: `paper_presence` — derivado da máscara, não cabeça auxiliar
+## 4. Decision: `paper_presence` — derived from the mask, not an auxiliary head
 
-### Decisão documentada
+### Documented decision
 
-**`paper_presence` no v1 é derivado da máscara de `paper`. Não há
-cabeça auxiliar de presença no ONNX v1.**
+**`paper_presence` in v1 is derived from the `paper` mask. There is no
+auxiliary presence head in ONNX v1.**
 
-Definição exata, para o Codex implementar:
+Exact definition, for Codex to implement:
 
 ```text
 paper_prob   = softmax(logits, dim=canais)[:, 1, :, :]   # canal paper
@@ -100,70 +100,70 @@ paper_presence = 1  se paper_fraction >= 0,01 e quad is not None
                  0  caso contrário
 ```
 
-O limiar de 0,01 (1% do frame) é o mesmo da área mínima de contorno
-já usada em `fit_quad` (`_MIN_CONTOUR_AREA_RATIO`). Não é um número
-novo: é o mesmo critério, aplicado duas vezes de forma coerente
-(fração global e maior contorno).
+The threshold of 0.01 (1% of the frame) is the same as the minimum contour area
+already used in `fit_quad` (`_MIN_CONTOUR_AREA_RATIO`). It is not a new
+number: it is the same criterion, applied twice in a coherent way
+(global fraction and largest contour).
 
-Além do booleano, a integração deve expor `paper_fraction` como
-escore contínuo de confiança da presença (útil para logs, debug e
-para o harness de avaliação). O booleano é a decisão; a fração é a
-medida.
+Besides the boolean, the integration must expose `paper_fraction` as a
+continuous presence-confidence score (useful for logs, debug, and
+for the evaluation harness). The boolean is the decision; the fraction is the
+measure.
 
-### Prós e contras considerados
+### Pros and cons considered
 
-**Derivado da máscara (escolhido):**
+**Derived from the mask (chosen):**
 
-- Prós: uma única fonte de verdade. Presença e máscara nunca
-  discordam (não existe "o modelo diz que há papel, mas a máscara
-  está vazia", nem o inverso). ONNX mais simples, com um único
-  output. Comportamento determinístico e reproduzível a partir da
-  segmentação. O limiar é interpretável (fração de papel visível).
-- Contras: se a máscara falhar, a presença falha junto — não há
-  um segundo sinal para resgatar. Uma folha muito pequena ou muito
-  oclusa pode ficar abaixo de 1% mesmo estando presente; esse é
-  um limite conhecido, e a resposta correta é melhorar a
-  segmentação, não inventar um segundo sinal que a contradiga.
+- Pros: a single source of truth. Presence and mask never
+  disagree (there is no "the model says there is paper, but the mask
+  is empty", nor the reverse). Simpler ONNX, with a single
+  output. Deterministic and reproducible behavior from the
+  segmentation. The threshold is interpretable (fraction of visible paper).
+- Cons: if the mask fails, presence fails with it — there is no
+  second signal to rescue it. A very small or very
+  occluded sheet may fall below 1% even though present; that is
+  a known limit, and the correct response is to improve the
+  segmentation, not invent a second signal that contradicts it.
 
-**Cabeça auxiliar (rejeitada para o v1):**
+**Auxiliary head (rejected for v1):**
 
-- Prós: um sinal independente, que poderia resgatar casos em que a
-  máscara falha, e que reproduz o formato do contrato atual
-  (`presence_logit`) sem mudar a assinatura.
-- Contras: dois sinais que podem divergir, e aí a integração
-  precisa de uma regra de desempate arbitrária (qual vale quando
-  discordam?). Treino mais complexo (peso da loss auxiliar,
-  calibração do logit). Risco de a cabeça aprender um atalho
-  ("há algo branco e retangular") que a máscara, mais exigente,
-  não aprendeu — exatamente o falso positivo que os negativos
-  do dataset existem para evitar.
-- Veredito: a compatibilidade com o formato antigo não justifica
-  um segundo sinal que pode contradizer o primeiro. **O modelo
-  não é simplificado para manter o contrato antigo; o contrato
-  é adaptado ao modelo.** Se, com métricas em mãos, o derivado
-  se mostrar insuficiente, uma cabeça auxiliar pode ser avaliada
-  como v2, como output adicional, sem quebrar a segmentação —
-  nunca como substituto silencioso da máscara.
+- Pros: an independent signal, which could rescue cases where the
+  mask fails, and which reproduces the format of the current contract
+  (`presence_logit`) without changing the signature.
+- Cons: two signals that can diverge, and then the integration
+  needs an arbitrary tie-break rule (which counts when
+  they disagree?). More complex training (auxiliary loss weight,
+  logit calibration). Risk that the head learns a shortcut
+  ("there is something white and rectangular") that the mask, more demanding,
+  has not learned — exactly the false positive that the dataset's
+  negatives exist to avoid.
+- Verdict: compatibility with the old format does not justify
+  a second signal that may contradict the first. **The model
+  is not simplified to keep the old contract; the contract
+  is adapted to the model.** If, with metrics in hand, the derived
+  signal proves insufficient, an auxiliary head may be evaluated
+  as v2, as an additional output, without breaking segmentation —
+  never as a silent substitute for the mask.
 
 ## 5. Thresholds
 
-| Onde | Valor | Por quê |
+| Where | Value | Why |
 |---|---|---|
-| Máscara de paper (para o quadrilátero) | `argmax == 1` | Em 4 classes, o argmax é a decisão do modelo. É o equivalente direto do `prob > 0,5` do modelo de 2 canais (lá, prob > 0,5 implicava argmax) |
-| Máscara confiante (opcional, para debug/visualização) | `argmax == 1` **e** `prob_paper >= 0,5` | Mostra só os pixels em que o modelo está seguro; não usar para o quadrilátero, para não encolher a folha |
-| `paper_presence` | `paper_fraction >= 0,01` **e** quadrilátero fecha | Mesmo critério de área mínima já usado em `fit_quad` |
-| Máscaras de hand e ink | `argmax == 2` e `argmax == 3` | Sem limiar adicional no v1; se a calibração futura pedir, documentar como nova versão |
-| Quadrilátero | regras atuais de `fit_quad`, sem mudança | Maior contorno, área ≥ 1%, escada de epsilon, refit de arestas (≤ 100 px), subpixel só dentro do quadro, convexo |
+| Paper mask (for the quadrilateral) | `argmax == 1` | In 4 classes, argmax is the model's decision. It is the direct equivalent of `prob > 0.5` of the 2-channel model (there, prob > 0.5 implied argmax) |
+| Confident mask (optional, for debug/visualization) | `argmax == 1` **and** `prob_paper >= 0.5` | Shows only pixels where the model is confident; do not use for the quadrilateral, so as not to shrink the sheet |
+| `paper_presence` | `paper_fraction >= 0.01` **and** quadrilateral closes | Same minimum-area criterion already used in `fit_quad` |
+| Hand and ink masks | `argmax == 2` and `argmax == 3` | No additional threshold in v1; if future calibration requires one, document it as a new version |
+| Quadrilateral | current `fit_quad` rules, unchanged | Largest contour, area ≥ 1%, epsilon ladder, edge refit (≤ 100 px), subpixel only inside the frame, convex |
 
-Não criar threshold novo na integração sem registrar aqui o motivo
-e a métrica que o justifica.
+Do not create a new threshold in the integration without recording here the reason
+and the metric that justifies it.
 
-## 6. Como extrair cada máscara
+## 6. How to extract each mask
 
-Todas as máscaras saem do mesmo `argmax`, na resolução 512×512, e
-só depois são redimensionadas para o tamanho do frame original,
-com `INTER_NEAREST` (nunca interpolação linear em máscara binária,
-que criaria valores intermediários falsos), em uint8 0/255.
+All masks come from the same `argmax`, at 512×512 resolution, and
+only then are resized to the size of the original frame,
+with `INTER_NEAREST` (never linear interpolation on a binary mask,
+which would create false intermediate values), in uint8 0/255.
 
 ```text
 seg        = argmax(softmax(logits), dim=canais)   # [512, 512], valores 0..3
@@ -174,23 +174,23 @@ ink_mask   = (seg == 3)   # traço visível
 # cada máscara: resize para (frame_w, frame_h), INTER_NEAREST, * 255
 ```
 
-Pontos importantes:
+Important points:
 
-- As três máscaras estão em **coordenadas do frame original**,
-  não da folha retificada. O warp para a folha (homografia) vem
-  depois, a partir do quadrilátero de `paper_mask`, e é trabalho
-  da integração/app — não deste documento e não do modelo.
-- `hand_mask` e `ink_mask` são saídas novas do v1. O contrato
-  atual não as tem. A integração deve expô-las (ver seção 7),
-  mas o app atual não precisa usá-las até o Codex decidir como.
-- As máscaras são mutuamente exclusivas por construção (argmax):
-  um pixel é exatamente uma classe. Isso é o que implementa a
-  regra de rótulo visível (abaixo).
+- The three masks are in **original frame coordinates**,
+  not rectified-sheet coordinates. The warp to the sheet (homography) comes
+  later, from the `paper_mask` quadrilateral, and is the work
+  of the integration/app — not of this document and not of the model.
+- `hand_mask` and `ink_mask` are new v1 outputs. The current
+  contract does not have them. The integration must expose them (see section 7),
+  but the current app does not need to use them until Codex decides how.
+- The masks are mutually exclusive by construction (argmax):
+  a pixel is exactly one class. This is what implements the
+  visible-label rule (below).
 
-### Regra de rótulo visível (obrigatória, sem exceção)
+### Visible-label rule (mandatory, no exception)
 
-A segmentação representa **o que a câmera vê**, não o que está
-por baixo:
+Segmentation represents **what the camera sees**, not what is
+underneath:
 
 ```text
 papel visível → paper
@@ -199,103 +199,103 @@ mão visível   → hand
 restante      → background
 ```
 
-Se a mão cobre um traço, o pixel final é `hand`, **não** `ink`.
-O modelo não deve ser treinado para "enxergar através da mão".
-A máscara do desenho completo (`ink_full_mask`, com o traço
-inclusive onde a mão o esconde) é um artefato separado da geração
-sintética, **não** é classe de treinamento, **não** entra no ONNX
-e **não** deve ser usada como rótulo. Ela servirá, no futuro,
-para avaliar o sistema de memória do Draw — fora deste escopo.
+If the hand covers a stroke, the final pixel is `hand`, **not** `ink`.
+The model must not be trained to "see through the hand".
+The full drawing mask (`ink_full_mask`, with the stroke
+including where the hand hides it) is a separate artifact of synthetic
+generation, **not** a training class, **not** in the ONNX
+and **must not** be used as a label. It will serve, in the future,
+to evaluate Draw's memory system — outside this scope.
 
-## 7. Conversão paper → contrato atual (o que o Codex fará depois)
+## 7. Paper → current contract conversion (what Codex will do later)
 
-Passo a passo, reutilizando o que já existe:
+Step by step, reusing what already exists:
 
-1. Rodar o ONNX v1 no frame (seção 2) e obter `logits`
+1. Run ONNX v1 on the frame (section 2) and obtain `logits`
    `[1, 4, 512, 512]`.
-2. Softmax + argmax → `paper_mask` 512×512 (seção 6).
-3. Redimensionar `paper_mask` para o tamanho do frame com
-   `INTER_NEAREST`, em uint8 0/255.
-4. Chamar `fit_quad(máscara, frame)` — o mesmo de hoje, sem
-   reescrever: maior contorno, escada de epsilon, refit de
-   arestas, subpixel dentro do quadro, convexo.
-5. Calcular `paper_fraction` e `paper_presence` pela definição
-   da seção 4.
-6. Devolver, no contrato atual, `(cantos, "paper")` quando
-   `paper_presence == 1`, e `(None, None)` caso contrário —
-   exatamente como `detect_sheet_with_confidence` faz hoje.
-7. Expor, em adição ao contrato atual (sem quebrá-lo), as
-   máscaras novas: um método novo (sugestão: `predict_masks(frame)`)
-   devolvendo `paper_mask`, `hand_mask`, `ink_mask` e
-   `paper_fraction`, nas coordenadas do frame. O método antigo
-   continua existindo e continua devolvendo só `(cantos, veredito)`.
+2. Softmax + argmax → `paper_mask` 512×512 (section 6).
+3. Resize `paper_mask` to the frame size with
+   `INTER_NEAREST`, in uint8 0/255.
+4. Call `fit_quad(mask, frame)` — the same as today, without
+   rewriting: largest contour, epsilon ladder, edge refit,
+   subpixel inside the frame, convex.
+5. Compute `paper_fraction` and `paper_presence` by the definition
+   in section 4.
+6. Return, in the current contract, `(corners, "paper")` when
+   `paper_presence == 1`, and `(None, None)` otherwise —
+   exactly as `detect_sheet_with_confidence` does today.
+7. Expose, in addition to the current contract (without breaking it), the
+   new masks: a new method (suggestion: `predict_masks(frame)`)
+   returning `paper_mask`, `hand_mask`, `ink_mask` and
+   `paper_fraction`, in frame coordinates. The old method
+   continues to exist and continues returning only `(corners, verdict)`.
 
-### O que o Codex precisará mudar em `draw/neural.py` (lista, sem implementar aqui)
+### What Codex will need to change in `draw/neural.py` (list, without implementing here)
 
-- [ ] `predict`: ler **um** output (`logits`, 4 canais) em
-      vez de dois; remover a leitura de `presence_logit`; trocar
-      o softmax de 2 canais por softmax + argmax de 4 canais.
-- [ ] Extrair `paper_mask`, `hand_mask` e `ink_mask` do argmax,
-      com resize `INTER_NEAREST` para o tamanho do frame.
-- [ ] Calcular `paper_presence` pela definição da seção 4
-      (fração ≥ 0,01 e quadrilátero fecha), em vez de
+- [ ] `predict`: read **one** output (`logits`, 4 channels) instead
+      of two; remove reading of `presence_logit`; replace
+      the 2-channel softmax with 4-channel softmax + argmax.
+- [ ] Extract `paper_mask`, `hand_mask` and `ink_mask` from argmax,
+      with `INTER_NEAREST` resize to frame size.
+- [ ] Compute `paper_presence` by the definition in section 4
+      (fraction ≥ 0.01 and quadrilateral closes), instead of
       `presence_logit > 0`.
-- [ ] Manter intactos, sem tocar: `fit_quad`, `_approx_quad`,
-      `_refit_corners`, `_refine_inside`, a sessão preguiçosa,
-      o erro explícito sem `onnxruntime`, o caminho por argumento
-      ou `DRAW_NEURAL_MODEL`, e o fallback para o detector
-      clássico quando o neural não vê folha (isso está em
-      `draw/app.py`, não aqui, e continua valendo).
-- [ ] Manter o input exatamente como na seção 2 (nome `image`,
-      512×512 esmagado, ImageNet). Qualquer divergência aqui é
-      bug de integração, não "ajuste".
-- [ ] Atualizar o docstring do módulo para o contrato v1 e
-      apontar para este documento.
-- [ ] Validar com o harness de avaliação (`tools/eval_real_frames.py`)
-      antes de considerar a integração pronta, e comparar as
-      métricas com o modelo da fase 2 — sem essa comparação, a
-      integração não está validada.
+- [ ] Keep intact, untouched: `fit_quad`, `_approx_quad`,
+      `_refit_corners`, `_refine_inside`, the lazy session,
+      the explicit error without `onnxruntime`, the path by argument
+      or `DRAW_NEURAL_MODEL`, and the fallback to the classic
+      detector when the neural one sees no sheet (this is in
+      `draw/app.py`, not here, and continues to hold).
+- [ ] Keep the input exactly as in section 2 (name `image`,
+      512×512 squashed, ImageNet). Any divergence here is
+      an integration bug, not an "adjustment".
+- [ ] Update the module docstring to the v1 contract and
+      point to this document.
+- [ ] Validate with the evaluation harness (`tools/eval_real_frames.py`)
+      before considering the integration done, and compare the
+      metrics with the phase 2 model — without that comparison, the
+      integration is not validated.
 
-### O que o Codex NÃO fará neste passo (fora do escopo dele aqui também)
+### What Codex will NOT do in this step (outside his scope here too)
 
-- Não mudar o app, a webcam, o tracking temporal, a memória dos
-  traços, a lógica de oclusão em tempo real, a interface, CAD ou
-  simuladores. A integração é só a troca do detector neural pelo
-  modelo v1, atrás do mesmo contrato de cantos + veredito, mais
-  as máscaras novas expostas.
+- Not change the app, webcam, temporal tracking, stroke memory,
+  real-time occlusion logic, interface, CAD or
+  simulators. The integration is only swapping the neural detector for the
+  v1 model, behind the same corners + verdict contract, plus
+  the new masks exposed.
 
-## 8. Arquivos da entrega v1 (referência para a integração)
+## 8. v1 delivery files (reference for the integration)
 
-Os arquivos abaixo são entregues por outros agentes deste projeto
-(treino, dados). A integração deve esperá-los com exatamente estes
-nomes e formatos; se algum vier diferente, isso é divergência a
-resolver, não detalhe a improvisar na hora:
+The files below are delivered by other agents of this project
+(training, data). The integration must expect them with exactly these
+names and formats; if any arrives differently, that is a divergence to
+resolve, not a detail to improvise on the spot:
 
-| Arquivo | Conteúdo |
+| File | Content |
 |---|---|
-| `draw_segmentation_v1.onnx` | Modelo v1, input `image` `[1,3,512,512]`, output `logits` `[1,4,512,512]` |
+| `draw_segmentation_v1.onnx` | v1 model, input `image` `[1,3,512,512]`, output `logits` `[1,4,512,512]` |
 | `classes.json` | `{"0": "background", "1": "paper", "2": "hand", "3": "ink"}` |
-| `metrics.json` | Métricas por classe (IoU e Dice por classe, precision, recall) e métrica de ink com tolerância espacial |
-| `training_config.json` | Arquitetura, entrada, loss, seeds, hiperparâmetros — tudo para reproduzir o treino |
-| `split_manifest.json` | Quais fontes originais (mãos, folhas, fundos) foram para train/val/test, com seeds |
+| `metrics.json` | Per-class metrics (IoU and Dice per class, precision, recall) and ink metric with spatial tolerance |
+| `training_config.json` | Architecture, input, loss, seeds, hyperparameters — everything to reproduce training |
+| `split_manifest.json` | Which original sources (hands, sheets, backgrounds) went to train/val/test, with seeds |
 
-Antes de integrar, validar o ONNX: rodar o modelo original e o ONNX
-nos mesmos frames e comparar as saídas; registrar a comparação.
-Conversão que degrade a segmentação não é entregue.
+Before integrating, validate the ONNX: run the original model and the ONNX
+on the same frames and compare the outputs; record the comparison.
+A conversion that degrades segmentation is not delivered.
 
-## 9. Limites conhecidos desta interface
+## 9. Known limits of this interface
 
-- O modelo vê o frame esmagado em 512×512: traço muito fino pode
-  sumir no downscale. A métrica de ink com tolerância (2–3 px)
-  existe por isso, e a integração não deve "corrigir" traço fino
-  com limiar próprio.
-- Folha muito pequena ou muito oclusa pode ficar abaixo de 1% de
-  pixels paper e, portanto, com `paper_presence == 0`, mesmo
-  estando parcialmente visível. Isso é o comportamento definido,
-  não um bug a contornar na integração.
-- `hand_mask` e `ink_mask` são do frame, não da folha retificada.
-  Quem precisar delas na folha precisa aplicar a homografia do
-  quadrilátero — fora do modelo, fora deste documento.
-- Este documento descreve a interface. Métricas, amostras e o
-  modelo em si são entregues pelos outros agentes e documentados
-  no README desta pasta.
+- The model sees the frame squashed to 512×512: a very thin stroke may
+  disappear in downscaling. The ink metric with tolerance (2–3 px)
+  exists for this, and the integration must not "fix" thin stroke
+  with its own threshold.
+- A very small or very occluded sheet may fall below 1% of
+  paper pixels and therefore have `paper_presence == 0`, even
+  though partially visible. This is the defined behavior,
+  not a bug to work around in the integration.
+- `hand_mask` and `ink_mask` are of the frame, not of the rectified sheet.
+  Whoever needs them on the sheet must apply the quadrilateral's homography —
+  outside the model, outside this document.
+- This document describes the interface. Metrics, samples, and the
+  model itself are delivered by the other agents and documented
+  in this folder's README.

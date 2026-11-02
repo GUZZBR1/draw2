@@ -1,111 +1,111 @@
-# Auditoria do harness — 2026-11-02
+# Harness audit — 2026-11-02
 
-O harness é o conjunto de réguas, portões e protocolos que decide
-se um modelo é bom. Esta auditoria inventaria o que existe, onde
-cada regra do projeto vive (código, documento ou conversa) e o que
-falta. Números citados são medidos em laboratório pelo agente.
+The harness is the set of rulers, gates, and protocols that decide
+whether a model is good. This audit inventories what exists, where
+each project rule lives (code, document, or conversation), and what
+is missing. Numbers cited were measured in the laboratory by the agent.
 
-## Inventário
+## Inventory
 
-| Peça | Onde | O que decide | Estado |
+| Piece | Where | What it decides | State |
 |---|---|---|---|
-| Portão de promoção do loop | `draw/selflearn/gate.py` + CLI `tools/selflearn/judge_gate.py` | PROMOTE/REJECT/INCONCLUSIVE no replay real selado; INCONCLUSIVE sob n mínimo (5 sessões/25 páginas); DIBCO só diagnóstico | Código + testes. Sólido. |
-| Régua de replay estática | laboratório (`draw-lab/replay-ruler-2026-11-01/`) | DIBCO IoU/recall por largura de traço, FP em warps vazios f01–f03, fração de tinta em warps desenhados | Funciona, mas vive fora do repo, com modelo (v2), data e caminhos da VM escritos no código. |
-| Réguas de sequência/eventos | mesmo laboratório | Crescimento em página vazia, sessão f01–f30, atraso de traço novo | Idem. |
-| Réguas TRI (impresso/invariância) | dentro do corpo de treino TRI (laboratório) | Vazamento de impresso ≤0,5%; invariância de posição | Embutidas no corpo; saída sem os n (pares, contagens) necessários para intervalo e n mínimo. |
-| Runner mínimo | `tools/runner/` | Métrica sintética por época detecta corrida morta | Por desenho (reescopo 2026-10-31): nunca promove nem veta candidato vivo. Consistente com as regras. |
-| Protocolo de lançamento | laboratório (`draw-lab/launch-protocol/`) | Portões de lançamento (auditoria de imports, probe, smoke, log/checkpoint, disciplina de alocação) | Documento + `probe_env.py`, fora do repo. Regra viva só em texto. |
-| Coleta + split + telemetria | `draw/selflearn/` (coleta, split por sessão), `draw/telemetry.py` | Matéria-prima do holdout selado e observabilidade da sessão | Código. O holdout selado no n exigido ainda não existe (ver P1). |
-| Higiene da suíte | `tests/` | A ordem dos testes não pode mudar o resultado | Tinha um vazamento real (abaixo), corrigido nesta rodada. |
+| Loop promotion gate | `draw/selflearn/gate.py` + CLI `tools/selflearn/judge_gate.py` | PROMOTE/REJECT/INCONCLUSIVE on the sealed real replay; INCONCLUSIVE under the minimum n (5 sessions/25 pages); DIBCO diagnostic only | Code + tests. Solid. |
+| Static replay ruler | laboratory (`draw-lab/replay-ruler-2026-11-01/`) | DIBCO IoU/recall per stroke width, FP on empty warps f01–f03, ink fraction on drawn warps | Works, but lives outside the repo, with the model (v2), date, and VM paths written into the code. |
+| Sequence/event rulers | same laboratory | Growth on an empty page, session f01–f30, new-stroke delay | Same. |
+| TRI rulers (printed/invariance) | inside the TRI training body (laboratory) | Printed leak ≤0.5%; position invariance | Embedded in the body; output lacks the n (pairs, counts) needed for interval and minimum n. |
+| Minimal runner | `tools/runner/` | Synthetic metric per epoch detects a dead run | By design (rescoped 2026-10-31): it never promotes or vetoes a live candidate. Consistent with the rules. |
+| Launch protocol | laboratory (`draw-lab/launch-protocol/`) | Launch gates (import audit, probe, smoke, log/checkpoint, allocation discipline) | Document + `probe_env.py`, outside the repo. Rule lives only in text. |
+| Collection + split + telemetry | `draw/selflearn/` (collection, split by session), `draw/telemetry.py` | Raw material for the sealed holdout and session observability | Code. The sealed holdout at the required n does not exist yet (see P1). |
+| Suite hygiene | `tests/` | Test order must not change the result | It had a real leak (below), fixed in this round. |
 
-## O que esta rodada implementou
+## What this round implemented
 
-1. **Vazamento de `sys.modules` em `tests/test_seg_metrics.py`**
-   (commit `2731018`). Os módulos falsos de torch/onnxruntime eram
-   atribuídos direto em `sys.modules` e nunca restaurados; quem
-   importava torch depois, no mesmo processo, pegava o falso
-   (`test_selflearn_train_round.py` contornava capturando o torch
-   real na coleta — remendo frágil, dependente da ordem de
-   coleta). Correção: injeção via `monkeypatch.setitem`, falsos
-   marcados, e teste de regressão que roda depois dos testes de
-   `validate_onnx` e falha se algum falso sobrar. Prova: sem a
-   correção o teste novo falha (1 failed/17 passed); com ela,
-   157→suítes verdes nos dois ambientes.
-2. **Ponto único de julgamento, `tools/judge.py`** (commit
-   `17b798c`). Um comando lê as medições (JSON direto, ou pelos
-   adaptadores do `static_results.json` da régua de replay e do
-   `metrics.json` do corpo TRI) e emite o veredito portão a
-   portão: valor, corte pré-registrado, n, n mínimo e IC95
-   (Wilson para proporções com contagens; bootstrap determinístico
-   para médias por página). Regras em código: IoU DIBCO de
-   manchete é `diagnostic_only` e nunca decide sozinho; promoção
-   exige o replay real selado de `gate.py` com n; n insuficiente
-   em qualquer portão fornecido recusa o veredito de promoção
-   (INCONCLUSIVE); PROMOTE sai rotulado como proposta — a troca
-   continua exigindo o teste ao vivo e a palavra do dono. Todo o
-   relatório carrega "medido em laboratório pelo agente".
-   Códigos de saída iguais aos de `judge_gate.py` (0/1/2).
-   12 testes novos.
-3. **CLI do portão real expõe `--worst-group-tolerance`** (neste
-   commit). `gate.judge_candidate` aceitava a tolerância, mas a
-   CLI não tinha a flag — na prática ela era sempre 0 para quem
-   julgava pela ferramenta oficial. Teste de CLI cobre os dois
-   lados (reprova sem, promove com tolerância declarada).
+1. **`sys.modules` leak in `tests/test_seg_metrics.py`**
+   (commit `2731018`). The fake torch/onnxruntime modules were
+   assigned directly into `sys.modules` and never restored; anyone
+   importing torch afterwards, in the same process, got the fake
+   (`test_selflearn_train_round.py` worked around it by capturing
+   the real torch at collection — a fragile patch, dependent on
+   collection order). Fix: injection via `monkeypatch.setitem`, fakes
+   marked, and a regression test that runs after the
+   `validate_onnx` tests and fails if any fake remains. Proof: without
+   the fix the new test fails (1 failed/17 passed); with it,
+   157 green suites in both environments.
+2. **Single judging point, `tools/judge.py`** (commit
+   `17b798c`). One command reads the measurements (direct JSON, or
+   via the adapters for the replay ruler's `static_results.json` and
+   the TRI body's `metrics.json`) and emits the verdict gate by
+   gate: value, pre-registered cutoff, n, minimum n, and 95% CI
+   (Wilson for proportions with counts; deterministic bootstrap
+   for per-page means). Rules in code: headline DIBCO IoU is
+   `diagnostic_only` and never decides alone; promotion
+   requires the sealed real replay from `gate.py` with n; insufficient
+   n on any provided gate refuses the promotion verdict
+   (INCONCLUSIVE); PROMOTE comes out labeled as a proposal — the swap
+   still requires the live test and the owner's word. The whole
+   report carries "measured in the laboratory by the agent".
+   Exit codes equal to those of `judge_gate.py` (0/1/2).
+   12 new tests.
+3. **Real gate CLI exposes `--worst-group-tolerance`** (in this
+   commit). `gate.judge_candidate` accepted the tolerance, but the
+   CLI had no flag — in practice it was always 0 for anyone
+   judging through the official tool. A CLI test covers both
+   sides (rejects without, promotes with declared tolerance).
 
-## Lista priorizada do que falta
+## Prioritized list of what is missing
 
-### P1 — bloqueia julgamento de verdade
+### P1 — blocks real judging
 
-- **Holdout selado ainda não tem o n.** O portão exige
-  ≥5 sessões e ≥25 páginas rotuladas de forma independente; o
-  replay atual tem ~48 arquivos antigos sem esse selo. Sem
-  coletar sessões seladas, todo veredito real é INCONCLUSIVE —
-  corretamente. Não é código: é coleta na mesa.
-- **O corpo TRI não emite os n das réguas novas.** `ruler_print`
-  emite páginas e pixels de impresso (basta para o juiz), mas
-  `ruler_invariance` não emite o número de pares nem as contagens
-  do impresso no centro. Sem n, `tools/judge.py` marca os dois
-  portões de invariância INCONCLUSIVE por desenho. Corrigir no
-  corpo TRI (laboratório) **antes** do lançamento da rodada:
-  emitir `pairs`, `print_center_px`, `print_center_leak_px` e
+- **Sealed holdout still lacks the n.** The gate requires
+  ≥5 sessions and ≥25 independently labeled pages; the
+  current replay has ~48 old files without that seal. Without
+  collecting sealed sessions, every real verdict is INCONCLUSIVE —
+  correctly. This is not code: it is collection at the desk.
+- **The TRI body does not emit the n of the new rulers.** `ruler_print`
+  emits printed pages and pixels (enough for the judge), but
+  `ruler_invariance` does not emit the number of pairs nor the
+  printed counts at the center. Without n, `tools/judge.py` marks both
+  invariance gates INCONCLUSIVE by design. Fix in the TRI
+  body (laboratory) **before** the round's launch:
+  emit `pairs`, `print_center_px`, `print_center_leak_px`, and
   `leak_px`.
-- **A régua de replay vive fora do repo e com constantes da
-  época.** `replay_ruler.py` fixa o modelo v2, o sha dele, a data
-  2026-11-01 e o caminho da venv da VM. Parametrizar modelo/sha/
-  data por argumento (ou um runner fino no repo que monte o cache
-  por candidato) para que julgar um candidato novo não dependa de
-  editar o laboratório.
+- **The replay ruler lives outside the repo and with constants from
+  the era.** `replay_ruler.py` pins model v2, its sha, the
+  2026-11-01 date, and the VM venv path. Parameterize model/sha/
+  date by argument (or a thin runner in the repo that assembles the
+  cache per candidate) so that judging a new candidate does not depend on
+  editing the laboratory.
 
-### P2 — consistência das réguas
+### P2 — ruler consistency
 
-- **Warp desenhado não tem recall do incumbente na régua
-  estática.** Lá ele é só fração de tinta (observação); o portão
-  de recall ≥0,60 por warp hoje só é alimentado pelas métricas do
-  corpo de treino (R1). Unificar: as réguas deveriam emitir
-  diretamente o esquema de medições de `tools/judge.py`
-  (um `--emit-measurements` em cada uma).
-- **Valor agrupado × IC macro.** Nos portões DIBCO, o valor é o
-  IoU/recall agrupado (pooled) e o IC95 é o bootstrap da média
-  por página; o juiz anota a distinção no relatório, mas o ideal
-  é a régua emitir os dois lados sempre (agrupado e por página).
-- **Protocolo de lançamento fora do repo.** `CHECKLIST.md` e
-  `probe_env.py` moram no laboratório. Copiar para o repo (ex.:
-  `docs/LAUNCH_PROTOCOL.md` + `tools/probe_env.py`) para o
-  protocolo viajar com o código que ele protege.
+- **Drawn warp has no incumbent recall on the static
+  ruler.** There it is only ink fraction (observation); the
+  recall ≥0.60 per warp gate today is only fed by the
+  training body's metrics (R1). Unify: the rulers should emit
+  directly the measurement schema of `tools/judge.py`
+  (an `--emit-measurements` on each one).
+- **Pooled value × macro CI.** On the DIBCO gates, the value is the
+  pooled IoU/recall and the 95% CI is the per-page mean bootstrap;
+  the judge notes the distinction in the report, but ideally
+  the ruler always emits both sides (pooled and per-page).
+- **Launch protocol outside the repo.** `CHECKLIST.md` and
+  `probe_env.py` live in the laboratory. Copy to the repo (e.g.
+  `docs/LAUNCH_PROTOCOL.md` + `tools/probe_env.py`) so the
+  protocol travels with the code it protects.
 
-### P3 — tripwires baratos
+### P3 — cheap tripwires
 
-- **Fixture de veredito no CI.** Um JSON de medições de um
-  candidato conhecido + o veredito esperado, rodado no CI:
-  mudar uma constante pré-registrada de `tools/judge.py` ou de
-  `gate.py` quebra o CI de forma visível, em vez de passar
-  despercebido.
-- **Comentário-remendo em `test_selflearn_train_round.py`.** Ele
-  ainda descreve o vazamento de `test_seg_metrics.py` como fato
-  corrente e restaura o torch à mão. Com o vazamento corrigido na
-  fonte, a restauração é redundante (inofensiva); simplificar
-  quando alguém tocar o arquivo.
-- **Veredito ↔ `tools/runner/candidates.jsonl`.** O juiz emite
-  JSON completo (`--out`); anexar esse registro à linha do
-  candidato no `candidates.jsonl` fecharia o rastro
-  candidato → veredito sem trabalho manual.
+- **Verdict fixture in CI.** A JSON of measurements from a
+  known candidate + the expected verdict, run in CI:
+  changing a pre-registered constant of `tools/judge.py` or of
+  `gate.py` breaks CI visibly, instead of passing
+  unnoticed.
+- **Patch-comment in `test_selflearn_train_round.py`.** It
+  still describes the `test_seg_metrics.py` leak as a current
+  fact and restores torch by hand. With the leak fixed at the
+  source, the restoration is redundant (harmless); simplify
+  when someone touches the file.
+- **Verdict ↔ `tools/runner/candidates.jsonl`.** The judge emits
+  full JSON (`--out`); appending that record to the candidate's
+  line in `candidates.jsonl` would close the trail
+  candidate → verdict with no manual work.

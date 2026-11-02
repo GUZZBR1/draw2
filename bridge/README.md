@@ -1,76 +1,76 @@
-# Ponte de captura no Windows (rota reserva)
+# Windows capture bridge (fallback route)
 
-Esta pasta é o plano B da câmera. A rota principal continua sendo a
-webcam anexada ao WSL via usbipd, com
-[`scripts/setup_camera_wsl.sh`](../scripts/setup_camera_wsl.sh). Use a
-ponte só se essa rota falhar na sua máquina.
+This folder is the camera's plan B. The main route remains the
+webcam attached to WSL via usbipd, with
+[`scripts/setup_camera_wsl.sh`](../scripts/setup_camera_wsl.sh). Use the
+bridge only if that route fails on your machine.
 
-## Como funciona
+## How it works
 
-Um único arquivo `ffmpeg.exe` roda no Windows, lê a webcam pelo
-DirectShow e serve o vídeo como um stream MJPEG em
-`http://0.0.0.0:8080/video`. O Draw continua rodando no WSL e consome
-esse stream pela opção `--source`, que ele já aceita. Nada mais vai
-para o Windows: sem Python, sem bibliotecas, só o `ffmpeg.exe` solto
-ao lado do `capture_windows.bat`.
+A single `ffmpeg.exe` file runs on Windows, reads the webcam via
+DirectShow and serves the video as an MJPEG stream at
+`http://0.0.0.0:8080/video`. Draw keeps running on WSL and consumes
+this stream via the `--source` option, which it already accepts. Nothing else goes
+to Windows: no Python, no libraries, just the standalone `ffmpeg.exe`
+next to `capture_windows.bat`.
 
-## Antes de começar
+## Before you start
 
-- A câmera **não pode estar anexada ao WSL** enquanto a ponte roda.
-  Se você anexou com usbipd, solte antes, no PowerShell:
-  `usbipd detach --busid <BUSID>` (o mesmo BUSID do `usbipd list`).
-  Câmera anexada ao WSL some do Windows, e o ffmpeg não a encontra.
-- Os serviços de áudio do Windows devem estar rodando normalmente
-  nesta rota. Se a rota usbipd os parou, religue com
-  `Start-Service Audiosrv` no PowerShell como administrador.
+- The camera **must not be attached to WSL** while the bridge is running.
+  If you attached it with usbipd, release it first, in PowerShell:
+  `usbipd detach --busid <BUSID>` (the same BUSID from `usbipd list`).
+  A camera attached to WSL disappears from Windows, and ffmpeg cannot find it.
+- Windows audio services must be running normally
+  on this route. If the usbipd route stopped them, restart them with
+  `Start-Service Audiosrv` in PowerShell as administrator.
 
-## Passo 1: baixar o ffmpeg
+## Step 1: download ffmpeg
 
-Baixe um build do ffmpeg para Windows e extraia só o `ffmpeg.exe`
-para dentro desta pasta `bridge`, no lado Windows do disco:
+Download a Windows build of ffmpeg and extract only `ffmpeg.exe`
+into this `bridge` folder, on the Windows side of the disk:
 
-- gyan.dev: https://www.gyan.dev/ffmpeg/builds/ (pacote "release
-  full"; o `ffmpeg.exe` fica na pasta `bin` do arquivo extraído), ou
-- builds do BtbN no GitHub: pacote `ffmpeg-master-latest-win64-gpl`
-  (o `ffmpeg.exe` também fica na pasta `bin`).
+- gyan.dev: https://www.gyan.dev/ffmpeg/builds/ ("release
+  full" package; `ffmpeg.exe` is in the `bin` folder of the extracted archive), or
+- BtbN builds on GitHub: package `ffmpeg-master-latest-win64-gpl`
+  (`ffmpeg.exe` is also in the `bin` folder).
 
-O `capture_windows.bat` espera o `ffmpeg.exe` na mesma pasta que
-ele. Sem isso, ele para e mostra este mesmo aviso.
+`capture_windows.bat` expects `ffmpeg.exe` in the same folder as
+itself. Without it, it stops and shows this same warning.
 
-## Passo 2: conferir o nome da câmera
+## Step 2: check the camera name
 
-Num prompt dentro desta pasta, liste os dispositivos de vídeo:
+In a prompt inside this folder, list the video devices:
 
 ```bat
 ffmpeg.exe -list_devices true -f dshow -i dummy
 ```
 
-O nome da câmera aparece na lista. O padrão do `.bat` é
-`1200W Camera`. Se a lista mostrar outro nome, abra o
-`capture_windows.bat` num editor de texto e troque o valor da
-variável `CAM`, no bloco marcado CONFIGURACAO, logo no topo.
+The camera name appears in the list. The `.bat` default is
+`1200W Camera`. If the list shows another name, open
+`capture_windows.bat` in a text editor and change the value of the
+`CAM` variable, in the block marked CONFIGURACAO, right at the top.
 
-## Passo 3: rodar a ponte
+## Step 3: run the bridge
 
-Rode o `capture_windows.bat` com duplo clique ou pelo prompt. Na
-primeira execução, o Windows mostra o aviso do Firewall pedindo
-permissão para o ffmpeg na rede: permita em **redes privadas**.
-A janela fica aberta servindo o vídeo. Fechar a janela para a ponte.
+Run `capture_windows.bat` with a double-click or via the prompt. On
+first run, Windows shows the Firewall warning asking
+permission for ffmpeg on the network: allow on **private networks**.
+The window stays open serving the video. Closing the window stops the bridge.
 
-## No WSL: conectar o Draw
+## In WSL: connect Draw
 
-O Draw alcança o Windows pelo IP que aparece como `nameserver` no
-`/etc/resolv.conf` do WSL:
+Draw reaches Windows via the IP that appears as `nameserver` in
+WSL's `/etc/resolv.conf`:
 
 ```bash
 grep nameserver /etc/resolv.conf
 ```
 
-Com esse IP, rode o Draw apontando para o stream da ponte:
+With that IP, run Draw pointing to the bridge stream:
 
 ```bash
 python3 main.py --source http://<IP-DO-WINDOWS>:8080/video
 ```
 
-Pronto: a captura acontece no Windows e todo o processamento, no
-WSL, como no resto do projeto.
+Done: capture happens on Windows and all processing, on
+WSL, as in the rest of the project.

@@ -1,36 +1,36 @@
-# Status dos dados reais para treinamento
+# Status of real data for training
 
-## Estado desta proposta
+## Status of this proposal
 
-Este PR adiciona ferramentas e instruções para preparar dados reais para o
-treinamento do segmentador. Ele **não entrega um dataset real validado nem um
-modelo treinado** e não afirma melhora de qualidade ou acurácia.
+This PR adds tools and instructions for preparing real data for
+training the segmenter. It **does not deliver a validated real dataset or a
+trained model** and does not claim quality or accuracy improvement.
 
-| Item | Estado |
+| Item | Status |
 |---|---|
-| Frames selecionados | 719 frames produtivos de duas sessões; 41 duplicatas claras foram excluídas. |
-| Revisão visual | Revisão em miniaturas concluída; 21 erros claros em regiões grandes foram corrigidos. |
-| Máscaras pixel a pixel | Revisão incompleta. Bordas finas de tinta e casos ambíguos ainda precisam de revisão em resolução completa. |
-| Rótulos | As máscaras candidatas são pseudo-rótulos, não ground truth. Pixels `255` representam regiões desconhecidas e são ignorados pelo treinador. |
-| Dados publicados neste PR | Nenhuma captura original nem máscara gerada está incluída. |
-| Treino e resultado do modelo | Nenhum treino foi executado; nenhum checkpoint ou modelo treinado é entregue. |
-| Testes automatizados | Após a reconciliação: 29 passaram e 2 testes dependentes de PyTorch completo foram ignorados, pois o ambiente local não tem PyTorch utilizável. O smoke CPU e as verificações de sintaxe/configuração passaram; treino e exportação ONNX completos continuam pendentes. |
+| Selected frames | 719 productive frames from two sessions; 41 clear duplicates were excluded. |
+| Visual review | Thumbnail review completed; 21 clear errors in large regions were corrected. |
+| Pixel-by-pixel masks | Review incomplete. Fine ink edges and ambiguous cases still need review at full resolution. |
+| Labels | The candidate masks are pseudo-labels, not ground truth. `255` pixels represent unknown regions and are ignored by the trainer. |
+| Data published in this PR | No original capture or generated mask is included. |
+| Model training and result | No training was run; no checkpoint or trained model is delivered. |
+| Automated tests | After reconciliation: 29 passed and 2 tests dependent on full PyTorch were skipped, since the local environment has no usable PyTorch. The CPU smoke test and syntax/configuration checks passed; full training and ONNX export remain pending. |
 
-## Uso permitido neste estágio
+## Permitted use at this stage
 
-O pacote de máscaras pode ser usado para experimentos exploratórios. Resultados
-de treino devem ser identificados como exploratórios e separados das métricas
-de validação sintética. As duas sessões usadas para treino não constituem um
-holdout real independente.
+The mask package may be used for exploratory experiments. Training
+results must be identified as exploratory and kept separate from the
+synthetic validation metrics. The two sessions used for training do not constitute an
+independent real holdout.
 
-## Antes de alegar validação dos dados ou do modelo
+## Before claiming data or model validation
 
-1. Revisar cada par imagem/máscara em resolução completa, incluindo tinta,
-   texto impresso, mão sobre tinta e limites ambíguos.
-2. Confirmar integridade dos 719 pares: IDs, hashes, dimensões, canal único e
-   valores permitidos `{0, 1, 2, 3, 255}`; rejeitar máscaras sem pixels
-   supervisionados.
-3. Executar os testes automatizados e o preflight do dataset.
-4. Treinar e publicar métricas com rastreabilidade de configuração e dados.
-5. Reservar uma nova sessão real para avaliação independente antes de fazer
-   afirmações de desempenho em dados reais.
+1. Review each image/mask pair at full resolution, including ink,
+   printed text, hand over ink and ambiguous boundaries.
+2. Confirm integrity of the 719 pairs: IDs, hashes, dimensions, single channel and
+   permitted values `{0, 1, 2, 3, 255}`; reject masks without
+   supervised pixels.
+3. Run the automated tests and the dataset preflight.
+4. Train and publish metrics with configuration and data traceability.
+5. Reserve a new real session for independent evaluation before making
+   performance claims on real data.
