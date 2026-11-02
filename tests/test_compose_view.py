@@ -1,4 +1,4 @@
-"""Contrato de _compose_view e dos quadros de aviso do app.
+"""Contrato de _compose_view e dos quadros de aviso (draw/view.py).
 
 _compose_view é a única função de desenho que recebe o canvas do
 chamador. O putText do rótulo "folha ao vivo" escrevia no array
@@ -14,7 +14,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from draw import app, config  # noqa: E402
+from draw import config  # noqa: E402
+from draw import view as view_module  # noqa: E402
 
 
 def _camera(height=720, width=1280):
@@ -22,7 +23,7 @@ def _camera(height=720, width=1280):
 
 
 def test_view_has_the_fixed_size():
-    view = app._compose_view(_camera(), np.full((1200, 850, 3), 255, np.uint8))
+    view = view_module._compose_view(_camera(), np.full((1200, 850, 3), 255, np.uint8))
     assert view.shape == (640, 1600, 3)
     assert view.dtype == np.uint8
 
@@ -30,7 +31,7 @@ def test_view_has_the_fixed_size():
 def test_canvas_at_target_height_is_not_mutated():
     canvas = np.full((640, 850, 3), 255, dtype=np.uint8)
     before = canvas.copy()
-    app._compose_view(_camera(), canvas)
+    view_module._compose_view(_camera(), canvas)
     assert np.array_equal(canvas, before), (
         "a vista escreveu no canvas do chamador"
     )
@@ -39,27 +40,27 @@ def test_canvas_at_target_height_is_not_mutated():
 def test_canvas_smaller_than_the_target_is_not_mutated_either():
     canvas = np.full((300, 200, 3), 255, dtype=np.uint8)
     before = canvas.copy()
-    app._compose_view(_camera(), canvas)
+    view_module._compose_view(_camera(), canvas)
     assert np.array_equal(canvas, before)
 
 
 def test_blank_sheet_cache_survives_composition():
-    app._BLANK_SHEET = None
-    blank = app._blank_sheet()
-    app._BLANK_SHEET = blank
-    app._compose_view(_camera(), blank)
-    assert np.array_equal(app._BLANK_SHEET, app._blank_sheet())
-    assert app._blank_sheet().shape == (config.PAPER_H, config.PAPER_W, 3)
+    view_module._BLANK_SHEET = None
+    blank = view_module._blank_sheet()
+    view_module._BLANK_SHEET = blank
+    view_module._compose_view(_camera(), blank)
+    assert np.array_equal(view_module._BLANK_SHEET, view_module._blank_sheet())
+    assert view_module._blank_sheet().shape == (config.PAPER_H, config.PAPER_W, 3)
 
 
 def test_message_view_paints_over_a_copy():
     last = np.full((640, 1600, 3), 200, dtype=np.uint8)
     before = last.copy()
-    view = app._message_view(last, "falhou", ["linha"])
+    view = view_module._message_view(last, "falhou", ["linha"])
     assert not np.array_equal(view, before)
     assert np.array_equal(last, before)
 
 
 def test_message_view_without_a_last_frame_uses_the_view_size():
-    view = app._message_view(None, "falhou", ["linha"])
+    view = view_module._message_view(None, "falhou", ["linha"])
     assert view.shape == (640, 1280, 3)
