@@ -85,6 +85,27 @@ def test_batch_size_helper_respects_dynamic_and_fixed_shapes():
     assert page_clean._batch_size(99, 20, True) == 20
 
 
+def test_default_threads_never_exceed_the_host(monkeypatch):
+    """O padrão de threads intra-op é o teto medido (8) limitado
+    às CPUs do host: pedir threads que o host não tem degrada a
+    passada (auditoria de 2026-11-02: 2.150 ms com 8 threads num
+    host de 4 vCPUs contra 721 ms com 4). Explícito e env mandam
+    no padrão, como antes."""
+    monkeypatch.delenv("DRAW_PAGE_CLEAN_THREADS", raising=False)
+    monkeypatch.delenv("DRAW_ORT_THREADS", raising=False)
+    monkeypatch.setattr(page_clean.os, "cpu_count", lambda: 4)
+    assert page_clean._page_clean_threads() == 4
+    assert page_clean.PageCleanInk("inexistente.onnx").threads == 4
+    monkeypatch.setattr(page_clean.os, "cpu_count", lambda: 16)
+    assert page_clean._page_clean_threads() == page_clean.DEFAULT_THREADS
+    monkeypatch.setattr(page_clean.os, "cpu_count", lambda: None)
+    assert page_clean._page_clean_threads() == page_clean.DEFAULT_THREADS
+    monkeypatch.setattr(page_clean.os, "cpu_count", lambda: 4)
+    assert page_clean._page_clean_threads(2) == 2
+    monkeypatch.setenv("DRAW_PAGE_CLEAN_THREADS", "6")
+    assert page_clean._page_clean_threads() == 6
+
+
 def test_env_var_can_force_one_tile_per_call(monkeypatch):
     monkeypatch.setenv("DRAW_PAGE_CLEAN_BATCH", "1")
     ink = page_clean.PageCleanInk("inexistente.onnx")

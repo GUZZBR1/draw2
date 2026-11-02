@@ -33,8 +33,15 @@ erro explícito sem a dependência ou sem o arquivo. As threads
 intra-op têm env própria (DRAW_PAGE_CLEAN_THREADS), separada da
 do detector de folha: a passada completa mediu 205 ms com 4
 threads e 168 ms com 8 no Ryzen do Lucas (perfil em
-draw-lab/page-clean-v0/PERF_BASELINE_RYZEN.md), então o padrão
-desta sessão é 8 e o detector segue no 4 provado dele.
+draw-lab/page-clean-v0/PERF_BASELINE_RYZEN.md), então o teto do
+padrão desta sessão é 8 e o detector segue no 4 provado dele.
+O padrão é limitado ao número de CPUs do host: pedir 8 threads
+intra-op num host de 4 vCPUs degrada a passada em vez de
+acelerá-la (medido na auditoria de 2026-11-02 nesta VM, com o
+modelo w8 oficial de lote fixo: 2.150 ms com 8 threads contra
+721 ms com 4 e 481 ms com 2 — thread sobrando vira contenção no
+pool do ONNX Runtime). No Ryzen do Lucas (16 threads lógicas) o
+limite não morde: o padrão continua 8, o valor medido dele.
 DRAW_ORT_THREADS continua valendo como reserva, para as
 ferramentas de perfil varrerem as duas sessões juntas.
 """
@@ -65,9 +72,20 @@ DEFAULT_THRESHOLD = 0.7
 DEFAULT_THREADS = 8
 
 
+def _default_threads():
+    """Padrão de threads intra-op: DEFAULT_THREADS, sem passar do host.
+
+    Num host com menos CPUs que o teto, o excesso de threads
+    intra-op custa passada em vez de ganhar (medição na docstring
+    do módulo). Sem contagem de CPUs disponível, vale o teto.
+    """
+    cpus = os.cpu_count() or DEFAULT_THREADS
+    return max(1, min(DEFAULT_THREADS, cpus))
+
+
 def _page_clean_threads(explicit=None):
     """Threads intra-op desta sessão: argumento > env própria >
-    DRAW_ORT_THREADS > DEFAULT_THREADS. Inválido volta ao padrão."""
+    DRAW_ORT_THREADS > padrão do host. Inválido volta ao padrão."""
     if explicit:
         return int(explicit)
     for var in (_ENV_THREADS_VAR, _ENV_THREADS_FALLBACK_VAR):
@@ -79,7 +97,7 @@ def _page_clean_threads(explicit=None):
                 value = 0
             if value > 0:
                 return value
-    return DEFAULT_THREADS
+    return _default_threads()
 
 
 def _load_session(model_path, threads=None):
