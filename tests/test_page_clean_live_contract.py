@@ -1,12 +1,13 @@
 """Contrato vivo do caminho page-clean: tinta nova chega ao
 canvas publicado em ate 3 passadas.
 
-Este teste substitui tests/test_ink_confirmation.py, removido com
-a maquinaria que ele afirmava (voto de confirmacao, trava de
-assentada, sonda e portao de reabertura). O que fica pinado aqui
-e o comportamento observavel do caminho de uniao: a trabalhadora
-assincrona publica a mascara da passada em que a tinta nova
-aparece, sem esperar voto nem destrave. A regua de replay
+O canvas publicado aqui e a camada confirmada, que os
+consumidores leem pelo poll(). A confirmacao voltou como voto
+entre passadas (ver tests/test_provisional_ink.py), mas fora do
+caminho de exibicao: a tela mostra a tinta na primeira passada
+como provisoria. O que este teste pina e o teto do confirmado:
+com tinta forte estavel, o voto fecha na 2a passada, dentro das
+3 do contrato. A regua de replay
 (draw-lab/replay-ruler-2026-11-01) mede o mesmo contrato sobre
 warps reais: evento pequeno e evento f05 em 3 passadas.
 """
