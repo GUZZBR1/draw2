@@ -26,7 +26,7 @@ Métricas:
     degrau em y. Método declarado: t50 do degrau, n=1 degrau.
 
 Rodável com:
-    ~/workspace/draw-lab/venv-eval/bin/python tests/cadence_fusion.py
+    ~/workspace/draw-lab/venv-eval/bin/python tools/cadence_fusion.py
 """
 
 import sys

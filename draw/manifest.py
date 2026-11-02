@@ -113,8 +113,8 @@ def verify_model(model_path, manifest_path=None):
         return None
     resolved_manifest, models = load_manifest(manifest_path)
     # A chave é o nome do arquivo (model.onnx) ou o caminho relativo
-    # à pasta do manifesto (kaggle-real-pilot-v1/model.onnx), para o
-    # registro não depender de dois modelos homônimos.
+    # à pasta do manifesto (pasta/model.onnx), para o registro não
+    # depender de dois modelos homônimos.
     entry = models.get(path.name)
     if entry is None:
         try:
