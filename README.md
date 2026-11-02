@@ -24,7 +24,10 @@ Pré-requisitos: Python (o autor roda 3.12), uma webcam e as dependências do pr
 
 ```bash
 pip install -r requirements.txt
+python tools/fetch_models.py
 ```
+
+O segundo comando baixa os modelos oficiais (detector de folha v3, modelo de tinta pagina->limpa e o modelo de mão do MediaPipe) para a pasta `models/`. Os binários não moram no git: eles são distribuídos pela Release `models-2026-11-02` deste repositório, e o script confere sha256 e tamanho de cada arquivo contra `models/MANIFEST.json` antes de instalar. Sem esse passo, o Draw roda nos fallbacks: detector clássico de folha e pilha antiga de tinta.
 
 ### Windows com WSL
 
@@ -55,7 +58,14 @@ python main.py
 
 ### Com o detector neural
 
-O repositório não publica arquivo de modelo. Um clone novo roda só com o detector clássico até alguém colocar um ONNX na pasta `models/`. Na máquina do autor, o comando do dia a dia é este.
+Os modelos oficiais são distribuídos pela Release `models-2026-11-02` e registrados em `models/MANIFEST.json` (sha256, tamanho, a régua que aprovou cada um e a data). Um clone novo baixa tudo com um comando, sem nenhuma credencial:
+
+```bash
+python tools/fetch_models.py
+python main.py
+```
+
+Sem o fetch, o app sobe nos fallbacks e avisa no log: detector clássico de folha no lugar do neural v3, e pilha antiga de tinta no lugar do modelo pagina->limpa. Para usar um modelo próprio, o caminho continua existindo:
 
 ```bash
 python main.py --neural models/draw_seg_v3_dyn.onnx

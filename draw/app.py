@@ -1502,7 +1502,8 @@ def run(
         print(
             "Aviso: sem detector neural de folha (modelo nao "
             "encontrado); usando so o detector classico, que nao "
-            "enxerga a folha em varias mesas."
+            "enxerga a folha em varias mesas. Baixe os modelos "
+            "oficiais com: python tools/fetch_models.py"
         )
 
     page_clean = None
@@ -1519,7 +1520,8 @@ def run(
         except (RuntimeError, FileNotFoundError) as error:
             print(
                 f"Aviso: modelo pagina->limpa nao carregou ({error}). "
-                "Seguindo com a pilha antiga de tinta."
+                "Seguindo com a pilha antiga de tinta. Baixe os "
+                "modelos oficiais com: python tools/fetch_models.py"
             )
             legacy_ink = True
 
