@@ -100,3 +100,22 @@ def test_probe_exposure_reports_blown_mean():
 def test_probe_exposure_none_on_read_failure():
     cap = _FakeCapture(opened=False)
     assert app_module._probe_exposure(cap, seconds=0.05) is None
+
+
+def test_open_probe_recorded_for_report_header():
+    cap = _FakeCapture(value=112)
+    app_module._open_capture(0, capture_factory=_factory([cap]))
+    probe = app_module._LAST_OPEN_PROBE
+    assert probe["desfecho"] == "assentada"
+    assert probe["tentativas"] == 1
+    assert probe["brilho_medio"] == 112.0
+
+
+def test_open_probe_recorded_when_always_blown(monkeypatch):
+    monkeypatch.setattr(
+        app_module, "_probe_exposure", lambda capture: 150.0)
+    caps = [_FakeCapture(value=150) for _ in range(3)]
+    app_module._open_capture(0, capture_factory=_factory(caps))
+    probe = app_module._LAST_OPEN_PROBE
+    assert probe["desfecho"] == "estourada_seguiu"
+    assert probe["tentativas"] == 3

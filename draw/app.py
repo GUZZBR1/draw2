@@ -58,6 +58,7 @@ from . import neural as neural_module
 from . import page_clean as page_clean_module
 from .selflearn import session as session_module
 from . import paper as paper_module
+from . import session_report as session_report_module
 from . import telemetry as telemetry_module
 from .view import _blank_sheet, _compose_view, _dead_source_view, _error_view
 
@@ -1308,6 +1309,19 @@ _EXPOSURE_SETTLED_MEAN = 135.0
 _EXPOSURE_BLOWN_MEAN = 140.0
 _EXPOSURE_PROBE_SECONDS = 6.0
 _EXPOSURE_MAX_ATTEMPTS = 3
+# Desfecho da ultima abertura local, para o cabecalho do relatorio
+# de sessao: sem ele, uma corrida que nasce morta nao deixa dito
+# nem como a camera abriu. None = fonte sem supervisor (URL).
+_LAST_OPEN_PROBE = None
+
+
+def _record_open_probe(mean, attempts, outcome):
+    global _LAST_OPEN_PROBE
+    _LAST_OPEN_PROBE = {
+        "brilho_medio": None if mean is None else round(float(mean), 1),
+        "tentativas": attempts,
+        "desfecho": outcome,
+    }
 
 
 def _probe_exposure(capture, seconds=_EXPOSURE_PROBE_SECONDS, now=time.monotonic):
@@ -1348,6 +1362,9 @@ def _supervise_local_open(source, capture, capture_factory):
                     "Camera reaberta: exposicao assentada "
                     f"(brilho medio {mean:.0f})."
                 )
+            _record_open_probe(
+                mean, attempt,
+                "sem_evidencia" if mean is None else "assentada")
             return capture
         if attempt >= _EXPOSURE_MAX_ATTEMPTS:
             print(
@@ -1355,6 +1372,7 @@ def _supervise_local_open(source, capture, capture_factory):
                 f"{mean:.0f}) apos {attempt} aberturas; o reconhecimento "
                 "de folha pode falhar ate a exposicao assentar."
             )
+            _record_open_probe(mean, attempt, "estourada_seguiu")
             return capture
         print(
             "Camera abriu com exposicao alta (brilho medio "
@@ -1365,6 +1383,7 @@ def _supervise_local_open(source, capture, capture_factory):
         attempt += 1
         capture = capture_factory(source)
         if not capture.isOpened():
+            _record_open_probe(mean, attempt, "reabertura_falhou")
             return capture
         _configure_local_capture(capture)
 
@@ -1404,6 +1423,8 @@ def _local_open_hint(source):
 
 
 def _open_capture(source, capture_factory=None):
+    global _LAST_OPEN_PROBE
+    _LAST_OPEN_PROBE = None
     if capture_factory is None:
         capture_factory = cv2.VideoCapture
     capture = capture_factory(source)
@@ -1795,6 +1816,41 @@ def run(
         "Telemetria de sessao ligada: 1 registro/s em "
         f"{save_path / 'telemetry.jsonl'} (arquivo local e rotativo)."
     )
+    # Relatorio de sessao: um JSON por corrida com cabecalho
+    # (modelos com sha, abertura da camera, porta da mao) e os
+    # agregados da sessao, para uma corrida que falha deixar dito
+    # o que rodou — a telemetria bruta sozinha nao diz.
+    def _model_header(path):
+        if path is None:
+            return None
+        try:
+            return {
+                "arquivo": str(path),
+                "sha256": manifest_module.sha256_of(path),
+            }
+        except OSError:
+            return {"arquivo": str(path), "sha256": None}
+
+    session_report = session_report_module.SessionReport(
+        save_path / "session-reports",
+        {
+            "inicio_epoch": time.time(),
+            "fonte": str(source),
+            "modo_marcadores": bool(markers_mode),
+            "modelo_folha": _model_header(
+                neural_model if neural_detector is not None else None),
+            "modelo_tinta": _model_header(
+                page_clean.model_path if page_clean is not None else None),
+            "tinta_modo": (
+                "page-clean" if page_clean is not None else "heuristica"),
+            "mao_disponivel": clean_hand_presence is not None,
+            "camera_abertura": _LAST_OPEN_PROBE,
+        },
+    ).start()
+    print(
+        "Relatorio de sessao ligado: resumo desta corrida em "
+        f"{session_report.path} (atualizado a cada 15 s e no fim)."
+    )
     # Coleta automatica de sessao (loop v2, correcao 5): cada
     # geracao grava referencia + warp final + canvas final +
     # manifesto em save_path/sessions/<id>/, local, para o par
@@ -1957,6 +2013,7 @@ def run(
             if detection_worker is not None:
                 tel_fields.update(detection_worker.stats())
             telemetry.update(**tel_fields)
+            session_report.update(**tel_fields)
             if auto_capture and loop_frames % 10 == 0:
                 save_raw_frame(frame)
 
@@ -2349,6 +2406,7 @@ def run(
                     f"sessao ({error})."
                 )
         telemetry.close()
+        session_report.close()
         png_writer.close()
         cv2.destroyAllWindows()
 
