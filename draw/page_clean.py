@@ -68,8 +68,12 @@ DEFAULT_MODEL_PATH = (
     / "page_clean_unet.onnx"
 )
 DEFAULT_THRESHOLD = 0.7
-# Medido no Ryzen (passada completa 205 -> 168 ms); ver docstring.
-DEFAULT_THREADS = 8
+# Teto combinado de pools (medido na mesa do Lucas, 2026-11-02):
+# com tinta 8 + detector 4 + OpenCV 16, a CPU desenhando media
+# 550,8%; com tinta 4 + detector 2, 289,8% — passada igual
+# (107 ms). O teto da tinta fica em 4 para a soma dos pools ORT
+# caber nos nucleos fisicos com folga; ver docstring do modulo.
+DEFAULT_THREADS = 4
 
 
 def _default_threads():

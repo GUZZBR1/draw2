@@ -1692,6 +1692,33 @@ def _detect_sheet_combined(frame, neural_detector):
     return paper_module.detect_sheet_with_confidence(frame)
 
 
+# Teto do pool paralelo do OpenCV. Sem teto, o pool abre com as
+# CPUs logicas do host (16 no Ryzen) e vira o terceiro disputante
+# dos nucleos fisicos, junto dos pools ORT do detector e da tinta
+# (oversubscription medida na mesa do Lucas, 2026-11-02: CPU
+# desenhando 550,8% com os pools 4+8+16; teto combinado 2+4 no
+# ORT cortou para 289,8%, passada igual). DRAW_OPENCV_THREADS
+# troca o valor; invalido volta ao padrao.
+_OPENCV_THREAD_CAP = 4
+_OPENCV_THREADS_ENV = "DRAW_OPENCV_THREADS"
+
+
+def _apply_opencv_thread_cap():
+    """Limita o pool do OpenCV ao teto combinado. Devolve o teto."""
+    cap = _OPENCV_THREAD_CAP
+    raw = os.environ.get(_OPENCV_THREADS_ENV)
+    if raw:
+        try:
+            value = int(raw)
+        except ValueError:
+            value = 0
+        if value > 0:
+            cap = value
+    cap = max(1, min(cap, os.cpu_count() or cap))
+    cv2.setNumThreads(cap)
+    return cap
+
+
 def run(
     source=0,
     save_dir="captures",
@@ -1703,6 +1730,7 @@ def run(
     page_clean_model=None,
     legacy_ink=False,
 ):
+    _apply_opencv_thread_cap()
     # A pilha antiga de tinta so existe atras do legado. Pedir
     # qualquer peca dela (modelo de tinta, pagina base na tecla C,
     # mascara de mao) liga o legado com aviso, para nenhuma flag
