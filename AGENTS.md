@@ -11,6 +11,9 @@ Before changing the website, read [`design.md`](design.md). Treat it as the sour
 - Preserve keyboard access, reduced-motion support, dark mode, and responsive behavior when editing interactions.
 - Open the definition card from the Draw wordmark only. Moving into the card keeps it open; moving to Product closes it.
 - Keep the custom scroll scrubber large enough to read and interact with. Preserve pointer dragging and keyboard control.
+- Keep the home archive images still and source-linked. Store archive metadata in `site/src/data/` and image assets in `site/public/images/archive/`.
+- Keep the small webcam SVG perched above the final “w” of the home wordmark. Its accessible control opens a matching glass card about live capture; place it right of the wordmark on desktop and below on narrow screens, clear of the scrubber. Keep this separate from the Draw definition card, and fade the webcam away as the wordmark compacts into the header.
+- Keep the home sketch pad local to the browser. The canvas is a full-viewport, edge-to-edge sheet with a compact floating glass toolbar for pen, eraser, color, width, and clear-all. Keep pointer drawing out of React render state, cap the canvas pixel ratio, and preserve strokes through resize.
 - When checking visual changes, inspect the relevant route at desktop width and narrow widths, including 320 px where the layout allows it.
 
 ## Change discipline

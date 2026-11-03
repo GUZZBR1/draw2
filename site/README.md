@@ -7,6 +7,7 @@ The site is a small React and TypeScript app built with Vite and Tailwind CSS 4.
 - `src/app/` composes the router, shared shell, and route transitions.
 - `src/pages/` contains one module per page: home, vision, and product.
 - `src/components/` contains shared interface modules such as the header and scrollbar.
+- `src/data/` holds editorial records such as the home archive; its images live in `public/images/archive/` with source details in `public/images/archive/SOURCES.md`.
 - `src/styles.css` owns the shared tokens and visual rules for those modules.
 - `public/` contains static assets served directly by Vite.
 

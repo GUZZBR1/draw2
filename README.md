@@ -12,6 +12,13 @@ A webcam points at the desk. The person writes and draws on an ordinary sheet of
 
 The full vision of the project is in [VISION.md](VISION.md). This document covers the current state, how to run it, and how the system works internally.
 
+## Public website
+
+The website lives in `site/`. To publish it on Replit, choose a **Static**
+deployment, use `site/dist` as the public directory, and use the build command
+from `.replit`. The site build is independent of the Python training
+environment. The workspace Run command remains `python main.py`.
+
 ## Status
 
 Draw runs in real time on the author's desk. The everyday detector is the v3 neural model, with the classic fallback detector inside the same process. The digital canvas already accumulates ink between frames and treats the hand as an unknown region.

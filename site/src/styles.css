@@ -94,19 +94,293 @@ button { color: inherit; font: inherit; }
 a:focus-visible, button:focus-visible { outline: 2px solid #a7a071; outline-offset: 4px; }
 
 .home-scroll { min-height: 190svh; }
-.home-stage { min-height: 190svh; }
+.home-stage { display: flow-root; position: relative; min-height: 190svh; }
+.archive-gallery {
+  position: absolute;
+  inset: 0 0 auto;
+  display: grid;
+  height: 100svh;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  justify-items: center;
+  gap: 0 clamp(14px, 2.8vw, 44px);
+  padding: clamp(82px, 12vh, 116px) clamp(30px, 5vw, 76px) clamp(42px, 6vh, 58px);
+}
+.archive-card {
+  display: flex;
+  width: 100%;
+  max-width: 244px;
+  min-width: 0;
+  flex-direction: column;
+  align-self: start;
+  gap: 9px;
+  color: var(--ink);
+  text-decoration: none;
+}
+.archive-card:nth-child(n + 5) { align-self: end; }
+.archive-art-surface {
+  display: flex;
+  width: 100%;
+  height: clamp(132px, 19vh, 178px);
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid rgba(34, 35, 31, .08);
+  border-radius: 10px;
+  padding: 8px;
+  background: #fffefa;
+  box-shadow: 0 9px 28px rgba(34, 35, 31, .07), inset 0 1px rgba(255, 255, 255, .9);
+  transition: border-color 220ms ease, box-shadow 220ms ease;
+}
+.archive-art-surface img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+}
+.archive-card:hover .archive-art-surface,
+.archive-card:focus-visible .archive-art-surface {
+  border-color: color-mix(in srgb, var(--ink) 22%, transparent);
+  box-shadow: 0 12px 32px rgba(34, 35, 31, .12), inset 0 1px rgba(255, 255, 255, .95);
+}
+.archive-caption {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+}
+.archive-work { display: grid; min-width: 0; gap: 3px; }
+.archive-title {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.archive-credit {
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.archive-source { flex: none; color: var(--muted); font-size: 12px; transition: color 180ms ease; }
+.archive-card:hover .archive-source, .archive-card:focus-visible .archive-source { color: var(--ink); }
+.sketch-section {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100svh;
+  min-height: 520px;
+  margin: 108svh 0 0;
+  overflow: hidden;
+  background: var(--paper);
+  text-align: center;
+}
+.sketch-toolbar {
+  position: absolute;
+  z-index: 2;
+  bottom: 16px;
+  left: 50%;
+  display: flex;
+  min-height: 50px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: max-content;
+  max-width: calc(100% - 28px);
+  padding: 5px 9px;
+  transform: translateX(-50%);
+  border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--paper) 76%, transparent);
+  box-shadow: 0 7px 24px rgba(34, 35, 31, .075), inset 0 1px rgba(255,255,255,.8);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+}
+.sketch-tool-switch, .sketch-palette, .sketch-size-options { display: flex; align-items: center; gap: 3px; }
+.sketch-tool-switch, .sketch-palette, .sketch-size-options { flex: none; }
+.sketch-toolbar-divider {
+  flex: none;
+  width: 1px;
+  height: 23px;
+  margin: 0 2px;
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+.sketch-tool-button {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+.sketch-tool-button svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.6; }
+.sketch-tool-button:hover { transform: translateY(-1px); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.sketch-tool-button.is-selected { background: color-mix(in srgb, var(--accent) 54%, transparent); color: var(--ink); }
+.sketch-swatch {
+  display: grid;
+  width: 29px;
+  height: 29px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+.sketch-swatch::after {
+  width: 20px;
+  height: 20px;
+  border: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+  border-radius: inherit;
+  background: var(--swatch);
+  content: '';
+}
+.sketch-swatch:hover { transform: scale(1.08); }
+.sketch-swatch.is-selected { box-shadow: 0 0 0 1px var(--paper), 0 0 0 2px var(--ink); }
+.sketch-size {
+  display: grid;
+  width: 25px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+.sketch-size span { display: block; border-radius: 50%; background: var(--ink); }
+.sketch-size:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.sketch-size.is-selected { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.sketch-hint {
+  position: absolute;
+  z-index: 1;
+  top: auto;
+  bottom: 78px;
+  left: 50%;
+  margin: 0;
+  transform: translateX(-50%);
+  color: color-mix(in srgb, var(--muted) 56%, transparent);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .02em;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+}
+.sketch-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 100%;
+  height: calc(100% - 100px);
+  cursor: crosshair;
+  touch-action: none;
+}
+.sketch-canvas:focus-visible { outline: 2px solid #a7a071; outline-offset: -4px; }
+@media (max-width: 520px) {
+  .sketch-toolbar { bottom: 14px; gap: 4px; padding: 4px 5px; }
+  .sketch-tool-button { width: 34px; height: 36px; }
+  .sketch-swatch { width: 30px; height: 36px; }
+  .sketch-swatch::after { width: 17px; height: 17px; }
+  .sketch-size-divider { display: none; }
+  .sketch-size { width: 22px; height: 31px; }
+  .sketch-hint { bottom: 76px; font-size: 9px; }
+}
+@media (max-width: 380px) {
+  .sketch-toolbar { width: calc(100% - 28px); flex-wrap: wrap; }
+  .sketch-canvas { height: calc(100% - 132px); }
+  .sketch-hint { bottom: 105px; }
+}
+/* Keep the full sheet drawable and reserve a footer for the glass toolbar. */
+.sketch-canvas:active {
+  cursor: crosshair;
+}
 .brand-lockup {
   @apply fixed left-1/2 top-1/2 z-[60] flex items-baseline whitespace-nowrap;
   transform-origin: center;
   will-change: transform;
 }
-.wordmark-trigger { display: block; line-height: .83; }
+.wordmark-trigger {
+  position: relative;
+  display: block;
+  font-size: clamp(112px, 19vw, 224px);
+  line-height: .83;
+}
 .wordmark {
   font-size: clamp(112px, 19vw, 224px);
   line-height: .83;
   position: relative;
   padding: 0 .018em;
   transition: color 260ms ease;
+}
+.webcam-interaction { position: absolute; z-index: 3; inset: 0; pointer-events: none; }
+.webcam-anchor {
+  position: absolute;
+  top: .14em;
+  right: .28em;
+  width: .24em;
+  height: .15em;
+}
+.webcam-trigger {
+  position: absolute;
+  inset: -3px;
+  display: grid;
+  width: calc(100% + 6px);
+  height: calc(100% + 6px);
+  place-items: center;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: help;
+  pointer-events: auto;
+}
+.webcam-icon {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  fill: color-mix(in srgb, var(--paper) 92%, transparent);
+  stroke: var(--ink);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.webcam-lens, .webcam-status { fill: var(--accent); }
+.webcam-aperture { fill: var(--ink); stroke: none; }
+.webcam-card-anchor {
+  position: absolute;
+  z-index: 5;
+  top: .1em;
+  left: calc(100% + 14px);
+  width: min(360px, calc(100vw - 32px));
+  transform-origin: left top;
+  cursor: default;
+  pointer-events: none;
+}
+@media (max-width: 640px) {
+  .wordmark-trigger { font-size: clamp(92px, 24vw, 148px); }
+  .webcam-anchor { top: .1em; right: .18em; width: max(.24em, 28px); height: max(.15em, 20px); }
+}
+@media (max-width: 900px) {
+  .webcam-card-anchor {
+    top: calc(100% + 14px);
+    left: 50%;
+    margin-left: calc(-1 * min(180px, (100vw - 32px) / 2));
+    transform-origin: top center;
+  }
 }
 .wordmark::before {
   position: absolute;
@@ -166,6 +440,21 @@ a:focus-visible, button:focus-visible { outline: 2px solid #a7a071; outline-offs
   box-shadow: 0 18px 54px rgba(36,37,32,.09), inset 0 1px rgba(255,255,255,.76);
   white-space: normal;
 }
+.webcam-interaction .webcam-card-anchor {
+  position: absolute;
+  left: calc(100% + 14px);
+  width: min(360px, calc(100vw - 32px));
+  transform-origin: left top;
+}
+@media (max-width: 900px) {
+  .webcam-interaction .webcam-card-anchor {
+    top: calc(100% + 14px);
+    left: 50%;
+    width: min(360px, calc(100vw - 84px));
+    margin-left: calc(-1 * min(180px, (100vw - 84px) / 2));
+    transform-origin: top center;
+  }
+}
 .dark .definition-card { box-shadow: 0 18px 54px rgba(0,0,0,.25), inset 0 1px rgba(255,255,255,.04); }
 .definition-card h1 { @apply mb-0 font-sans text-[23px] font-medium lowercase tracking-[-.045em] text-ink; }
 .definition-kind { @apply mb-0 mt-1.5 font-mono text-[10px] tracking-[.035em] text-muted; }
@@ -222,6 +511,28 @@ a:focus-visible, button:focus-visible { outline: 2px solid #a7a071; outline-offs
   .vision-copy { margin-top: 32px; }
   .product-page { padding-top: 84px; }
   .construction-art { margin-top: 6px; }
+}
+@media (max-width: 800px) {
+  .archive-gallery {
+    position: relative;
+    inset: auto;
+    height: auto;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: auto;
+    align-items: start;
+    gap: 28px 14px;
+    margin-top: 100svh;
+    padding: 0 52px 56px 18px;
+  }
+  .archive-card,
+  .archive-card:nth-child(n + 5) { max-width: none; align-self: start; }
+  .archive-art-surface { height: clamp(132px, 29vw, 190px); padding: 7px; }
+  .archive-title { font-size: 11px; }
+  .archive-credit { font-size: 8px; }
+  .sketch-section { margin-top: 34px; }
+}
+@media (max-width: 420px) {
+  .sketch-section { margin-top: 28px; }
 }
 @media (max-width: 360px) {
   .product-label { left: calc(100% + 6px); font-size: 8px; }

@@ -43,6 +43,8 @@ Draw is a bridge from a person’s paper sketch to digital tools that can interp
 
 ## Page composition
 
+- Home places a still archive of consequential human drawings around the centered Draw wordmark. Keep the artifacts static, make each one link to its primary or archival source, and preserve room around the wordmark. Add a small webcam SVG perched on the final “w”; fade it as the wordmark settles into the compact header. Hovering or focusing the webcam opens a matching glass card that explains its role in live capture. Place that card to the wordmark’s right on desktop and below it on narrow screens, clear of the page scrubber. Keep the webcam card separate from the Draw definition card. On narrow screens, move the archive below the first-screen mark.
+- Below the home archive, provide a full-viewport, edge-to-edge drawing sheet. Keep a compact floating glass toolbar for pen, eraser, color, stroke width, and one clear-all action. The sheet must remain free of cards, inset margins, and secondary action rows. Store strokes in normalized coordinates so resize does not distort them, use coalesced pointer events, and cap canvas pixel ratio to keep memory use predictable.
 - Vision is an uninterrupted editorial page: a small mono eyebrow, a large centered headline, readable centered paragraphs, and a quiet sign-off. Do not insert a dictionary card or horizontal rules into the Vision copy.
 - Product uses the shared pill style for its construction status, a centered static illustration, a clear headline, and concise explanatory copy.
 - Use whitespace for hierarchy. Keep the pages minimal and avoid adding sections or labels that were not requested.

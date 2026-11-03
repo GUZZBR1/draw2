@@ -50,10 +50,16 @@ export default function SiteHeader({ onRepeatProduct }: SiteHeaderProps) {
   const [brandHovered, setBrandHovered] = useState(false);
   const [cardHovered, setCardHovered] = useState(false);
   const [brandFocused, setBrandFocused] = useState(false);
+  const [webcamHovered, setWebcamHovered] = useState(false);
+  const [webcamCardHovered, setWebcamCardHovered] = useState(false);
+  const [webcamFocused, setWebcamFocused] = useState(false);
+  const [webcamPinned, setWebcamPinned] = useState(false);
   const [dark, setDark] = useState(readSavedTheme);
   const [, setViewportRevision] = useState(0);
   const hoverCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const showDefinition = brandHovered || cardHovered || brandFocused;
+  const webcamAnchorRef = useRef<HTMLDivElement>(null);
+  const showWebcamCard = isHome && !isScrolled && (webcamHovered || webcamCardHovered || webcamFocused || webcamPinned);
+  const showDefinition = (brandHovered || cardHovered || brandFocused) && !showWebcamCard;
 
   function cancelHoverClose() {
     if (hoverCloseTimer.current) clearTimeout(hoverCloseTimer.current);
@@ -65,6 +71,8 @@ export default function SiteHeader({ onRepeatProduct }: SiteHeaderProps) {
     hoverCloseTimer.current = setTimeout(() => {
       setBrandHovered(false);
       setCardHovered(false);
+      setWebcamHovered(false);
+      setWebcamCardHovered(false);
     }, 160);
   }
 
@@ -84,6 +92,7 @@ export default function SiteHeader({ onRepeatProduct }: SiteHeaderProps) {
   });
   const productOpacity = useTransform(progress, [0.62, 0.94], [0, 1]);
   const productX = useTransform(progress, [0.62, 0.94], [-6, 0]);
+  const webcamOpacity = useTransform(progress, [0, 0.14], [1, 0]);
   const inverseBrandScale = useTransform(() => 1 / brandScale.get());
   const glassAmount = useTransform(progress, [0, 0.22], [0, 44]);
   const borderAmount = useTransform(progress, [0, 0.18], [0, 11]);
@@ -124,7 +133,28 @@ export default function SiteHeader({ onRepeatProduct }: SiteHeaderProps) {
     setBrandHovered(false);
     setCardHovered(false);
     setBrandFocused(false);
+    setWebcamHovered(false);
+    setWebcamCardHovered(false);
+    setWebcamFocused(false);
+    setWebcamPinned(false);
   }, [isHome, location.pathname]);
+
+  useEffect(() => {
+    if (!isScrolled) return;
+    setWebcamHovered(false);
+    setWebcamCardHovered(false);
+    setWebcamFocused(false);
+    setWebcamPinned(false);
+  }, [isScrolled]);
+
+  useEffect(() => {
+    if (!webcamPinned) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!webcamAnchorRef.current?.contains(event.target as Node)) setWebcamPinned(false);
+    };
+    document.addEventListener('pointerdown', closeOnOutsidePointer);
+    return () => document.removeEventListener('pointerdown', closeOnOutsidePointer);
+  }, [webcamPinned]);
 
   useEffect(() => {
     const updateViewport = () => setViewportRevision((revision) => revision + 1);
@@ -148,16 +178,20 @@ export default function SiteHeader({ onRepeatProduct }: SiteHeaderProps) {
   useEffect(() => () => cancelHoverClose(), []);
 
   useEffect(() => {
-    if (!showDefinition) return;
+    if (!showDefinition && !showWebcamCard) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setBrandHovered(false);
         setBrandFocused(false);
+        setWebcamHovered(false);
+        setWebcamCardHovered(false);
+        setWebcamFocused(false);
+        setWebcamPinned(false);
       }
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [showDefinition]);
+  }, [showDefinition, showWebcamCard]);
 
   return (
     <>
@@ -234,6 +268,82 @@ export default function SiteHeader({ onRepeatProduct }: SiteHeaderProps) {
           >
             Draw
           </Link>
+          {isHome && (
+            <div className="webcam-interaction" ref={webcamAnchorRef}>
+              <motion.div
+                className="webcam-anchor"
+                aria-hidden={isScrolled}
+                style={{
+                  opacity: reduceMotion ? (isScrolled ? 0 : 1) : webcamOpacity,
+                  pointerEvents: isScrolled ? 'none' : 'auto',
+                }}
+                onHoverStart={() => {
+                  cancelHoverClose();
+                  setBrandHovered(false);
+                  setCardHovered(false);
+                  setBrandFocused(false);
+                  setWebcamHovered(true);
+                }}
+                onHoverEnd={scheduleHoverClose}
+              >
+                <motion.button
+                  className="webcam-trigger"
+                  type="button"
+                  aria-label="Sobre a webcam do Draw"
+                  aria-controls="webcam-info-card"
+                  aria-expanded={showWebcamCard}
+                  tabIndex={isScrolled ? -1 : 0}
+                  title="Sobre a webcam do Draw"
+                  onFocus={() => {
+                    cancelHoverClose();
+                    setBrandFocused(false);
+                    setWebcamFocused(true);
+                  }}
+                  onBlur={() => setWebcamFocused(false)}
+                  onClick={() => setWebcamPinned((pinned) => !pinned)}
+                  whileHover={{ y: -1 }}
+                  transition={{ duration: 0.18, ease: 'easeOut' }}
+                >
+                  <svg className="webcam-icon" viewBox="0 0 64 40" aria-hidden="true">
+                    <rect x="5" y="4" width="54" height="26" rx="9" />
+                    <circle className="webcam-lens" cx="32" cy="17" r="8" />
+                    <circle className="webcam-aperture" cx="32" cy="17" r="3" />
+                    <circle className="webcam-status" cx="51" cy="12" r="1.5" />
+                    <path d="M27 30v3c0 1.8 1.4 3 3 3h4c1.7 0 3-1.3 3-3v-3" />
+                  </svg>
+                </motion.button>
+              </motion.div>
+              <motion.aside
+                id="webcam-info-card"
+                className="webcam-card-anchor definition-card"
+                aria-label="Sobre a webcam do Draw"
+                aria-hidden={!showWebcamCard}
+                initial={false}
+                animate={showWebcamCard ? 'visible' : 'hidden'}
+                style={{ scale: inverseBrandScale }}
+                onHoverStart={() => {
+                  cancelHoverClose();
+                  setBrandHovered(false);
+                  setCardHovered(false);
+                  setBrandFocused(false);
+                  setWebcamCardHovered(true);
+                }}
+                onHoverEnd={scheduleHoverClose}
+                variants={{
+                  hidden: { opacity: 0, y: 8, pointerEvents: 'none' },
+                  visible: { opacity: 1, y: 0, pointerEvents: 'auto' },
+                }}
+                transition={{ type: 'spring', stiffness: 320, damping: 28 }}
+              >
+                <h1>webcam</h1>
+                <p className="definition-kind"><em>instrumento</em> · captura</p>
+                <p className="definition-phrase">
+                  Acompanha o papel e transforma cada traço em tinta digital, em tempo real.
+                </p>
+                <p className="definition-note">A primeira camada do Draw.</p>
+              </motion.aside>
+            </div>
+          )}
         </motion.div>
         <motion.div
           className={`product-label font-mono text-muted${isProduct ? ' is-active' : ''}`}
