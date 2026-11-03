@@ -689,25 +689,50 @@ _IDLE_PROBE_SECONDS = 1.0
 # nesta webcam ja foi medido e descartado (churn de exposicao
 # empata com o traco). Com sinal de mao presente, nada muda.
 _NO_HAND_REST_AFTER_STILL_PASSES = 4
-# Descanso total sem mao (especificacao do Lucas, 2026-11-01 e de
-# novo 2026-11-03): folha assentada, mao fora e saida confirmada
-# quieta = ZERO passadas, nao sonda de 1 Hz para sempre. A sonda
-# de 1 Hz seguia alimentando o voto sobre warps que tremem, e
-# cada alinhamento de fase confirmava uma camada nova sobre o
-# desenho parado (regua de replay, modo hold: salto de +9.999 px
-# na passada 89). O descanso entra quando a geracao ja rodou uma
-# janela de voto inteira (_REST_MIN_GENERATION_PASSES) e as
+# Descanso total (especificacao do Lucas, 2026-11-01 e de novo
+# 2026-11-03): folha assentada e saida confirmada quieta = ZERO
+# passadas, nao sonda de 1 Hz para sempre. A sonda de 1 Hz
+# seguia alimentando o voto sobre warps que tremem, e cada
+# alinhamento de fase confirmava uma camada nova sobre o
+# desenho parado (regua de replay, modo hold: salto de +9.999
+# px na passada 89). O descanso entra quando a geracao ja rodou
+# uma janela de voto inteira (_REST_MIN_GENERATION_PASSES) e as
 # ultimas _REST_QUIET_PASSES passadas nao confirmaram nada novo
 # — o portao e sobre a SAIDA CONFIRMADA do acumulador, nunca
 # sobre diff de quadro (licao de 2026-11-01: o churn da camera
 # supera o sinal do lapis). Acorda com evento que anuncia tinta
-# possivel: a mao volta (set_hand_presence), a folha troca
-# (new_generation) ou a geracao vira. Sem sinal de mao (None) o
-# descanso total NAO fecha: nao existe evento que anuncie tinta
-# nova, e a sonda de 1 Hz segue sendo o mecanismo de acordar
-# desse clone — com a porta de fronteira, ela nao acumula mais.
+# possivel: a mao volta ou se mexe (set_hand_presence), a folha
+# troca (new_generation) ou a geracao vira. Sem sinal de mao
+# (None) o descanso total NAO fecha: nao existe evento que
+# anuncie tinta nova, e a sonda de 1 Hz segue sendo o mecanismo
+# de acordar desse clone — com a porta de fronteira, ela nao
+# acumula mais.
 _REST_MIN_GENERATION_PASSES = 3
 _REST_QUIET_PASSES = 2
+# Descanso total tambem COM a mao presente (decisao do Lucas,
+# 2026-11-03): ele segurando o caderno parado, a cadencia de
+# 250 ms seguia eterna. A extensao usa a mesma maquinaria de
+# quietude da saida confirmada (_REST_*), mais a mao parada por
+# _HAND_REST_STILL_SECONDS. Tinta nova com a mao ja no quadro
+# nao se anuncia pela tinta — quem acorda e a mao se mexendo,
+# medida na assinatura da mascara que o adaptador ja computa
+# (area e centroide), nunca por diff do quadro da pagina (o
+# churn da camera supera o sinal do lapis, licao de 2026-11-01).
+# Nao ha sonda periodica de tinta neste caminho: sonda e
+# passada, e o ponto do descanso e zero passadas.
+_HAND_REST_STILL_SECONDS = 1.0
+# Limiares de movimento da assinatura, calibrados nas mascaras
+# reais da sessao de desenho de 2026-10-29 (hand_cam_series03,
+# 83 pares consecutivos utilizaveis a 0,33 s, area mediana da
+# mao ~147 mil px num quadro de 1758x968): o regime quieto da
+# propria sessao de desenho fica em p5 = 6,3 px de centroide e
+# 0,7% de area, p10 = 8,9 px e 1,3%; o grosso do desenho esta
+# em p25 = 14,5 px e 4,2%, p50 = 23,7 px e 6,9%. O limiar fica
+# entre o piso de pausa e o desenho — e e a segunda tranca: a
+# primeira e a saida confirmada quieta, que o desenho ativo
+# nunca deixa fechar.
+_HAND_MOVE_CENTROID_PX = 12.0
+_HAND_MOVE_AREA_FRACTION = 0.03
 
 
 class _MediaPipeHandPresence:
@@ -716,16 +741,49 @@ class _MediaPipeHandPresence:
     None e "sinal indisponivel" (sem mediapipe ou sem modelo), e
     quem decide a cadencia trata None como ativo: sem sinal, a
     economia nao liga e o app roda como antes.
+
+    sample() devolve (presenca, moveu): a assinatura da mascara
+    (area, centroide) comparada com a da amostra anterior. E o
+    sinal de atividade que acorda o descanso com a mao presente;
+    present() segue existindo sobre a mesma leitura.
     """
 
     def __init__(self, masker):
         self._masker = masker
+        self._signature = None
 
     def present(self, frame):
+        present, _moved = self.sample(frame)
+        return present
+
+    def sample(self, frame):
         mask = self._masker.mask(frame)
         if mask is None:
-            return None
-        return bool(np.count_nonzero(mask))
+            self._signature = None
+            return None, False
+        area = int(np.count_nonzero(mask))
+        if area == 0:
+            self._signature = None
+            return False, False
+        ys, xs = np.nonzero(mask)
+        signature = (area, float(xs.mean()), float(ys.mean()))
+        previous = self._signature
+        self._signature = signature
+        if previous is None:
+            # A mao apareceu: a transicao de presenca ja acorda
+            # por set_hand_presence, e marcar movimento aqui so
+            # reseta o relogio de quietude da mao — conservador.
+            return True, True
+        centroid_step = float(np.hypot(
+            signature[1] - previous[1],
+            signature[2] - previous[2],
+        ))
+        area_step = abs(signature[0] - previous[0]) / previous[0]
+        moved = (
+            centroid_step > _HAND_MOVE_CENTROID_PX
+            or area_step > _HAND_MOVE_AREA_FRACTION
+        )
+        return True, moved
 
 
 def _make_hand_presence(model_path):
@@ -955,8 +1013,8 @@ class _PageCleanWorker:
     substituido pelo proximo, nunca acumulado. A trabalhadora roda
     passadas completas do modelo com pelo menos
     _PAGE_CLEAN_INTERVAL_SECONDS entre inicios — e nenhuma
-    passada em descanso total (folha assentada, sem mao, saida
-    confirmada quieta; _at_rest) — e alimenta o
+    passada em descanso total (folha assentada, saida confirmada
+    quieta e mao fora ou parada; _at_rest) — e alimenta o
     _LayeredInkAccumulator da geracao: a tinta nova sai na hora
     como camada provisoria para a exibicao (poll_display) e so
     vira canvas pelos votos de confirmacao (poll). Publicar cedo
@@ -1012,6 +1070,12 @@ class _PageCleanWorker:
         # confirmar nada novo.
         self._generation_passes = 0
         self._quiet_passes = 0
+        # Relogio de quietude da mao (carimbo monotonico do
+        # ultimo movimento/aparicao reportado): o descanso com a
+        # mao presente exige a mao parada alem de
+        # _HAND_REST_STILL_SECONDS. None = nenhum movimento
+        # reportado ainda — nao conta como parada.
+        self._hand_motion_at = None
         # Telemetria por etapa (auditoria de latencia, U0 do loop
         # v2): contadores e os carimbos das ultimas passadas, para
         # medir onde o tempo submit->publicacao mora sem mudar
@@ -1058,7 +1122,7 @@ class _PageCleanWorker:
             self._pending = (warped, generation, time.monotonic())
             self._condition.notify_all()
 
-    def set_hand_presence(self, present):
+    def set_hand_presence(self, present, moved=False):
         """Alimenta a porta de ociosidade: True, False ou None.
 
         A transicao para False arma exatamente uma passada de
@@ -1067,29 +1131,55 @@ class _PageCleanWorker:
         trabalhadora sonda a no maximo 1 Hz enquanto a saida
         confirmada ainda muda — e entra em descanso total (zero
         passadas) quando ela para de mudar; ver _at_rest.
+
+        moved=True e o sinal de atividade da mascara (ver
+        _MediaPipeHandPresence.sample): reseta o relogio de
+        quietude da mao e acorda o descanso com a mao presente.
+        Transicao de presenca tambem conta como movimento: a mao
+        chegando ou saindo nunca e mao parada.
         """
         with self._condition:
             if present is False and self._hand_state is not False:
                 self._confirm_once = True
             if present is not None:
                 self._still_passes = 0
+            if present is not None and (
+                moved or present != self._hand_state
+            ):
+                self._hand_motion_at = time.monotonic()
             self._hand_state = present
             self._condition.notify_all()
+
+    def _hand_still(self):
+        """Mao presente e sem movimento alem da janela de quietude."""
+        return (
+            self._hand_motion_at is not None
+            and time.monotonic() - self._hand_motion_at
+            >= _HAND_REST_STILL_SECONDS
+        )
 
     def _at_rest(self):
         """Descanso total: nenhuma passada ate um evento acordar.
 
-        Mao fora (sinal presente e False), passada de confirmacao
+        Sem mao: sinal presente e False, passada de confirmacao
         da saida da mao ja gasta, janela de voto da geracao
         completa e as ultimas passadas sem confirmar nada novo.
+        Com mao (decisao do Lucas, 2026-11-03): a mesma quietude
+        da saida confirmada, mais a mao parada alem de
+        _HAND_REST_STILL_SECONDS — acorda com o movimento da
+        propria mao, reportado pela assinatura da mascara.
         Ver _REST_MIN_GENERATION_PASSES/_REST_QUIET_PASSES.
         """
-        return (
-            self._hand_state is False
-            and not self._confirm_once
-            and self._generation_passes >= _REST_MIN_GENERATION_PASSES
-            and self._quiet_passes >= _REST_QUIET_PASSES
-        )
+        if (
+            self._generation_passes < _REST_MIN_GENERATION_PASSES
+            or self._quiet_passes < _REST_QUIET_PASSES
+        ):
+            return False
+        if self._hand_state is False:
+            return not self._confirm_once
+        if self._hand_state is True:
+            return self._hand_still()
+        return False
 
     def _pass_interval(self):
         if self._at_rest():
@@ -1200,10 +1290,11 @@ class _PageCleanWorker:
                     interval = self._pass_interval()
                     if interval is None:
                         # Descanso total: espera sem prazo por um
-                        # evento que acorde (a mao voltar, geracao
-                        # nova, stop). Submit NAO acorda: ele so
-                        # troca o pendente, que e reavaliado quando
-                        # um evento de verdade chegar. Sem isto a
+                        # evento que acorde (a mao voltar, a mao
+                        # presente se mexer, geracao nova, stop).
+                        # Submit NAO acorda: ele so troca o
+                        # pendente, que e reavaliado quando um
+                        # evento de verdade chegar. Sem isto a
                         # sonda de 1 Hz rodava para sempre sobre a
                         # pagina parada e o voto acumulava camadas.
                         self._condition.wait()
@@ -2253,10 +2344,13 @@ def run(
 
                 if ran_detection and tracker.corners is not None:
                     if clean_hand_presence is not None:
-                        clean_hand_present = clean_hand_presence.present(
-                            frame
+                        (
+                            clean_hand_present,
+                            clean_hand_moved,
+                        ) = clean_hand_presence.sample(frame)
+                        ink_worker.set_hand_presence(
+                            clean_hand_present, moved=clean_hand_moved
                         )
-                        ink_worker.set_hand_presence(clean_hand_present)
                     if not ink_session_open:
                         # Folha nova na cena: canvas e geometria recomecam.
                         ink_accumulator.reset()

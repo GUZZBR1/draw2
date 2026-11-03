@@ -2,10 +2,16 @@
 
 O contrato, dirigido com uma tinta falsa que conta passadas:
 
-1. Com mão (True), a trabalhadora roda na cadência normal. Sem
-   sinal (None), também — até a tinta parar: sem sinal e com o
-   acumulador quieto, o descanso vem da tinta parada
-   (test_ink_rest_no_hand.py).
+1. Com mão (True) e atividade — movimento reportado, ou a
+   quietude (saída confirmada parada + mão parada) ainda não
+   fechou — a trabalhadora roda na cadência normal. As fases
+   com mão deste teste são mais curtas que a janela de
+   quietude da mão (_HAND_REST_STILL_SECONDS), então a
+   cadência aqui é a normal; o descanso com a mão presente e
+   parada mora em test_ink_rest_hand_present.py. Sem sinal
+   (None), a cadência também é a normal — até a tinta parar:
+   sem sinal e com o acumulador quieto, o descanso vem da
+   tinta parada (test_ink_rest_no_hand.py).
 2. A mão sai (transição para False): exatamente uma passada de
    confirmação roda em seguida, e depois as passadas caem para
    no máximo a cadência da sonda ociosa, mesmo com submits
