@@ -678,6 +678,17 @@ class _PngWriter:
 # exige mao no papel; sem mao, a pagina esta assentada e so a
 # sonda periodica confere.
 _IDLE_PROBE_SECONDS = 1.0
+# Sem sinal de mao (clone sem MediaPipe), a porta de ociosidade
+# nunca fecha e a trabalhadora rodaria a 250 ms para sempre —
+# CPU queimada a toa num app que o dono acha "lento". O descanso,
+# nesse caso, vem da tinta parada: depois de
+# _NO_HAND_REST_AFTER_STILL_PASSES passadas seguidas sem nenhuma
+# mudanca no acumulador (nada confirmou, nada provisoriamente
+# mudou), a cadencia cai para a da sonda ate algo mudar. O sinal
+# e o do proprio acumulador, nao diff de quadro — o diff cego
+# nesta webcam ja foi medido e descartado (churn de exposicao
+# empata com o traco). Com sinal de mao presente, nada muda.
+_NO_HAND_REST_AFTER_STILL_PASSES = 4
 
 
 class _MediaPipeHandPresence:
@@ -927,6 +938,7 @@ class _PageCleanWorker:
         self._display_version = 0
         self._hand_state = None
         self._confirm_once = False
+        self._still_passes = 0
         # Telemetria por etapa (auditoria de latencia, U0 do loop
         # v2): contadores e os carimbos das ultimas passadas, para
         # medir onde o tempo submit->publicacao mora sem mudar
@@ -950,6 +962,7 @@ class _PageCleanWorker:
         """Invalida pendente/publicado e devolve a nova geracao."""
         with self._condition:
             self._generation += 1
+            self._still_passes = 0
             self._pending = None
             self._published = None
             self._published_display = None
@@ -981,11 +994,18 @@ class _PageCleanWorker:
         with self._condition:
             if present is False and self._hand_state is not False:
                 self._confirm_once = True
+            if present is not None:
+                self._still_passes = 0
             self._hand_state = present
             self._condition.notify_all()
 
     def _pass_interval(self):
         if self._hand_state is False and not self._confirm_once:
+            return _IDLE_PROBE_SECONDS
+        if (
+            self._hand_state is None
+            and self._still_passes >= _NO_HAND_REST_AFTER_STILL_PASSES
+        ):
             return _IDLE_PROBE_SECONDS
         return _PAGE_CLEAN_INTERVAL_SECONDS
 
@@ -1129,6 +1149,14 @@ class _PageCleanWorker:
                     self._worker_generation = generation
                     self._accumulator.reset()
                 result = self._accumulator.add(prob)
+                if (
+                    result["confirmed_changed"]
+                    or result["provisional_changed"]
+                    or result["turn"]
+                ):
+                    self._still_passes = 0
+                else:
+                    self._still_passes += 1
                 self._passes_total += 1
                 self._last_pass_ms = (
                     time.monotonic() - pass_started
