@@ -68,7 +68,7 @@ from . import paper as _paper
 from .manifest import verify_model
 
 _INPUT_SIZE = 384
-_ORT_INTRA_THREADS = 4
+_ORT_INTRA_THREADS = 3
 _ENV_THREADS_VAR = "DRAW_ORT_THREADS"
 _MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 _STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
@@ -198,11 +198,17 @@ def _load_session(model_path):
 
 
 def _ort_intra_threads():
-    """Threads intra-op da sessão: 4, medido no Ryzen do Lucas.
+    """Threads intra-op da sessão: 3, do teto combinado de pools.
 
-    A variável DRAW_ORT_THREADS troca o valor sem tocar no código,
-    para medir em outra máquina; valor inválido ou não positivo
-    volta ao medido.
+    Os pools nativos do app somados disputavam os nucleos fisicos
+    (oversubscription medida na mesa do Lucas, 2026-11-02: CPU
+    desenhando 550,8% com detector 4 + tinta 8 + OpenCV 16; com
+    detector 2 + tinta 4 caiu para 289,8%, passada igual). O
+    padrao do detector fica em 3: a soma dos pools ORT (3 + 4)
+    cabe nos nucleos com folga, e 2 mediram +31% por chamada de
+    deteccao — 3 e o ponto medio. A variável DRAW_ORT_THREADS
+    troca o valor sem tocar no código, para medir em outra
+    máquina; valor inválido ou não positivo volta ao medido.
     """
     raw = os.environ.get(_ENV_THREADS_VAR)
     if raw:
