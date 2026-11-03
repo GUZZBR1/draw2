@@ -689,6 +689,25 @@ _IDLE_PROBE_SECONDS = 1.0
 # nesta webcam ja foi medido e descartado (churn de exposicao
 # empata com o traco). Com sinal de mao presente, nada muda.
 _NO_HAND_REST_AFTER_STILL_PASSES = 4
+# Descanso total sem mao (especificacao do Lucas, 2026-11-01 e de
+# novo 2026-11-03): folha assentada, mao fora e saida confirmada
+# quieta = ZERO passadas, nao sonda de 1 Hz para sempre. A sonda
+# de 1 Hz seguia alimentando o voto sobre warps que tremem, e
+# cada alinhamento de fase confirmava uma camada nova sobre o
+# desenho parado (regua de replay, modo hold: salto de +9.999 px
+# na passada 89). O descanso entra quando a geracao ja rodou uma
+# janela de voto inteira (_REST_MIN_GENERATION_PASSES) e as
+# ultimas _REST_QUIET_PASSES passadas nao confirmaram nada novo
+# — o portao e sobre a SAIDA CONFIRMADA do acumulador, nunca
+# sobre diff de quadro (licao de 2026-11-01: o churn da camera
+# supera o sinal do lapis). Acorda com evento que anuncia tinta
+# possivel: a mao volta (set_hand_presence), a folha troca
+# (new_generation) ou a geracao vira. Sem sinal de mao (None) o
+# descanso total NAO fecha: nao existe evento que anuncie tinta
+# nova, e a sonda de 1 Hz segue sendo o mecanismo de acordar
+# desse clone — com a porta de fronteira, ela nao acumula mais.
+_REST_MIN_GENERATION_PASSES = 3
+_REST_QUIET_PASSES = 2
 
 
 class _MediaPipeHandPresence:
@@ -774,6 +793,34 @@ _INK_VOTE_SCORE = 1.4
 _INK_VOTE_SCORE_STRONG = 1.9
 _INK_VOTE_HIT = 0.5
 _INK_VOTE_MIN_HITS = 3
+# Porta de fronteira da confirmacao (medida na regua de replay,
+# draw-lab/replay-ruler-2026-11-01, modo hold sobre o codigo sem
+# ela): com a pagina desenhada parada, o canvas confirmado
+# crescia em degraus a cada alinhamento de fase entre o ciclo do
+# warp e a janela do voto — um salto de +9.999 px na passada 89
+# e 6.144 px confirmados que passada nenhuma viu acima do
+# limiar. O mecanismo: o warp treme, copias deslocadas do mesmo
+# traco somam probabilidade SUB-limiar (0,5-0,7) no ombro do
+# traco e o voto fecha sobre a soma, camada sobre camada, sem
+# nenhuma passada ter chamado aquilo de tinta.
+# A porta: pixel dentro da faixa do ombro — dilatacao de
+# _INK_FRONTIER_RADIUS px sobre (tinta confirmada ∪ tinta que
+# a janela viu acima do limiar) — so confirma se alguma
+# passada da janela o viu acima do limiar: evidencia nova
+# SUBSTITUI a posicao da antiga, nao soma um ombro novo ao
+# redor dela. O raio e o ombro medido nos mapas reais do
+# cache da regua: a banda 0,5-0,7 mora a p50 = 1 px e
+# p90 ≈ 3 px do nucleo > 0,7. Longe do ombro o voto segue
+# intacto: e ele que descobre o lapis fraco consistente
+# (0,55 x 3) em regiao nova. Varredura offline sobre os warps
+# f28-f30 em ciclo, 300 passadas: fora-da-referencia cai de
+# 8.567 px (sem porta) para 419 px (raio 3 ancorado), e o
+# crescimento total satura no teto da uniao das passadas.
+_INK_FRONTIER_RADIUS = 3
+_INK_FRONTIER_KERNEL = np.ones(
+    (2 * _INK_FRONTIER_RADIUS + 1, 2 * _INK_FRONTIER_RADIUS + 1),
+    dtype=np.uint8,
+)
 
 
 class _LayeredInkAccumulator:
@@ -784,7 +831,9 @@ class _LayeredInkAccumulator:
     limiar e ainda nao confirmou: ela existe para a tela mostrar a
     tinta nova na primeira passada, e so para a tela. A camada
     confirmada e o canvas: um pixel so entra nela pelas regras de
-    voto acima, e dela nao sai dentro da geracao.
+    voto acima com a porta de fronteira (evidencia sub-limiar nao
+    expande a borda da tinta ja confirmada), e dela nao sai
+    dentro da geracao.
 
     Pixel provisorio que sai da janela sem confirmar e retratado:
     some da camada provisoria e entra na contagem de retratados.
@@ -843,6 +892,23 @@ class _LayeredInkAccumulator:
         confirmed_rule = (score >= _INK_VOTE_SCORE_STRONG) | (
             (hits >= _INK_VOTE_MIN_HITS) & (score >= _INK_VOTE_SCORE)
         )
+        if np.any(confirmed_rule):
+            # Porta de fronteira (ver _INK_FRONTIER_RADIUS):
+            # dentro da faixa do ombro da tinta (confirmada ou
+            # vista acima do limiar nesta janela), so confirma
+            # quem alguma passada viu como tinta; a soma
+            # sub-limiar das copias deslocadas nao engrossa o
+            # traco nem poe camada nova sobre ele.
+            seen_as_ink = np.max(stack, axis=0) > self.threshold
+            anchor = seen_as_ink | confirmed_before
+            near_anchor = (
+                cv2.dilate(
+                    anchor.astype(np.uint8),
+                    _INK_FRONTIER_KERNEL,
+                )
+                > 0
+            )
+            confirmed_rule &= seen_as_ink | ~near_anchor
         new_confirmed = confirmed_rule & ~confirmed_before
         new_confirmed_px = int(np.count_nonzero(new_confirmed))
         if new_confirmed_px:
@@ -888,7 +954,9 @@ class _PageCleanWorker:
     segue: a fila tem tamanho 1 e um warp nao processado e
     substituido pelo proximo, nunca acumulado. A trabalhadora roda
     passadas completas do modelo com pelo menos
-    _PAGE_CLEAN_INTERVAL_SECONDS entre inicios e alimenta o
+    _PAGE_CLEAN_INTERVAL_SECONDS entre inicios — e nenhuma
+    passada em descanso total (folha assentada, sem mao, saida
+    confirmada quieta; _at_rest) — e alimenta o
     _LayeredInkAccumulator da geracao: a tinta nova sai na hora
     como camada provisoria para a exibicao (poll_display) e so
     vira canvas pelos votos de confirmacao (poll). Publicar cedo
@@ -939,6 +1007,11 @@ class _PageCleanWorker:
         self._hand_state = None
         self._confirm_once = False
         self._still_passes = 0
+        # Descanso total (so a trabalhadora e o new_generation
+        # tocam): passadas desta geracao e passadas seguidas sem
+        # confirmar nada novo.
+        self._generation_passes = 0
+        self._quiet_passes = 0
         # Telemetria por etapa (auditoria de latencia, U0 do loop
         # v2): contadores e os carimbos das ultimas passadas, para
         # medir onde o tempo submit->publicacao mora sem mudar
@@ -963,6 +1036,8 @@ class _PageCleanWorker:
         with self._condition:
             self._generation += 1
             self._still_passes = 0
+            self._generation_passes = 0
+            self._quiet_passes = 0
             self._pending = None
             self._published = None
             self._published_display = None
@@ -989,7 +1064,9 @@ class _PageCleanWorker:
         A transicao para False arma exatamente uma passada de
         confirmacao: a mao saiu, a pagina assentou, e essa passada
         fecha o voto do que foi escrito. Depois dela, sem mao, a
-        trabalhadora sonda a no maximo 1 Hz.
+        trabalhadora sonda a no maximo 1 Hz enquanto a saida
+        confirmada ainda muda — e entra em descanso total (zero
+        passadas) quando ela para de mudar; ver _at_rest.
         """
         with self._condition:
             if present is False and self._hand_state is not False:
@@ -999,7 +1076,24 @@ class _PageCleanWorker:
             self._hand_state = present
             self._condition.notify_all()
 
+    def _at_rest(self):
+        """Descanso total: nenhuma passada ate um evento acordar.
+
+        Mao fora (sinal presente e False), passada de confirmacao
+        da saida da mao ja gasta, janela de voto da geracao
+        completa e as ultimas passadas sem confirmar nada novo.
+        Ver _REST_MIN_GENERATION_PASSES/_REST_QUIET_PASSES.
+        """
+        return (
+            self._hand_state is False
+            and not self._confirm_once
+            and self._generation_passes >= _REST_MIN_GENERATION_PASSES
+            and self._quiet_passes >= _REST_QUIET_PASSES
+        )
+
     def _pass_interval(self):
+        if self._at_rest():
+            return None
         if self._hand_state is False and not self._confirm_once:
             return _IDLE_PROBE_SECONDS
         if (
@@ -1103,7 +1197,22 @@ class _PageCleanWorker:
                 # geracao trocou, new_generation limpou o pendente
                 # e esta volta nao roda nada.
                 while self._last_pass_start is not None:
-                    remaining = self._pass_interval() - (
+                    interval = self._pass_interval()
+                    if interval is None:
+                        # Descanso total: espera sem prazo por um
+                        # evento que acorde (a mao voltar, geracao
+                        # nova, stop). Submit NAO acorda: ele so
+                        # troca o pendente, que e reavaliado quando
+                        # um evento de verdade chegar. Sem isto a
+                        # sonda de 1 Hz rodava para sempre sobre a
+                        # pagina parada e o voto acumulava camadas.
+                        self._condition.wait()
+                        if self._stopped:
+                            return
+                        if self._pending is None:
+                            break
+                        continue
+                    remaining = interval - (
                         time.monotonic() - self._last_pass_start
                     )
                     if remaining <= 0 or self._pending is None:
@@ -1148,6 +1257,8 @@ class _PageCleanWorker:
                 if first_pass:
                     self._worker_generation = generation
                     self._accumulator.reset()
+                    self._generation_passes = 0
+                    self._quiet_passes = 0
                 result = self._accumulator.add(prob)
                 if (
                     result["confirmed_changed"]
@@ -1157,6 +1268,14 @@ class _PageCleanWorker:
                     self._still_passes = 0
                 else:
                     self._still_passes += 1
+                # Contadores do descanso total: so a saida
+                # CONFIRMADA interessa (provisoria tremula com o
+                # warp e nao pode segurar a trabalhadora acordada).
+                self._generation_passes += 1
+                if result["confirmed_changed"] or result["turn"]:
+                    self._quiet_passes = 0
+                else:
+                    self._quiet_passes += 1
                 self._passes_total += 1
                 self._last_pass_ms = (
                     time.monotonic() - pass_started
@@ -1235,12 +1354,15 @@ class _PageCleanWorker:
                 "provisional_px": self._provisional_px,
                 "retracted_px_total": self._retracted_px_total,
                 "worker_mode": (
-                    "active"
+                    "rest"
+                    if self._at_rest()
+                    else "active"
                     if self._hand_state
                     else "idle"
                     if self._hand_state is False
                     else "unknown"
                 ),
+                "resting": self._at_rest(),
                 "hand_present": self._hand_state,
             }
 
@@ -1851,8 +1973,9 @@ def run(
         if clean_hand_presence is not None:
             print(
                 "Porta de ociosidade pela mao ativa no caminho "
-                "pagina->limpa: sem mao, a tinta sonda a no maximo "
-                "1 Hz e a geometria da tinta congela."
+                "pagina->limpa: sem mao, a tinta sonda ate a saida "
+                "confirmada assentar, descansa sem passadas e a "
+                "geometria da tinta congela."
             )
 
     def detect_sheet(frame):
