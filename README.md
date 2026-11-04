@@ -8,54 +8,67 @@
   A digitizing tablet without a digitizing tablet.
 </p>
 
-A webcam points at the desk. The person writes and draws on an ordinary sheet of paper, and Draw reproduces the stroke in digital form, live. No special pen, no special surface, no printed template sheet.
+A webcam points at the desk. You write and draw on an ordinary sheet of
+paper, and Draw reproduces the stroke digitally, live. No special pen,
+no special surface, no printed template.
 
-The full vision of the project is in [VISION.md](VISION.md). This document covers the current state, how to run it, and how the system works internally.
-
-## Public website
-
-The website lives in `site/`. To publish it on Replit, choose a **Static**
-deployment, use `site/dist` as the public directory, and use the build command
-from `.replit`. The site build is independent of the Python training
-environment. The workspace Run command remains `python main.py`.
+Draw is the capture layer of a larger vision — a real-time bridge from
+paper sketches to professional tools such as CAD and simulators — set
+out in [VISION.md](VISION.md). This repository is that capture layer:
+sheet detection, page rectification, and ink extraction, in real time
+on a commodity CPU.
 
 ## Status
 
-Draw runs in real time on the author's desk. The everyday detector is the v3 neural model, with the classic fallback detector inside the same process. The digital canvas already accumulates ink between frames and treats the hand as an unknown region.
+Draw runs in real time in daily use on the author's desk: one command,
+neural sheet detection and the page-clean ink model by default, on any
+sheet or notebook page.
 
-The honest limit at the moment is generalization. v3 was judged on frames from the author's desk and on public document datasets. It has never been through a test set from another desk, another camera, and another light. That set does not exist yet, and no number in this README measures another setup.
+The open problem is generalization. Current models are judged on the
+author's setup and on public document datasets; a sealed test set from
+other desks, cameras, and lighting is the missing ruler, and building
+it is active work. Numbers in this README are from the author's setup
+unless stated otherwise.
 
 ## Quick start
 
-Prerequisites: Python (the author runs 3.12), a webcam, and the project's dependencies.
+Prerequisites: Python 3.11 or 3.12, a webcam, and the project
+dependencies.
 
 ```bash
 pip install -r requirements.txt
-python tools/fetch_models.py
+python tools/fetch_models.py   # one-time: downloads the official models
+python main.py
 ```
 
-The second command downloads the official models (sheet detector v3, page-to-clean ink model, and the MediaPipe hand model) into the `models/` folder. The binaries do not live in git: they are distributed by this repository's `models-2026-11-02` Release, and the script checks each file's sha256 and size against `models/MANIFEST.json` before installing. Without this step, Draw runs on the fallbacks: the classic sheet detector and the old ink stack.
+Model binaries do not live in git. They are distributed by this
+repository's `models-2026-11-02` Release and verified against
+`models/MANIFEST.json` (sha256 and size) by the fetch script. MediaPipe
+is an optional extra, used for hand tracking:
+
+```bash
+pip install mediapipe
+```
 
 ### Windows with WSL
 
-WSL2 does not see the Windows webcam by default. No `/dev/video*` exists inside it until the camera is attached.
-
-The complete guide is in [docs/SETUP_WINDOWS.md](docs/SETUP_WINDOWS.md). The short path runs from inside WSL.
+WSL2 does not see the Windows webcam until it is attached with usbipd.
+The complete guide is [docs/SETUP_WINDOWS.md](docs/SETUP_WINDOWS.md);
+the short path, from inside WSL:
 
 ```bash
 bash scripts/setup_camera_wsl.sh
 python main.py
 ```
 
-The script prepares usbipd, attaches the camera to WSL, and checks the result. It also corrects the user's `video` group and turns back on the audio services that it stopped itself.
-
-If something fails, run the diagnosis before touching anything else.
+If anything fails, diagnose before changing anything else:
 
 ```bash
 python main.py --check
 ```
 
-`--check` validates OpenCV, the existence of `/dev/video*`, the process's permission over the device, and the reading of a real frame. Each failure comes out named, with the fix on the following line.
+`--check` validates OpenCV, the video device, its permissions, and a
+real frame read, naming each failure and its fix.
 
 ### Linux with a USB camera
 
@@ -63,197 +76,180 @@ python main.py --check
 python main.py
 ```
 
-### With the neural detector
-
-The official models are distributed by the `models-2026-11-02` Release and registered in `models/MANIFEST.json` (sha256, size, the ruler that approved each one, and the date). A fresh clone downloads everything with a single command, with no credentials:
-
-```bash
-python tools/fetch_models.py
-python main.py
-```
-
-Without the fetch, the app starts on the fallbacks and warns in the log: the classic sheet detector in place of neural v3, and the old ink stack in place of the page-to-clean model. To use your own model, the path still exists:
-
-```bash
-python main.py --neural models/draw_seg_v3_dyn.onnx
-```
-
 ## Usage
+
+With the models fetched, `python main.py` is the whole interface: the
+neural detector and the page-clean ink model are the defaults, and the
+only key you need is `q` (or `Esc`) to quit. The flags below exist for
+diagnostics, experiments, and custom models.
 
 | Flag | What it does |
 |---|---|
 | `--source N` or URL | Local webcam by index (default 0) or MJPEG stream by URL |
-| `--neural [model.onnx]` | Neural detector as primary, with the classic one as fallback. Without a path, it reads `DRAW_NEURAL_MODEL` |
-| `--ink-model [model.onnx]` | Learned ink model as the source of the mask. Without a path, it reads `DRAW_INK_MODEL`. Without a file or with a load error, the app warns once and continues with the heuristic |
-| `--hand-model [model.task]` | MediaPipe hand mask for the accumulative canvas. Without a path, it reads `DRAW_HAND_MODEL` or `models/hand_landmarker.task` |
-| `--markers` | Optional mode with the printed template sheet and ArUco markers |
-| `--check` | Validates the camera port by port and exits, without opening a window |
-| `--save-dir folder` | Captures folder. The default is `captures` |
-
-The variable `DRAW_ORT_THREADS` changes the number of threads of the ONNX session without touching the code. The default is 4, measured on the author's machine.
-
-The hand mask is optional and requires a package outside the standard installation.
-
-```bash
-pip install mediapipe
-```
-
-Without the package or without the model, the app runs without the mask and warns once.
+| `--neural [model.onnx]` | Neural sheet detector with a custom model. Default: `models/draw_seg_v3_dyn.onnx` when present, else `DRAW_NEURAL_MODEL` |
+| `--page-clean [model.onnx]` | Page-clean ink model. Default: `models/page_clean_unet.onnx` when present, else `DRAW_PAGE_CLEAN_MODEL` |
+| `--legacy-ink` | The pre-neural ink stack (adaptive threshold heuristic, `--ink-model`, `--session-baseline`, `--hand-model`) instead of the page-clean model |
+| `--ink-model [model.onnx]` | Learned ink model inside the legacy stack, replacing the heuristic |
+| `--hand-model [model.task]` | MediaPipe hand model for the legacy stack. Default: `DRAW_HAND_MODEL` or `models/hand_landmarker.task` |
+| `--session-baseline` | Legacy stack only: the page as it is when you press `c` becomes the background, so only strokes made afterwards enter the canvas |
+| `--markers` | Printed template sheet with ArUco markers, instead of markerless detection |
+| `--check` | Validate the camera step by step and exit |
+| `--save-dir folder` | Captures folder (default `captures`) |
 
 Keys inside the app:
 
 - `s` saves the digital canvas as PNG in `captures/`
 - `f` saves the current raw frame in `captures/frames/`
-- `g` turns automatic capture on or off, one raw frame every 10 frames
+- `g` toggles automatic raw-frame capture (one frame every 10)
+- `c` sets a new session baseline (legacy stack, with `--session-baseline`)
 - `q` or `Esc` exits
 
-The default mode is the markerless one, on any sheet or notebook page. It has been the default since v0.2. The marker mode requires the template sheet generated by `python template/generate_template.py`.
+Environment variables set model paths (`DRAW_NEURAL_MODEL`,
+`DRAW_PAGE_CLEAN_MODEL`, `DRAW_INK_MODEL`, `DRAW_HAND_MODEL`) and
+thread caps for the ONNX sessions and OpenCV. `DRAW_MODEL_STRICT=1`
+turns a model/MANIFEST mismatch from a startup warning into an error.
 
+Every run writes a session report (rates, pass timings, worker states)
+as JSON under `<save-dir>/session-reports/`, updated every 15 s and on
+exit.
 
 ## How it works
 
-The pipeline has four steps per frame. The camera delivers the frame. A detector finds the sheet and returns the four corners. The homography rectifies the sheet to the top view, at 850 by 1200 px. The ink step separates the stroke from the paper in this view and updates the digital canvas.
+Per frame: the camera delivers a frame; a detector finds the sheet and
+returns its four corners; a homography rectifies the page to a top view
+of 850 × 1200 px; the ink stage separates stroke from paper in that
+view and updates the digital canvas. Detection and ink run on worker
+threads (latest-wins); the main loop never waits for a model pass.
 
-### Neural detection
+### Sheet detection
 
-The primary detector is a SegFormer-B0 exported to ONNX. It returns two outputs. A presence logit says whether there is paper in the scene. A mask says where the paper is. The sheet's quadrilateral comes from the largest contour of the mask, with an epsilon ladder, refitting each edge as a line, and subpixel refinement at the corners. An edge memory keeps the last reliable line of each side. When the hand covers an edge, the inherited line holds the corner in place instead of projecting the arm's border.
+The primary detector is a SegFormer-B0 exported to ONNX, run at
+384 × 384. It emits a presence logit and a paper mask; the sheet
+quadrilateral comes from the mask's largest contour, with each edge
+refit as a line and subpixel corner refinement. An edge memory holds
+the last reliable line of each side, so a hand covering an edge does
+not move the corner. A classic OpenCV detector (geometry candidates
+plus a texture gate) is the per-frame fallback when the model sees no
+sheet, and remains the detector on a clone without the models.
 
-When the model sees no sheet in the frame, the classic detector takes over that frame. When the model sees a sheet and the quadrilateral fitting fails, the mask's minimum-area rectangle enters as a fallback.
+### Ink
 
-The dynamic ONNX accepts any input resolution. The app runs this file at 384 by 384. The original ONNX, of fixed format, imposes its own 512 by 512. The performance section brings the numbers of this trade-off.
+The default ink model is a lightweight U-Net (122 K parameters) that
+maps the rectified page to an ink probability map in 256 × 256 tiles,
+separating stroke from ruling, paper texture, and shadow. New ink
+appears immediately as a provisional layer; the confirmed canvas is
+what a multi-pass vote ratifies, with a frontier gate that keeps
+sub-threshold borders from accumulating into strokes no single pass
+saw. Only real change moves the canvas: when the page is settled and
+nothing is being drawn, the ink worker rests at zero passes — moving
+the notebook re-registers geometry without touching the drawing.
 
-### Classic detection
+Hand presence comes from MediaPipe landmarks, sampled asynchronously:
+the region under the hand is treated as unknown (it neither gains nor
+loses ink), and a still hand does not keep the ink worker awake.
 
-The classic detector is computer vision in OpenCV, in two steps.
+### Fallbacks
 
-The first step proposes candidates by geometry. The frame passes through Canny and the full contour tree. A contour becomes a candidate when it closes a convex quadrilateral, with an area of at least 12% of the frame and an aspect ratio between 0.4 and 2.5. The polygon approximation uses an epsilon ladder from 0.01 to 0.05, because rounded corners and a notebook's spine do not close on a single epsilon. The accepted corners gain subpixel refinement. In the app loop, detection runs spaced out and the corners go through temporal stabilization.
+Without the model files, Draw still runs: classic sheet detection and
+the legacy ink stack. That mode exists so a fresh clone is never a
+dead end; it is not the product path, and startup says which mode is
+active.
 
-The second step is a texture gate. It measures the shrunken interior of each candidate and returns one of three verdicts.
+## Performance
 
-- `paper` when the interior looks like paper
-- `blank_maybe` when the candidate is white enough, but too smooth to assert paper
-- rejected when the candidate is not even white enough
+Measured on the author's machine (Ryzen 7 7700X, no GPU), live
+sessions, November 2026:
 
-The gate measures the white fraction, the internal edge density, and the Laplacian variance. A candidate becomes `paper` when the white fraction passes 0.5, the Laplacian variance passes 30, and one of two texture conditions holds. The edge density needs at least 0.03, or the Laplacian variance needs at least 200. A failed candidate does not end the search. The next contour may still be the sheet.
+| Stage | Cost |
+|---|---|
+| Sheet detection (ONNX, 384 × 384, 3 threads) | ~42 ms per pass |
+| Ink pass (full page, 4 threads) | ~105 ms per pass |
+| Main loop | ~12 fps (camera-bound: the webcam delivers 13–21 fps) |
+| Total CPU while drawing, with the combined thread caps | ~290% |
 
-A `blank_maybe` candidate receives harsher treatment in the app. It needs twice as many consistent detections to lock, 6 instead of 3. While the lock comes from this verdict, the screen shows the low-confidence warning.
+The thread caps (detector 3, ink 4, OpenCV 4) are defaults chosen by
+measurement: uncapped pools reached ~550% CPU while drawing for the
+same pass times.
 
-The gate exists because of a measured history. The geometry-only version accepted any large convex quadrilateral. In an audit with 10 scenes with no paper at all, it fired on 6. A desk mat, a cardboard box, a monitor, and a white tray became a sheet. The texture gate cut these cases in the measured scenes, with no model at all. The current thresholds are laboratory calibration and need to be redone with real captures.
+## Models and training
 
-### Ink and canvas
+All training runs on Kaggle (GPU). The author's real desk frames live
+in private datasets and never enter this repository.
 
-The default ink path is the page→clean model: a lightweight U-Net (`models/page_clean_unet.onnx`, the w8 model) that takes the rectified sheet and returns the ink mask, separating the stroke from the ruling, the paper texture, and shadow. The binary is distributed via the `models-2026-11-02` Release and registered in `models/MANIFEST.json`; a fresh clone downloads it with `python tools/fetch_models.py`. The model runs on its own thread. New ink first appears as a provisional layer, lighter and on screen only; the confirmed canvas is the union of the masks that the vote across passes confirms, and it is what feeds the cursor and the snapshots. The w8 is the current model, not the ceiling: approved by the lab replay ruler, it remains provisional until a better candidate passes the same ruler and the live test on the author's desk.
+- The sheet detector is trained by `training/train.py`, driven on
+  Kaggle by `notebooks/train_segformer_kaggle.ipynb`, from public
+  document datasets (MIDV-2020, SmartDoc, school-notebooks) plus the
+  author's labeled desk frames.
+- A model is judged before it is promoted: the gate is the sealed real
+  replay and the live desk test, never a synthetic score alone.
+  `tools/eval_real_frames.py` is the entry point for judging a
+  sheet-detector candidate.
+- `draw/selflearn/` holds the offline learning loop (session
+  collection, selection, teacher, promotion gate) that prepares
+  training rounds between sessions. The app itself only infers;
+  nothing trains at runtime.
 
-Without the model file, or if loading it fails, the app warns pointing to the fetch and falls back to the old ink stack — the same path as the `--legacy-ink` flag. The following paragraphs describe that stack.
+## Repository layout
 
-An adaptive threshold separates the ink from the paper on the rectified sheet. A separable veto runs alongside. A pixel only becomes ink when it is at least 6 levels below the medians of its entire row and column. The veto kills the notebook's ruling and the paper's texture, which the threshold alone marked as ink.
-
-The old-stack canvas is not a photo of the current frame. It accumulates evidence with hysteresis over a 15-frame window. A pixel enters ink with a visible-sample fraction of 0.45 and leaves with 0.20, with a minimum of 4 visible samples. The stroke survives the hand passing over it. The eraser also works through this path. Erased ink disappears from the canvas after enough visible clean samples, not on the following frame.
-
-With the hand mask on, the region under the hand becomes unknown. It neither gains nor loses ink while it is covered.
-
-The `--ink-model` flag injects a custom ONNX into the old stack; without it, the path described above applies.
-
-## Measured performance
-
-Numbers measured on 2026-10-29 on the author's Ryzen 7 7700X, with the app's full pipeline over real frames. Medians per frame.
-
-| Configuration | Time per frame | Rate |
-|---|---|---|
-| Standard ONNX Runtime session, fixed model at 512 | 212.8 ms | 4.7 fps |
-| 4 intra-op threads, fixed model at 512 | 183.5 ms | 5.4 fps |
-| 4 intra-op threads, dynamic model at 384 | 127.2 ms | 7.9 fps |
-
-The session alone explains almost everything. On the ONNX Runtime default, `session.run` marked 248 ms on the same tensor. With 4 threads, it marks 122 ms at 512 and 58.3 ms at 384. With 16 threads, it worsens to 210 ms. Dynamic INT8 was measured and rejected. Its quality held, but the time rose to 366 ms, three times the FP32 of this machine.
-
-The resolution trade-off cost little in quality. On the 49 harness frames, the mask at 384 has a mean IoU of 0.984 against the mask at 512. No presence verdict changed on the positives. The three frames of a white box on the desk, which at 512 were a weak false positive, at 384 became negative.
-
-## Detector training
-
-All training runs on Kaggle, on GPU. The author's real frames stay in private datasets and never enter this repository.
-
-The v3 mixture combines four sources. MIDV-2020 photos brings 1,000 real photos of documents with annotated corners. SmartDoc 2015 brings 24,889 frames with ground truth. The school-notebooks-RU dataset brings notebook pages. The author's 49 desk frames enter with a presence label for all of them and hand-drawn polygons for 11 of them.
-
-The classic detector was once the planned teacher for labeling the frames. On the 49 real frames it labeled zero, because the notebook leaves cropped by the frame's top edge and the four corners never appear together. Human ground truth replaced the teacher.
-
-The harness `tools/eval_real_frames.py` is the gate for any new model. No model enters the app without passing it. v3 marks presence on 43 of 43 positives and 0 false positives on the 6 negatives. On the 11 annotations, the mask IoU is 0.962 on average and 0.841 at minimum at 512. In the production configuration, at 384, presence is 49 of 49 and the IoU is 0.959 on average and 0.851 at minimum.
-
-The v3 kernel took 44.7 minutes on a T4. The v2 kernel took 3 hours and 51 minutes. The difference did not come from smaller data. It came from an async pipeline with workers, mixed precision, batch 16, and a 20-epoch schedule with stopping by ruler, instead of 40 fixed epochs.
-
-## Known limits
-
-- A totally blank and smooth sheet measures the same as any white and smooth rectangle, like a white tray. No interior statistic separates the two cases for the classic detector. What separates them is learned object identity, and that is why the neural one is the primary.
-- v3 has never been judged on another person's desk. The external test set is the missing ruler for calling the detector general.
-- The Windows capture bridge in `bridge/` has never been tested on a real machine.
-- A fine stroke of 1 to 3 px suffers from rectification jitter. The measured mean is 5.4 px per sample in the author's replay. The accumulative canvas reduces the damage, but does not eliminate the cause.
-
-## Architecture
-
-- `draw/` is the main package. `app.py` has the webcam loop and the camera validations. `view.py` has the window composition (camera and canvas side by side) and the warning frames. `paper.py` has the classic detection, the texture gate, and the homography. `neural.py` has the neural detector via ONNX, with presence, mask, and quadrilateral. `page_clean.py` has the ink via the page→clean model. `ink.py` has the ink heuristic and the accumulative canvas. `hand.py` has the MediaPipe hand mask. `fusion.py` has the pen-tip fusion (prototype with a tested contract; the app does not use it yet). `manifest.py` checks the sha256 of the models against `models/MANIFEST.json`. `config.py` keeps the size of the rectified sheet and the marker data. `selflearn/` has the cross-session learning loop (session collection, monitor, selection, teacher, train and holdout split by session, and the promotion gate). The extractor of the learned ink model (`ink_model.py`) is not in this repository: its path is behind `--ink-model`.
-- `template/` has the generator of the printable template sheet, used only by the `--markers` mode. The generated PNG does not enter versioning.
-- `bridge/` has the Windows capture bridge. An `ffmpeg.exe` on Windows serves the webcam as an MJPEG stream and Draw consumes it via `--source`. The step by step is in [bridge/README.md](bridge/README.md).
-- `scripts/` has the installation scripts. Today it keeps `setup_camera_wsl.sh`, the WSL camera installer.
-- `tests/` has the webcam-free tests: `selftest.py` validates detection, homography, ink extraction, and the texture gate on synthetic scenes; the `test_*.py` files cover the ONNX adapter (with truly tiny models), the ink, `page_clean`, the manifest, the view composition, and the app's session state. `pytest` runs everything.
-- `tools/` has the support tools, like plain operator scripts called by path. `label_frames.py` labels captured frames. `eval_real_frames.py` is the real-frame harness, the gate for any neural model. `cadence_fusion.py` is the cadence bench for tip fusion. The families with internal imports group in `tools/runner/` (experiment cycle) and `tools/selflearn/` (training round, gate judge, and loop latency measurement).
-- `training/` and `notebooks/` are the detector's training route: `training/train.py` is the trainer and the notebook is the Kaggle kernel that runs it with `training/` as input.
-- `models/` keeps the integrity record of the binaries in `MANIFEST.json`. A local model (`.onnx`) does not enter versioning.
-- `verification/` is the record of the limited formal verification of v0. It keeps the project's skill and the script that proves homography properties with numeric probes. It is a historical record of a completed step, not a pipeline step.
-- `docs/` has the installation (the Windows guide with WSL) and the archive of documents from completed eras (`docs/archive/`, with its own index: the 2026-10-31 audit and analysis, the v1 segmentation era, and the 2026-10-30 night summary).
-- `main.py` is the entry point. It only calls the app.
-- `VISION.md` is the project's vision document.
-
-What no longer lives here: the documents from completed eras left `docs/` for `docs/archive/`; the cadence bench left `tests/` (where the name pretended to be a test) for `tools/`; and one-batch fix scripts were removed, with the history preserved in git.
+- `draw/` — the application: `app.py` (main loop, camera), `neural.py`
+  (sheet detector), `paper.py` (classic detector and homography),
+  `page_clean.py` (ink model), `ink.py` (legacy ink stack),
+  `hand.py` (hand tracking), `view.py` (window composition),
+  `session_report.py`, `telemetry.py`, `manifest.py`, `config.py`,
+  and `selflearn/` (offline learning loop).
+- `models/` — `MANIFEST.json`, the integrity record of the model
+  binaries. Binaries themselves are Release assets, not git content.
+- `tools/` — operator tools: `fetch_models.py`, `eval_real_frames.py`,
+  `label_frames.py`, `judge.py`, and the experiment runner in
+  `tools/runner/`.
+- `training/`, `notebooks/` — the detector training route (Kaggle).
+- `scripts/` — `setup_camera_wsl.sh`, the WSL camera installer.
+- `template/` — generator of the printed sheet used by `--markers`.
+- `bridge/` — the Windows helper protocol (`PROTOCOL.md`,
+  `windows_helper.py`; receiver in `tools/helper_receiver.py`).
+  Experimental; the app does not use it yet.
+- `tests/` — the webcam-free suite. `pytest` runs everything,
+  including `tools/runner/tests/`.
+- `site/` — the project website (React/TypeScript). Its design rules
+  are in `design.md` and `AGENTS.md`.
+- `docs/` — [docs/SETUP_WINDOWS.md](docs/SETUP_WINDOWS.md), the only
+  living document besides this README and [VISION.md](VISION.md).
 
 ## Development
 
-Without a webcam nearby, the entire pipeline validates with synthetic scenes.
-
 ```bash
 pip install -r requirements-dev.txt   # pytest, ruff, onnx (fixtures)
-pytest                                 # entire suite, ~6 s
-python tests/selftest.py
+pytest                                 # full suite
+python tests/selftest.py               # synthetic-scene pipeline check
 ```
 
-The selftest runs the marker, markerless, nested-sheet, and texture-gate cases. It prints the maximum corner error and the ink recall of each case. All must pass before any publication.
+CI (`.github/workflows/tests.yml`) runs ruff, the suite, and the
+selftest on Python 3.11 and 3.12.
 
-The limited formal verification runs with the command below.
+## Limitations
 
-```bash
-python verification/run_verification.py
-```
-
-To label captured frames:
-
-```bash
-python tools/label_frames.py captures/frames dataset/rotulos
-```
-
-The output is a `labels.json` with the labeled and rejected frames. Each labeled frame gains a review image in the `overlays` subfolder. The source frames are never modified.
+- Generalization is unproven: no sealed test set from other setups
+  exists yet, so today's numbers describe one desk, one camera, one
+  light.
+- Fine strokes (1–3 px) are the first casualty of rectification
+  jitter; the confirmed canvas reduces the damage but does not remove
+  the cause.
+- To the classic fallback detector, a blank smooth sheet is
+  indistinguishable from any white smooth rectangle. The neural
+  detector is what separates them, which is why it is the default.
 
 ## Roadmap
 
-Done:
+Done: real-time markerless capture on any sheet or notebook page;
+neural sheet detection; page-clean ink with a confirmed canvas that
+only moves on real change; hand-aware ink; combined thread caps and
+the current performance work; session reports.
 
-- Real-time capture, with a rectified sheet, extracted ink, and a live digital canvas
-- Flexible video source, by local index or by stream URL
-- Windows camera attached to WSL by the installation script
-- Camera diagnosis port by port with `--check`
-- Markerless detection as the default mode
-- Texture gate with a low-confidence verdict for a smooth sheet
-- Paper segmentation trained on Kaggle, with a presence signal, in versions v1, v2, and v3
-- Real document datasets and the author's desk frames in training
-- Accumulative canvas with hysteresis and an optional hand mask
-- Performance package with pinned threads and a dynamic model at 384
+In progress: the external test set for generalization; ink quality —
+a three-class ink/print model that separates handwriting from printed
+content on the page.
 
-In progress:
-
-- External test set, with frames from other setups, to judge the generalization of v3
-- Stroke phase, with live fidelity already measured and the cursor bridge to Windows under construction
-- Learned ink model, with the formulation closed and the synthetic dataset being assembled
-
-Planned:
-
-- Vector stroke, with order, path, and smoothing of the strokes
-- Interpretation of shapes, letters, and diagrams
-- Integration with a first target system, CAD or simulator
-- Real-time simulation feedback
+Planned: vector strokes (order, path, smoothing); interpretation of
+shapes, letters, and diagrams; integration with a first target system
+(CAD or simulator); real-time simulation feedback. See
+[VISION.md](VISION.md).

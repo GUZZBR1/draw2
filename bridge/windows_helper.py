@@ -26,7 +26,7 @@ Duas metades:
    captura DirectShow/MSMF e a codificação JPEG são STUBS
    comentados: exigem uma sessão real no Windows para escolher e
    conferir a API (MSMF via ctypes é verbosa; uma rota interim é
-   reusar o ffmpeg do capture_windows.bat como fonte de frames e
+   reusar um ffmpeg no Windows como fonte de frames e
    carimbar na entrega, o que mede a latência da entrega, não a
    da exposição; a diferença precisa ser declarada quando o passo
    0 rodar).
@@ -234,8 +234,8 @@ def capture_frames():
     time.perf_counter_ns() // 1000 (monotonico, epoca = inicio do
     processo), como manda o PROTOCOL.md.
 
-    Rota interim possivel: ler o MJPEG do ffmpeg do
-    capture_windows.bat e carimbar na leitura. Mais simples, mas o
+    Rota interim possivel: ler o MJPEG de um ffmpeg no
+    Windows e carimbar na leitura. Mais simples, mas o
     carimbo mede a entrega do ffmpeg, nao a exposicao; se o passo 0
     usar essa rota, a ressalva entra no relatorio da medida.
     """

@@ -1,10 +1,9 @@
 """Telemetria por etapa do _PageCleanWorker (U0 do loop v2).
 
-A auditoria de latencia (docs/AUDITORIA_LATENCIA.md) precisa de
-carimbos submit -> inicio da passada -> fim da passada ->
-publicacao, sem mudar comportamento. Estes testes pinam o
-contrato da telemetria: contadores de submit/substituicao e
-duracoes derivadas coerentes por passada.
+A telemetria precisa de carimbos submit -> inicio da passada ->
+fim da passada -> publicacao, sem mudar comportamento. Estes
+testes pinam o contrato da telemetria: contadores de
+submit/substituicao e duracoes derivadas coerentes por passada.
 """
 
 import sys

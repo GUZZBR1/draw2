@@ -10,10 +10,9 @@ the helper sketch, in [`windows_helper.py`](windows_helper.py).
 Today the camera enters WSL via usbipd, and this route is fragile: the
 Windows audio services (Audiosrv and AudioEndpointBuilder)
 hold the camera's microphone function and attachment fails with
-`Device busy`. The current ffmpeg bridge in this folder
-([`capture_windows.bat`](capture_windows.bat)) solves capture, but
-delivers an MJPEG stream over HTTP without frame identity and without
-a timestamp: WSL receives images, not dated frames.
+`Device busy`. An MJPEG stream over HTTP (ffmpeg on Windows serving the
+camera) solves capture, but delivers images without frame identity
+and without a timestamp: WSL receives pictures, not dated frames.
 
 The approved design swaps both routes for a helper resident on
 Windows that captures via DirectShow/MSMF, timestamps each frame **at

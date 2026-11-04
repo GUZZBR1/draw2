@@ -11,25 +11,26 @@ Learning happens between sessions, never inside the app in real time.
 ## The loop
 
 ```
-sessao ao vivo
-  -> [0 MONITOR]  monitor.py: entropia/margem ranqueiam suspeita;
-     tinta que some entre passadas e sinal de erro; a testemunha
-     classica cruza com a rede e separa candidato a FP e a FN
-  -> [1 COLETA]   collect.py: ExampleRecorder grava warp + mapa de
-     probabilidade + linha de manifesto com sha256, sessao, modelo
-     e origem (a linhagem de cada exemplo)
-  -> [2 SELECAO]  select.py: score auditavel (desacordo TTA +
-     dispersao temporal + impureza de regiao + novidade + estrato
-     de risco), teto por sessao e cota aleatoria garantida
-  -> [3 TEACHER]  teacher.py: voto temporal (mediana das passadas
-     alinhadas) e pseudo-rotulo com veto da testemunha: tinta sem
-     escurecimento vai para ignore, nunca para fundo; escurecimento
-     que a rede nao viu tambem vai para ignore
-  -> [5 TREINO]   tools/selflearn/train_round.py: uma rodada com
-     replay integral dos rotulados em todo batch, teacher EMA
-     (decay 0.999) rotulando a vista fraca, aluno na vista forte,
-     perda supervisionada BCE+Dice + consistencia mascarada pela
-     confianca. Exporta ONNX e metrics.json
+live session
+  -> [0 MONITOR]  monitor.py: entropy/margin rank suspicion; ink
+     that vanishes between passes is an error signal; the classic
+     witness cross-checks the network and separates FP from FN
+     candidates
+  -> [1 COLLECT]  collect.py: ExampleRecorder stores warp +
+     probability map + a manifest line with sha256, session, model,
+     and origin (each example's lineage)
+  -> [2 SELECT]   select.py: auditable score (TTA disagreement +
+     temporal dispersion + region impurity + novelty + risk
+     stratum), per-session cap, and a guaranteed random quota
+  -> [3 TEACHER]  teacher.py: temporal vote (median of aligned
+     passes) and pseudo-labels with the witness's veto: ink without
+     darkening goes to ignore, never to background; darkening the
+     network missed also goes to ignore
+  -> [5 TRAIN]    tools/selflearn/train_round.py: a round with full
+     replay of the labeled examples in every batch, EMA teacher
+     (decay 0.999) labeling the weak view, student on the strong
+     view, supervised BCE+Dice loss + confidence-masked consistency.
+     Exports ONNX and metrics.json
 ```
 
 ## Modules
@@ -77,12 +78,7 @@ right gates.
   `telemetry_snapshot()` (submits, latest-wins replacements,
   submit/start/end/publication timestamps per pass) without changing
   behavior, and `tools/selflearn/measure_latency.py` measures the
-  stages over recorded warps. The audit is in
-  `docs/AUDITORIA_LATENCIA.md`: the temporal consensus of the hypothesis
-  does not run on the standard main path (the vote accumulator was
-  removed in 8b9ff45; the legacy 15-window only runs with
-  `--legacy-ink`), and the measured floor of the worker does not close the
-  2.3-3.5 s - the glass-to-ink stopwatch on the desk is missing.
+  stages over recorded warps.
 
 Loop v2 tests: `tests/test_selflearn_session.py`,
 `tests/test_selflearn_split.py`, `tests/test_selflearn_gate.py`,

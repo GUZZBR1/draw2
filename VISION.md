@@ -50,7 +50,7 @@ something real:
 
 | Layer | What it does | Status |
 |---|---|---|
-| 1. Capture | Webcam → rectified sheet → digital ink in real time (the "digitizing table without a table") | **v0 — under construction** |
+| 1. Capture | Webcam → rectified sheet → digital ink in real time (the "digitizing table without a table") | **working — in daily use; current work is generalization and ink quality** |
 | 2. Interpretation | Raw stroke → primitives and objects with meaning, scale, and parameters | future |
 | 3. Integration | Model → AutoCAD, Isaac Sim/Lab and other simulators | future |
 | 4. Feedback | Simulation (materials, physics, collision) returning results in real time to the person drawing | future |
@@ -63,4 +63,7 @@ faithful digital stroke, in real time — including erasing with the
 eraser and continuing to draw. Without reliable capture, there is no
 interpretation; without interpretation, there is no simulation.
 
-It is this barrier that v0 tackles.
+That barrier is the one this repository implements today. Capture works
+on the author's desk; proving it works on any desk — other cameras,
+lights, and papers — is the current frontier of layer 1, and the gate
+for everything above it.

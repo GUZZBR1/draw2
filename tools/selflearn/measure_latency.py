@@ -11,9 +11,8 @@ que sobra medido e fila + cadencia, sem o custo do modelo. Com
 Para cada warp, submete e espera a publicacao daquela versao,
 depois le worker.telemetry_snapshot(). Imprime mediana e p90 de
 queue_wait_s (submit->inicio da passada, inclui a cadencia de
-250 ms), pass_s (o modelo) e submit_to_publish_s. E a regua da
-auditoria em docs/AUDITORIA_LATENCIA.md: numero desta maquina,
-nao da mesa de ninguem.
+250 ms), pass_s (o modelo) e submit_to_publish_s. E a regua de
+latencia por etapa: numero desta maquina, nao da mesa de ninguem.
 """
 
 import argparse

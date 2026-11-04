@@ -1302,12 +1302,11 @@ class _PageCleanWorker:
         # _HAND_REST_STILL_SECONDS. None = nenhum movimento
         # reportado ainda — nao conta como parada.
         self._hand_motion_at = None
-        # Telemetria por etapa (auditoria de latencia, U0 do loop
-        # v2): contadores e os carimbos das ultimas passadas, para
-        # medir onde o tempo submit->publicacao mora sem mudar
-        # comportamento nenhum. Quem le usa telemetry_snapshot();
-        # quem escreve e o submit (laco) e a trabalhadora, sempre
-        # sob a Condition. Ver docs/AUDITORIA_LATENCIA.md.
+        # Telemetria por etapa (U0 do loop v2): contadores e os
+        # carimbos das ultimas passadas, para medir onde o tempo
+        # submit->publicacao mora sem mudar comportamento nenhum.
+        # Quem le usa telemetry_snapshot(); quem escreve e o submit
+        # (laco) e a trabalhadora, sempre sob a Condition.
         self._telemetry_submits = 0
         self._telemetry_replaced = 0
         self._telemetry_passes = 0
