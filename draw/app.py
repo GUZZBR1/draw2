@@ -387,6 +387,58 @@ class _SheetTracker:
         return event
 
 
+# Tracking optico dos cantos para EXIBICAO (pesquisa de
+# performance de 2026-11-03, T9): entre deteccoes, o quad exibido
+# ficava congelado no ultimo quad confirmado enquanto a camera e
+# a folha se movem de verdade — a folha "nadava" contra o
+# contorno. Propagar os 4 cantos por Lucas-Kanade com checagem
+# ida-e-volta custa ~nada (4 pontos) e mantem o contorno colado.
+# Validacao offline em clips SmartDoc contra o detector: erro
+# mediano de canto de 2,0-2,8 px apos 7-11 passos de propagacao,
+# abaixo do passo quadro-a-quadro do proprio detector (~5,4 px);
+# a checagem ida-e-volta rejeitou 1 de 5 segmentos (movimento
+# rapido), e a rejeicao cai para o quad confirmado — o
+# comportamento anterior. CONTRATO: o resultado alimenta so o
+# desenho do contorno e o warp de exibicao legado; a geometria
+# da tinta segue lendo tracker.corners (confirmado), nunca o
+# propagado — mover o caderno nao move o desenho.
+_LK_MAX_STEP_PX = 80.0
+_LK_MAX_FB_ERROR_PX = 1.5
+
+
+def _lk_track_corners(prev_gray, next_gray, corners):
+    """Cantos propagados por LK, ou None se a propagacao nao e
+    confiavel (ponto perdido, ida-e-volta inconsistente ou salto
+    maior que _LK_MAX_STEP_PX)."""
+    points = np.asarray(corners, dtype=np.float32).reshape(-1, 1, 2)
+    criteria = (
+        cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01
+    )
+    # Janela 31x31 e piramide de 2 niveis: com 21x21 e 3 niveis, a
+    # volta da checagem divergia em janelas de textura repetitiva
+    # mesmo com a ida perfeita (medido no teste sintetico denso e
+    # na taxa de rejeicao da validacao em video real).
+    tracked, status, _err = cv2.calcOpticalFlowPyrLK(
+        prev_gray, next_gray, points, None,
+        winSize=(31, 31), maxLevel=2, criteria=criteria,
+    )
+    if tracked is None or not np.all(status == 1):
+        return None
+    back, status_back, _err_b = cv2.calcOpticalFlowPyrLK(
+        next_gray, prev_gray, tracked, None,
+        winSize=(31, 31), maxLevel=2, criteria=criteria,
+    )
+    if back is None or not np.all(status_back == 1):
+        return None
+    fb_error = np.linalg.norm((back - points).reshape(-1, 2), axis=1)
+    if float(fb_error.max()) > _LK_MAX_FB_ERROR_PX:
+        return None
+    step = np.linalg.norm((tracked - points).reshape(-1, 2), axis=1)
+    if float(step.max()) > _LK_MAX_STEP_PX:
+        return None
+    return tracked.reshape(-1, 2)
+
+
 class _LatestFrameCapture:
     """Captura em thread separada que guarda so o quadro mais novo.
 
@@ -782,7 +834,7 @@ class _MediaPipeHandPresence:
         present, _moved = self.sample(frame)
         return present
 
-    def sample(self, frame):
+    def sample(self, frame, timestamp_ms=None):
         # Caminho preferido: a assinatura direto dos marcos
         # (HandMasker.presence_signature), sem construir nem
         # dilatar a mascara 720p que so servia para contar pixels
@@ -798,7 +850,12 @@ class _MediaPipeHandPresence:
         # nunca tinta perdida).
         signature_fn = getattr(self._masker, "presence_signature", None)
         if callable(signature_fn):
-            signature = signature_fn(frame)
+            try:
+                signature = signature_fn(frame, timestamp_ms)
+            except TypeError:
+                # Maskers antigos (e os falsos dos testes) so
+                # aceitam o frame: o carimbo e opcional por desenho.
+                signature = signature_fn(frame)
             if signature is None:
                 self._signature = None
                 return None, False
@@ -843,6 +900,91 @@ def _make_hand_presence(model_path):
     if not hand_module.hand_model_available(model_path):
         return None
     return _MediaPipeHandPresence(hand_module.HandMasker(model_path))
+
+
+class _HandPresenceWorker:
+    """Presenca de mao em thread propria, latest-wins (T4).
+
+    A amostragem MediaPipe rodava SINCRONA no laco principal a
+    cada resultado de deteccao: era custo de laço, teto de fps
+    (pesquisa de performance de 2026-11-03). Aqui o laco so
+    SUBMETE o frame (com o carimbo de captura, que alimenta o
+    modo VIDEO do landmarker) e COLHE o resultado mais novo por
+    poll, como ja faz com a deteccao de folha. O sinal entregue e
+    o mesmo (presenca, moveu) na mesma cadencia de submissao —
+    quem muda e onde o custo roda e o atraso de ate um ciclo de
+    amostragem ate o set_hand_presence, irrelevante frente a
+    cadencia de 250 ms da tinta e a janela de quietude de 1 s.
+    """
+
+    def __init__(self, presence):
+        self._presence = presence
+        self._condition = threading.Condition()
+        self._thread = threading.Thread(
+            target=self._work, name="draw-hand-presence", daemon=True
+        )
+        self._pending = None
+        self._result = None
+        self._result_seq = 0
+        self._stopped = False
+        self._error = None
+
+    def start(self):
+        self._thread.start()
+        return self
+
+    def submit(self, frame, timestamp_ms):
+        with self._condition:
+            if self._stopped:
+                return
+            self._pending = (frame, timestamp_ms)
+            self._condition.notify_all()
+
+    def poll(self, after_seq):
+        """(seq, presenca, moveu) mais novo que after_seq, ou None."""
+        with self._condition:
+            if self._result is None or self._result[0] <= after_seq:
+                return None
+            return self._result
+
+    def _work(self):
+        while True:
+            with self._condition:
+                self._condition.wait_for(
+                    lambda: self._pending is not None or self._stopped
+                )
+                if self._stopped:
+                    return
+                frame, timestamp_ms = self._pending
+                self._pending = None
+            try:
+                present, moved = self._presence.sample(
+                    frame, timestamp_ms
+                )
+            except Exception as error:  # noqa: BLE001 - vai para o laco
+                with self._condition:
+                    self._error = error
+                    self._stopped = True
+                    self._condition.notify_all()
+                return
+            with self._condition:
+                if self._stopped:
+                    return
+                self._result_seq += 1
+                self._result = (self._result_seq, present, moved)
+                self._condition.notify_all()
+
+    @property
+    def error(self):
+        """A excecao que matou a thread, ou None."""
+        with self._condition:
+            return self._error
+
+    def stop(self):
+        with self._condition:
+            self._stopped = True
+            self._condition.notify_all()
+        self._thread.join(timeout=2.0)
 
 
 # Cadencia maxima da tinta: uma passada completa a cada ~250 ms.
@@ -2143,6 +2285,8 @@ def run(
 
     clean_hand_presence = None
     clean_hand_present = None
+    hand_presence_worker = None
+    hand_presence_seq = 0
     if page_clean is not None and not markers_mode:
         clean_hand_presence = _make_hand_presence(hand_model)
         if clean_hand_presence is not None:
@@ -2152,6 +2296,10 @@ def run(
                 "confirmada assentar, descansa sem passadas e a "
                 "geometria da tinta congela."
             )
+            # Amostragem fora do laco (T4): o laco submete e colhe.
+            hand_presence_worker = _HandPresenceWorker(
+                clean_hand_presence
+            ).start()
 
     def detect_sheet(frame):
         return _detect_sheet_combined(frame, neural_detector)
@@ -2323,6 +2471,8 @@ def run(
     last_seq = 0
     last_det_seq = 0
     last_view = None
+    display_corners = None
+    display_gray = None
     try:
         while True:
             item = frame_source.wait_next(last_seq)
@@ -2426,14 +2576,79 @@ def run(
                 tel_sheet_present = sheet_present
                 warped = None
 
-                if ran_detection and tracker.corners is not None:
-                    if clean_hand_presence is not None:
+                # Presenca de mao assincrona (T4): colhe o
+                # resultado mais novo da trabalhadora (o estado
+                # clean_hand_present que o congelamento de
+                # geometria le abaixo) e alimenta a porta da
+                # tinta. O atraso e de ate um ciclo de amostragem
+                # frente ao desenho sincrono antigo — irrelevante
+                # na cadencia de 250 ms da tinta e na janela de
+                # quietude de 1 s da mao.
+                if hand_presence_worker is not None:
+                    if hand_presence_worker.error is not None:
+                        # Presenca morta degrada para "sem sinal":
+                        # a cadencia trata None como ativo e o app
+                        # segue como antes da porta existir.
+                        print(
+                            "Aviso: a presenca de mao falhou e foi "
+                            "desligada: "
+                            f"{hand_presence_worker.error}. A tinta "
+                            "segue na cadencia normal."
+                        )
+                        hand_presence_worker = None
+                        clean_hand_present = None
+                        if ink_worker is not None:
+                            ink_worker.set_hand_presence(None)
+                    hp_result = (
+                        hand_presence_worker.poll(hand_presence_seq)
+                        if hand_presence_worker is not None
+                        else None
+                    )
+                    if hp_result is not None:
                         (
+                            hand_presence_seq,
                             clean_hand_present,
                             clean_hand_moved,
-                        ) = clean_hand_presence.sample(frame)
-                        ink_worker.set_hand_presence(
-                            clean_hand_present, moved=clean_hand_moved
+                        ) = hp_result
+                        if ink_worker is not None:
+                            ink_worker.set_hand_presence(
+                                clean_hand_present,
+                                moved=clean_hand_moved,
+                            )
+                # Quad de EXIBICAO (T9): em quadro com resultado de
+                # deteccao, o exibido e o confirmado; nos demais,
+                # propaga por LK sobre o cinza anterior. Falha de
+                # propagacao volta ao confirmado. So exibicao: a
+                # tinta nunca le este quad.
+                if tracker.corners is None:
+                    display_corners = None
+                    display_gray = None
+                else:
+                    gray_now = cv2.cvtColor(
+                        frame, cv2.COLOR_BGR2GRAY
+                    )
+                    if (
+                        ran_detection
+                        or display_corners is None
+                        or display_gray is None
+                    ):
+                        display_corners = tracker.corners.copy()
+                    else:
+                        tracked_display = _lk_track_corners(
+                            display_gray, gray_now, display_corners
+                        )
+                        display_corners = (
+                            tracked_display
+                            if tracked_display is not None
+                            else tracker.corners.copy()
+                        )
+                    display_gray = gray_now
+                if ran_detection and tracker.corners is not None:
+                    if hand_presence_worker is not None:
+                        # Submete com o carimbo de captura: e ele
+                        # que alimenta o modo VIDEO do landmarker.
+                        hand_presence_worker.submit(
+                            frame, frame_capture_ms
                         )
                     if not ink_session_open:
                         # Folha nova na cena: canvas e geometria recomecam.
@@ -2626,9 +2841,14 @@ def run(
                 for (x, y) in markers.values():
                     cv2.circle(status, (int(x), int(y)), 8, (0, 255, 0), -1)
             elif tracker.corners is not None:
-                outline = tracker.corners.astype(np.int32).reshape((-1, 1, 2))
+                view_corners = (
+                    display_corners
+                    if display_corners is not None
+                    else tracker.corners
+                )
+                outline = view_corners.astype(np.int32).reshape((-1, 1, 2))
                 cv2.polylines(status, [outline], True, (0, 255, 0), 2)
-                for x, y in tracker.corners:
+                for x, y in view_corners:
                     cv2.circle(status, (int(x), int(y)), 8, (0, 255, 0), -1)
             if not sheet_present:
                 if markers_mode:
@@ -2699,7 +2919,12 @@ def run(
                     canvas = _blank_sheet()
                 else:
                     ink_mask = ink_source(
-                        paper_module.warp_sheet(frame, tracker.corners)
+                        paper_module.warp_sheet(
+                            frame,
+                            display_corners
+                            if display_corners is not None
+                            else tracker.corners,
+                        )
                     )
                     canvas = ink_module.render_canvas(
                         ink_mask, out=view_canvas_buffer
@@ -2742,6 +2967,8 @@ def run(
         frame_source.stop()
         if detection_worker is not None:
             detection_worker.stop()
+        if hand_presence_worker is not None:
+            hand_presence_worker.stop()
         if ink_worker is not None:
             ink_worker.stop()
         if session_recorder is not None:
