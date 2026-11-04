@@ -19,8 +19,8 @@ Draw is a bridge from a person’s paper sketch to digital tools that can interp
 ## Typography
 
 - Sans: Manrope, with the existing system fallbacks. Use it for headlines, body copy, and interface labels where a clean reading voice is needed.
-- Mono: DM Mono, with the existing system fallbacks. Use it for navigation, metadata, and small status labels.
-- Serif italics are reserved for short editorial accents already present in the Vision and Product headlines. Do not apply italics or bold to whole paragraphs.
+- Mono: DM Mono, with the existing system fallbacks. Use it for navigation, metadata, small status labels, and the Vision page's editorial text.
+- Serif italics are reserved for the short editorial accent in the Product headline. Do not apply italics or bold to whole paragraphs.
 - Definition card: a restrained medium-weight sans title; small mono part-of-speech label; readable, regular-weight sans definition; muted secondary line. Italicize only the part-of-speech word.
 - Do not add a new font family without updating this system and getting an explicit design reason.
 
@@ -45,7 +45,7 @@ Draw is a bridge from a person’s paper sketch to digital tools that can interp
 
 - Home places a still archive of consequential human drawings around the centered Draw wordmark. Keep the artifacts static, make each one link to its primary or archival source, and preserve room around the wordmark. Add a small webcam SVG perched on the final “w”; fade it as the wordmark settles into the compact header. Hovering or focusing the webcam opens a matching glass card that explains its role in live capture. Place that card to the wordmark’s right on desktop and below it on narrow screens, clear of the page scrubber. Keep the webcam card separate from the Draw definition card. On narrow screens, move the archive below the first-screen mark.
 - Below the home archive, provide a full-viewport, edge-to-edge drawing sheet. Keep a compact floating glass toolbar for pen, eraser, color, stroke width, and one clear-all action. The sheet must remain free of cards, inset margins, and secondary action rows. Store strokes in normalized coordinates so resize does not distort them, use coalesced pointer events, and cap canvas pixel ratio to keep memory use predictable.
-- Vision is an uninterrupted editorial page: a small mono eyebrow, a large centered headline, readable centered paragraphs, and a quiet sign-off. Do not insert a dictionary card or horizontal rules into the Vision copy.
+- Vision is an uninterrupted editorial page: a large centered mono headline, readable centered mono paragraphs, and a quiet mono sign-off. A local canvas renders a Sailor Moon inspired portrait as ASCII above the headline; her eyes open on entry, blink, and wink while separate waves move through the twin tails. Taper the portrait's lower silhouette so it does not end in a rectangular crop. Type the headline and copy in one measured reading order, with the full copy immediately available to assistive technology and reduced-motion users. Do not insert a dictionary card, eyebrow, or horizontal rules into the Vision copy.
 - Product uses the shared pill style for its construction status, a centered static illustration, a clear headline, and concise explanatory copy.
 - Use whitespace for hierarchy. Keep the pages minimal and avoid adding sections or labels that were not requested.
 

@@ -463,19 +463,30 @@ a:focus-visible, button:focus-visible { outline: 2px solid #a7a071; outline-offs
 .definition-note { @apply mb-0 mt-2.5 font-sans text-[13px] leading-[1.5] text-muted; }
 
 .vision-page {
-  @apply mx-auto flex min-h-svh max-w-[1100px] flex-col items-center px-6 pb-24 pt-[136px] text-center;
+  @apply mx-auto flex min-h-svh max-w-[1100px] flex-col items-center px-6 pb-24 pt-[106px] text-center;
 }
-.page-eyebrow { @apply mb-0 font-mono text-[10px] uppercase tracking-[.1em] text-muted; }
+.vision-portrait {
+  @apply flex w-full justify-center;
+  min-height: clamp(250px, 32vw, 410px);
+  margin-bottom: 4px;
+}
+.vision-portrait-canvas { display: block; width: min(100%, 440px); height: auto; }
 .vision-headline {
-  @apply mb-0 mt-6 font-sans text-[clamp(48px,7.6vw,86px)] font-medium leading-[.98] tracking-[-.075em] text-ink;
+  @apply mb-0 mt-6 font-mono text-[clamp(32px,7.6vw,86px)] font-normal leading-[1.12] tracking-[-.055em] text-ink;
 }
+.vision-title-line {
+  display: block;
+  min-height: 1.12em;
+  white-space: pre;
+}
+.vision-title-line:first-child { min-height: 1.12em; }
 .vision-headline em, .product-headline em {
   @apply font-serif font-normal;
   letter-spacing: -.07em;
 }
-.vision-copy { @apply mt-11 grid max-w-[650px] gap-5 text-center text-[14px] leading-[1.85] text-muted sm:text-[15px]; }
-.vision-copy p { @apply mb-0; }
-.vision-signoff { @apply mb-0 mt-12 font-serif text-[19px] italic text-ink; }
+.vision-copy { @apply mt-8 grid max-w-[700px] gap-5 text-center font-mono text-[12px] leading-[1.9] text-muted sm:text-[13px]; }
+.vision-copy p { @apply mb-0; white-space: pre-wrap; }
+.vision-signoff { @apply mb-0 mt-12 font-mono text-[13px] text-ink; white-space: pre-wrap; }
 
 .product-page { @apply mx-auto flex min-h-svh max-w-[1200px] flex-col items-center px-6 pb-20 pt-[92px] text-center; }
 .product-content { @apply flex w-full max-w-[1035px] flex-col items-center; }
@@ -507,8 +518,10 @@ a:focus-visible, button:focus-visible { outline: 2px solid #a7a071; outline-offs
   .wordmark { font-size: clamp(92px, 24vw, 148px); }
   .product-label { left: calc(100% + 13px); font-size: 10px; }
   .definition-card { padding: 19px 20px 18px; border-radius: 20px; }
-  .vision-page { padding-top: 112px; }
-  .vision-copy { margin-top: 32px; }
+  .vision-page { padding-top: 100px; }
+  .vision-portrait { min-height: 250px; }
+  .vision-headline { margin-top: 0; }
+  .vision-copy { margin-top: 24px; }
   .product-page { padding-top: 84px; }
   .construction-art { margin-top: 6px; }
 }
@@ -539,4 +552,5 @@ a:focus-visible, button:focus-visible { outline: 2px solid #a7a071; outline-offs
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+  .vision-title-line, .vision-copy p, .vision-signoff { width: auto; opacity: 1; }
 }
