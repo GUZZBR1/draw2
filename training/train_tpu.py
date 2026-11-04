@@ -71,21 +71,13 @@ def _default_workdir():
     return kaggle if kaggle.is_dir() else Path.cwd() / "tpu_run"
 
 
-def _resolve_device():
-    """Device XLA ou aborto: fallback silencioso pra CPU é proibido."""
-    import torch
-    import torch_xla.core.xla_model as xm
-
-    dev = xm.xla_device()
-    assert float((torch.zeros(1, device=dev) + 1).cpu()) == 1.0
-    return dev
-
-
 def _preflight():
+    # O pai NAO importa torch_xla nem toca em device: o PJRT recusa o
+    # xmp.spawn se o runtime XLA ja foi inicializado neste processo
+    # (pjrt.run_multiprocess). A prova de device vive dentro de _mp_fn.
     import importlib
 
-    for mod in ("cv2", "numpy", "torch", "torch_xla", "transformers",
-                "albumentations"):
+    for mod in ("cv2", "numpy", "torch", "transformers", "albumentations"):
         m = importlib.import_module(mod)
         _log("MOD", mod, getattr(m, "__version__", "?"))
     try:
@@ -146,7 +138,12 @@ def _mp_fn(rank, run_cfg, data_dir, out_dir):
     import training.train as T
 
     dev = xm.xla_device()
-    world = xm.xrt_world_size()
+    assert float((torch.zeros(1, device=dev) + 1).cpu()) == 1.0
+    import torch_xla.runtime as xr
+
+    world = xr.world_size()
+    if rank == 0:
+        _log("DEV_OK", dev, "| world:", world)
     torch.manual_seed(run_cfg["seed"])
     cfg = T.load_config(str(REPO_ROOT / "training" / "config.json"))
     train_ds = T.build_dataset(data_dir, "train", cfg, augment=True)
@@ -155,6 +152,9 @@ def _mp_fn(rank, run_cfg, data_dir, out_dir):
                                  shuffle=True, seed=run_cfg["seed"])
     train_loader = DataLoader(train_ds, batch_size=run_cfg["batch_per_core"],
                               sampler=sampler, num_workers=2, drop_last=False)
+    # Seed repetido aqui: a cabeça nova nasce do RNG do torch, e todas as
+    # réplicas precisam nascer com os mesmos pesos.
+    torch.manual_seed(run_cfg["seed"])
     model = _build_model_t7(cfg, run_cfg["decoder"]).to(dev)
     tr = cfg["training"]
     opt = torch.optim.AdamW(model.parameters(), lr=run_cfg["lr"],
@@ -386,8 +386,6 @@ def main(argv=None):
     }
     _log("RUN_CFG", json.dumps(run_cfg))
     _preflight()
-    dev = _resolve_device()
-    _log("DEV_OK", dev)
 
     _ensure_data(data_dir, args.seed, args.train_count, args.val_count,
                  args.test_count)
