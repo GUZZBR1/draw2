@@ -107,6 +107,20 @@ _SHEET_BIG_JUMP_PERSIST_SECONDS = 1.0
 # queimado; reconfirmar em captura crua.
 _SHEET_JUMP_PERSIST_SECONDS = 0.3
 _SHEET_DETECT_INTERVAL = 5
+# Backoff sem folha (pesquisa de performance de 2026-11-03, T8):
+# sem folha na cena, should_detect pedia deteccao a CADA quadro —
+# ~0,5 nucleo so para confirmar que continua nao havendo folha
+# (regime S1 medido: processo a ~255% com a mesa vazia). Depois de
+# _SHEET_ABSENT_BACKOFF_CALLS chamadas seguidas sem folha (a ~12
+# fps, ~2 s), a cadencia cai para 1 a cada
+# _SHEET_ABSENT_BACKOFF_INTERVAL chamadas. A graca apos a queda e
+# parte do desenho: o contador recomeca na confirmacao e na
+# queda, entao a folha que some e volta em seguida (virada de
+# pagina) e a primeira deteccao de uma sessao seguem na cadencia
+# cheia; quem paga o backoff e so a ausencia sustentada, com
+# +ate ~3 quadros (~250 ms) na primeira deteccao.
+_SHEET_ABSENT_BACKOFF_CALLS = 24
+_SHEET_ABSENT_BACKOFF_INTERVAL = 4
 # Perda da folha medida em tempo, nao em quadros: com a contagem em
 # quadros, o mesmo limite valia ~1 s a 30 fps e ~3 s numa sessao lenta,
 # e era esse o banner que ficava sobre a mesa vazia. O piso em quadros
@@ -186,12 +200,20 @@ class _SheetTracker:
         self._frames_since_seen = 0
         self._last_seen_at = None
         self._recent = deque(maxlen=_SHEET_FILTER_WINDOW)
+        self._absent_calls = 0
 
     def should_detect(self, frame_number):
+        if self.corners is not None:
+            self._absent_calls = 0
+            return (
+                self.missed
+                or frame_number % _SHEET_DETECT_INTERVAL == 0
+            )
+        self._absent_calls += 1
+        if self._absent_calls <= _SHEET_ABSENT_BACKOFF_CALLS:
+            return True
         return (
-            self.corners is None
-            or self.missed
-            or frame_number % _SHEET_DETECT_INTERVAL == 0
+            self._absent_calls % _SHEET_ABSENT_BACKOFF_INTERVAL == 0
         )
 
     def _confirm(self, corners, verdict, now):
@@ -357,6 +379,10 @@ class _SheetTracker:
             self._frames_since_seen = 0
             self._recent.clear()
             self.missed = False
+            # Graca do backoff: a ausencia recomeca a contar da
+            # queda — folha que volta em seguida (virada) e
+            # detectada na cadencia cheia.
+            self._absent_calls = 0
             event = "drop"
         return event
 
@@ -757,6 +783,29 @@ class _MediaPipeHandPresence:
         return present
 
     def sample(self, frame):
+        # Caminho preferido: a assinatura direto dos marcos
+        # (HandMasker.presence_signature), sem construir nem
+        # dilatar a mascara 720p que so servia para contar pixels
+        # (pesquisa de performance de 2026-11-03, T3). A mascara
+        # segue como reserva para maskers sem o metodo (testes e
+        # integracoes antigas). A assinatura nova mede area do
+        # casco dos marcos e centroide dos marcos em vez de pixels
+        # da mascara dilatada: os limiares abaixo seguem com o
+        # mesmo significado (passo de centroide em px, variacao
+        # relativa de area) e a direcao conservadora se mantem —
+        # area de casco varia MAIS com a pose que a da mascara, e
+        # variacao a mais so marca movimento (menos descanso,
+        # nunca tinta perdida).
+        signature_fn = getattr(self._masker, "presence_signature", None)
+        if callable(signature_fn):
+            signature = signature_fn(frame)
+            if signature is None:
+                self._signature = None
+                return None, False
+            if signature[0] == 0:
+                self._signature = None
+                return False, False
+            return self._update_signature(tuple(signature))
         mask = self._masker.mask(frame)
         if mask is None:
             self._signature = None
@@ -767,6 +816,9 @@ class _MediaPipeHandPresence:
             return False, False
         ys, xs = np.nonzero(mask)
         signature = (area, float(xs.mean()), float(ys.mean()))
+        return self._update_signature(signature)
+
+    def _update_signature(self, signature):
         previous = self._signature
         self._signature = signature
         if previous is None:
@@ -914,6 +966,42 @@ class _LayeredInkAccumulator:
         self._retracted_ever = None
         self._low_overlap_streak = 0
         self._turn_fired = False
+        self._score_buf = None
+        self._hits_buf = None
+        self._seen_buf = None
+
+    def _window_stats(self):
+        """(soma, hits, visto-como-tinta) da janela, sem empilhar.
+
+        O caminho antigo fazia np.stack da janela (3 mapas float32
+        de pagina inteira, ~12 MB) e somava/contava/maximizava
+        sobre a pilha a cada passada — o maior transitorio do
+        acumulador (pesquisa de performance de 2026-11-03, T10).
+        Aqui as tres reducoes saem por acumulacao em buffers
+        reusados: a soma adiciona os mesmos mapas na mesma ordem
+        (resultado float identico), hits e visto sao contagens
+        inteiras/booleanas exatas. Os buffers sao devolvidos para
+        leitura imediata; a proxima chamada os sobrescreve.
+        """
+        window = list(self._window)
+        shape = window[0].shape
+        if self._score_buf is None or self._score_buf.shape != shape:
+            self._score_buf = np.zeros(shape, dtype=np.float32)
+            self._hits_buf = np.zeros(shape, dtype=np.int32)
+            self._seen_buf = np.zeros(shape, dtype=bool)
+        score = self._score_buf
+        np.copyto(score, window[0])
+        for item in window[1:]:
+            np.add(score, item, out=score)
+        hits = self._hits_buf
+        hits[...] = window[0] >= _INK_VOTE_HIT
+        for item in window[1:]:
+            np.add(hits, item >= _INK_VOTE_HIT, out=hits)
+        seen = self._seen_buf
+        seen[...] = window[0] > self.threshold
+        for item in window[1:]:
+            np.logical_or(seen, item > self.threshold, out=seen)
+        return score, hits, seen
 
     def add(self, prob):
         prob = np.asarray(prob, dtype=np.float32)
@@ -944,9 +1032,7 @@ class _LayeredInkAccumulator:
             else:
                 self._low_overlap_streak = 0
         self._window.append(prob.copy())
-        stack = np.stack(list(self._window))
-        score = np.sum(stack, axis=0, dtype=np.float32)
-        hits = np.count_nonzero(stack >= _INK_VOTE_HIT, axis=0)
+        score, hits, seen_as_ink = self._window_stats()
         confirmed_rule = (score >= _INK_VOTE_SCORE_STRONG) | (
             (hits >= _INK_VOTE_MIN_HITS) & (score >= _INK_VOTE_SCORE)
         )
@@ -957,7 +1043,6 @@ class _LayeredInkAccumulator:
             # quem alguma passada viu como tinta; a soma
             # sub-limiar das copias deslocadas nao engrossa o
             # traco nem poe camada nova sobre ele.
-            seen_as_ink = np.max(stack, axis=0) > self.threshold
             anchor = seen_as_ink | confirmed_before
             near_anchor = (
                 cv2.dilate(
@@ -972,8 +1057,7 @@ class _LayeredInkAccumulator:
         if new_confirmed_px:
             self._confirmed[new_confirmed] = 255
         confirmed_now = self._confirmed > 0
-        seen_in_window = np.max(stack, axis=0) > self.threshold
-        provisional_now = seen_in_window & ~confirmed_now
+        provisional_now = seen_as_ink & ~confirmed_now
         previous_provisional = self._provisional > 0
         retracted = (
             previous_provisional & ~provisional_now & ~confirmed_now

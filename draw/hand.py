@@ -50,6 +50,9 @@ _DEFAULT_CANDIDATES = (
 _MIN_CONFIDENCE = 0.3
 _HULL_SCALE = 1.30
 _DILATE_PX = 15
+# Largura maxima do frame na deteccao de PRESENCA (assinatura):
+# presenca nao precisa dos pixels, so da geometria dos marcos.
+_PRESENCE_MAX_WIDTH = 640
 
 
 def _resolve_model_path(model_path):
@@ -168,30 +171,85 @@ class HandMasker:
         self._landmarker = created
         return True
 
-    def mask(self, frame):
-        """A máscara de mão do frame, ou None se indisponível."""
+    def _landmarks(self, frame, max_width=None):
+        """Marcos das maos no frame: lista de arrays (21, 2) em px
+        do frame original, [] sem mao, None se indisponivel.
+
+        Com max_width, o frame e reduzido antes da deteccao e os
+        marcos (normalizados pelo MediaPipe) sao reescalados de
+        volta — a geometria e a mesma, o custo de pre-processamento
+        cai com os pixels.
+        """
         if not self._ensure():
             return None
         import mediapipe as mp
 
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        work = frame
+        if max_width and frame.shape[1] > max_width:
+            scale = max_width / frame.shape[1]
+            work = cv2.resize(
+                frame,
+                (max_width, int(round(frame.shape[0] * scale))),
+                interpolation=cv2.INTER_AREA,
+            )
+        rgb = cv2.cvtColor(work, cv2.COLOR_BGR2RGB)
         image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
         result = self._landmarker.detect(image)
-        mask = np.zeros(frame.shape[:2], dtype=np.uint8)
-        if not result.hand_landmarks:
-            return mask
         frame_h, frame_w = frame.shape[:2]
-        for hand in result.hand_landmarks:
-            points = np.array(
-                [
-                    [lm.x * frame_w, lm.y * frame_h]
-                    for lm in hand
-                ],
-                dtype=np.float32,
+        hands = []
+        for hand in result.hand_landmarks or []:
+            hands.append(
+                np.array(
+                    [[lm.x * frame_w, lm.y * frame_h] for lm in hand],
+                    dtype=np.float32,
+                )
             )
+        return hands
+
+    def mask(self, frame):
+        """A máscara de mão do frame, ou None se indisponível."""
+        hands = self._landmarks(frame)
+        if hands is None:
+            return None
+        mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+        for points in hands:
             for polygon in _hand_polygons(points, frame.shape):
                 cv2.fillPoly(mask, [polygon], 255)
+        if not hands:
+            return mask
         kernel = cv2.getStructuringElement(
             cv2.MORPH_ELLIPSE, (2 * _DILATE_PX + 1, 2 * _DILATE_PX + 1)
         )
         return cv2.dilate(mask, kernel)
+
+    def presence_signature(self, frame):
+        """Assinatura de presenca sem construir mascara nenhuma.
+
+        Devolve None (indisponivel), (0.0, 0.0, 0.0) (sem mao) ou
+        (area, centroide_x, centroide_y) em px do frame: a area e a
+        do casco convexo dos 21 marcos e o centroide e a media dos
+        marcos. E tudo o que o adaptador de presenca do app consome
+        (draw.app._MediaPipeHandPresence) — o caminho antigo pagava
+        cvtColor + fillPoly + dilatacao eliptica de 31x31 sobre o
+        frame 720p inteiro so para contar pixels dessa mascara
+        (pesquisa de performance de 2026-11-03, item T3). A deteccao
+        roda sobre o frame reduzido a _PRESENCE_MAX_WIDTH: o
+        landmarker trabalha internamente em ~192-224 px, e os
+        marcos normalizados reescalam sem perda de geometria.
+
+        A mascara cheia (mask()) continua existindo para o caminho
+        legado de visibilidade da tinta, que precisa dos pixels.
+        """
+        hands = self._landmarks(frame, max_width=_PRESENCE_MAX_WIDTH)
+        if hands is None:
+            return None
+        if not hands:
+            return (0.0, 0.0, 0.0)
+        area = 0.0
+        centroids = []
+        for points in hands:
+            hull = cv2.convexHull(points)
+            area += float(cv2.contourArea(hull))
+            centroids.append(points.mean(axis=0))
+        centroid = np.mean(centroids, axis=0)
+        return (area, float(centroid[0]), float(centroid[1]))
