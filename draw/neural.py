@@ -192,9 +192,28 @@ def _load_session(model_path):
     verify_model(path)
     options = ort.SessionOptions()
     options.intra_op_num_threads = _ort_intra_threads()
+    _disable_spin(options)
     return ort.InferenceSession(
         str(path), sess_options=options, providers=["CPUExecutionProvider"]
     )
+
+
+def _disable_spin(options):
+    """Desliga o busy-wait (spin) dos pools desta sessao.
+
+    O app roda duas sessoes ORT + MediaPipe + OpenCV no mesmo
+    processo; com spin ligado (o padrao do ORT), as threads de uma
+    sessao giram em espera ativa e roubam CPU da sessao que esta
+    trabalhando — em pipelines multi-modelo medidos por terceiros,
+    detectores rodaram 2-3x mais lentos que isolados com spin
+    ligado. O estudo de performance de 2026-11-03 apontou o spin
+    como suspeito do piso de ~2,5 nucleos sem explicacao no regime
+    sem folha. DRAW_ORT_SPIN=1 religa, para o A/B na mesa.
+    """
+    if os.environ.get("DRAW_ORT_SPIN", "").strip() == "1":
+        return
+    options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+    options.add_session_config_entry("session.inter_op.allow_spinning", "0")
 
 
 def _ort_intra_threads():
@@ -771,12 +790,17 @@ class NeuralSheetDetector:
         contract = self.contract()
         input_h, input_w = contract.size
         frame_h, frame_w = frame.shape[:2]
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        resized = cv2.resize(
-            rgb,
+        # Reduzir ANTES de converter: o resize e linear por canal e
+        # a conversao BGR->RGB e uma permutacao exata de canais, as
+        # duas operacoes comutam — o tensor e identico, mas a
+        # conversao roda sobre 384x384 em vez do frame 720p inteiro
+        # (~6,5x menos pixels; pesquisa de performance 2026-11-03).
+        small = cv2.resize(
+            frame,
             (input_w, input_h),
             interpolation=cv2.INTER_LINEAR,
-        ).astype(np.float32)
+        )
+        resized = cv2.cvtColor(small, cv2.COLOR_BGR2RGB).astype(np.float32)
         tensor = (resized * _NORM_SCALE + _NORM_BIAS).transpose(2, 0, 1)
         tensor = tensor[None].astype(np.float32)
         output_names = list(contract.outputs)

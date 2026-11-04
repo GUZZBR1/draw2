@@ -121,9 +121,24 @@ def _load_session(model_path, threads=None):
     verify_model(path)
     options = ort.SessionOptions()
     options.intra_op_num_threads = _page_clean_threads(threads)
+    _disable_spin(options)
     return ort.InferenceSession(
         str(path), sess_options=options, providers=["CPUExecutionProvider"]
     )
+
+
+def _disable_spin(options):
+    """Desliga o busy-wait (spin) dos pools desta sessao.
+
+    Mesmo motivo de draw.neural._disable_spin: duas sessoes ORT no
+    mesmo processo com spin ligado roubam CPU uma da outra entre
+    passadas (pesquisa de performance de 2026-11-03). DRAW_ORT_SPIN=1
+    religa para o A/B na mesa.
+    """
+    if os.environ.get("DRAW_ORT_SPIN", "").strip() == "1":
+        return
+    options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+    options.add_session_config_entry("session.inter_op.allow_spinning", "0")
 
 
 def _output_patch_size(session):
@@ -243,9 +258,21 @@ class PageCleanInk:
         return h, w, tiles
 
     def _run_batch(self, batch):
-        tensor = (
-            np.stack(batch).astype(np.float32).transpose(0, 3, 1, 2) / 255.0
+        # Montar o tensor direto em float32 no layout final, sem o
+        # stack uint8 intermediario nem a copia astype: o caminho
+        # antigo criava ~2 tensores do tamanho do lote por passada
+        # (20 blocos = ~16 MB cada) so de transitorio. A divisao por
+        # 255 com out= escreve no buffer final; o valor e o mesmo.
+        tensor = np.empty(
+            (len(batch), 3, _PATCH, _PATCH), dtype=np.float32
         )
+        for index, tile in enumerate(batch):
+            np.divide(
+                tile.transpose(2, 0, 1),
+                255.0,
+                out=tensor[index],
+                casting="unsafe",
+            )
         return self._session.run(None, {self._input_name: tensor})[0]
 
     def ink_prob(self, warped_bgr):
