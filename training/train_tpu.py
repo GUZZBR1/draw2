@@ -411,7 +411,7 @@ def main(argv=None):
     import torch_xla.distributed.xla_multiprocessing as xmp
 
     xmp.spawn(_mp_fn, args=(run_cfg, str(data_dir), str(out_dir)),
-              nprocs=8, start_method="fork")
+              nprocs=None, start_method="fork")
     _log("spawn encerrado")
     return _export_and_grade(run_cfg, str(data_dir), out_dir)
 
