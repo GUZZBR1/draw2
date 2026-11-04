@@ -16,12 +16,7 @@ target-version = "py311"
 line-length = 88
 # Notebooks trazem código duplicado de células (imports repetidos) e
 # não são o alvo do linter de biblioteca.
-# docs/archive/analise/probes/ são scripts de operador (sondas e
-# benchmarks que sustentam o documento arquivado em docs/archive/
-# analise/): rodam uma vez, imprimem e saem, e não seguem o estilo da
-# biblioteca. O F821/F841 deles foi corrigido à mão; o resto do estilo
-# não é o alvo deste conjunto.
-extend-exclude = [".venv", "notebooks", "docs/archive/analise/probes"]
+extend-exclude = [".venv", "notebooks"]
 
 [tool.ruff.lint]
 # Subconjunto de erro de verdade (nome indefinido, sintaxe, import
