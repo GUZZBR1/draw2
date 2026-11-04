@@ -373,6 +373,14 @@ def main(argv=None):
     if args.selftest:
         return _selftest()
 
+    # Sessao Kaggle grava TPU_PROCESS_ADDRESSES=local como placeholder e o
+    # libtpu le ao pe da letra: 1 endereco pra 8 cores e a init multiprocesso
+    # morre. Sem a variavel, o runtime descobre o slice local sozinho.
+    if os.environ.get("TPU_PROCESS_ADDRESSES") == "local":
+        os.environ.pop("TPU_PROCESS_ADDRESSES")
+        os.environ.pop("CLOUD_TPU_TASK_ID", None)
+        _log("TPU_PROCESS_ADDRESSES=local removido (placeholder do Kaggle)")
+
     work = _default_workdir()
     data_dir = Path(args.data_dir) if args.data_dir else work / "data" / "synthetic"
     out_dir = Path(args.out_dir) if args.out_dir else work / "out_t7"
