@@ -203,6 +203,9 @@ in private datasets and never enter this repository.
   `label_frames.py`, `judge.py`, and the experiment runner in
   `tools/runner/`.
 - `training/`, `notebooks/` — the detector training route (Kaggle).
+  [The training guide](docs/TREINO.md) covers dataset integrity, the
+  U-Net holdout contract, ONNX delivery gates, and same-checkpoint
+  384/256 evaluation.
 - `scripts/` — `setup_camera_wsl.sh`, the WSL camera installer.
 - `template/` — generator of the printed sheet used by `--markers`.
 - `bridge/` — the Windows helper protocol (`PROTOCOL.md`,
@@ -212,8 +215,9 @@ in private datasets and never enter this repository.
   including `tools/runner/tests/`.
 - `site/` — the project website (React/TypeScript). Its design rules
   are in `design.md` and `AGENTS.md`.
-- `docs/` — [docs/SETUP_WINDOWS.md](docs/SETUP_WINDOWS.md), the only
-  living document besides this README and [VISION.md](VISION.md).
+- `docs/` — [docs/SETUP_WINDOWS.md](docs/SETUP_WINDOWS.md) and
+  [docs/TREINO.md](docs/TREINO.md), the living documents besides
+  this README and [VISION.md](VISION.md).
 
 ## Development
 

@@ -28,9 +28,12 @@ live session
      network missed also goes to ignore
   -> [5 TRAIN]    tools/selflearn/train_round.py: a round with full
      replay of the labeled examples in every batch, EMA teacher
-     (decay 0.999) labeling the weak view, student on the strong
-     view, supervised BCE+Dice loss + confidence-masked consistency.
-     Exports ONNX and metrics.json
+     (initial ramp, 0.999 cap) labeling the weak view, student on
+     the strong view, supervised BCE+Dice loss + confidence-masked
+     consistency. Requires lineage and an independent holdout,
+     preserves warm start, evaluates full pages only at the end,
+     and exports ONNX + metrics.json + candidate_real.json.
+     See docs/TREINO.md
 ```
 
 ## Modules
@@ -40,8 +43,10 @@ live session
 - `select.py` active learning queue with reasons per item (U2).
 - `teacher.py` temporal aggregation and pseudo-label with veto (U3).
 - `tools/selflearn/train_round.py` the training round (minimum U5).
-  `--smoke` proves the recipe on CPU with its own synthetic dataset:
-  supervised loss falls, EMA moves, ONNX exports.
+  `--smoke` exercises the recipe on CPU with its own synthetic dataset:
+  supervised loss falls, EMA moves, lineage/holdout guards run, and
+  the ONNX is checked against PyTorch. It is not real-world quality
+  evidence.
 
 Tests: `tests/test_selflearn.py`.
 
