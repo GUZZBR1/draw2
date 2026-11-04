@@ -185,7 +185,7 @@ def test_hand_signature_geometry(monkeypatch):
     )
     masker = hand_module.HandMasker()
     monkeypatch.setattr(
-        masker, "_landmarks", lambda frame, max_width=None: [points]
+        masker, "_landmarks", lambda frame, max_width=None, timestamp_ms=None: [points]
     )
     area, cx, cy = masker.presence_signature(
         np.zeros((100, 100, 3), dtype=np.uint8)
@@ -194,13 +194,13 @@ def test_hand_signature_geometry(monkeypatch):
     assert abs(cx - float(points[:, 0].mean())) < 1e-6
     assert abs(cy - float(points[:, 1].mean())) < 1e-6
     monkeypatch.setattr(
-        masker, "_landmarks", lambda frame, max_width=None: []
+        masker, "_landmarks", lambda frame, max_width=None, timestamp_ms=None: []
     )
     assert masker.presence_signature(
         np.zeros((100, 100, 3), dtype=np.uint8)
     ) == (0.0, 0.0, 0.0)
     monkeypatch.setattr(
-        masker, "_landmarks", lambda frame, max_width=None: None
+        masker, "_landmarks", lambda frame, max_width=None, timestamp_ms=None: None
     )
     assert masker.presence_signature(
         np.zeros((100, 100, 3), dtype=np.uint8)

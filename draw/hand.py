@@ -124,7 +124,10 @@ class HandMasker:
     def __init__(self, model_path=None):
         self._requested_path = model_path
         self._landmarker = None
+        self._video_landmarker = None
         self._unavailable = False
+        self._video_unavailable = False
+        self._last_video_ts = -1
         self._warned = False
 
     def _warn_once(self):
@@ -136,34 +139,43 @@ class HandMasker:
                 "acumulativo roda sem ela."
             )
 
+    def _create_landmarker(self, running_mode):
+        path = _resolve_model_path(self._requested_path)
+        if path is None or not Path(path).exists():
+            return None
+        try:
+            import mediapipe as mp
+
+            options = mp.tasks.vision.HandLandmarkerOptions(
+                base_options=mp.tasks.BaseOptions(
+                    model_asset_path=str(path)
+                ),
+                running_mode=running_mode,
+                num_hands=2,
+                min_hand_detection_confidence=_MIN_CONFIDENCE,
+                min_hand_presence_confidence=_MIN_CONFIDENCE,
+                min_tracking_confidence=_MIN_CONFIDENCE,
+            )
+            return mp.tasks.vision.HandLandmarker.create_from_options(
+                options
+            )
+        except Exception:
+            return None
+
     def _ensure(self):
         if self._landmarker is not None:
             return True
         if self._unavailable:
             return False
-        path = _resolve_model_path(self._requested_path)
-        created = None
-        if path is not None and Path(path).exists():
-            try:
-                import mediapipe as mp
-
-                options = mp.tasks.vision.HandLandmarkerOptions(
-                    base_options=mp.tasks.BaseOptions(
-                        model_asset_path=str(path)
-                    ),
-                    running_mode=mp.tasks.vision.RunningMode.IMAGE,
-                    num_hands=2,
-                    min_hand_detection_confidence=_MIN_CONFIDENCE,
-                    min_hand_presence_confidence=_MIN_CONFIDENCE,
-                    min_tracking_confidence=_MIN_CONFIDENCE,
-                )
-                created = (
-                    mp.tasks.vision.HandLandmarker.create_from_options(
-                        options
-                    )
-                )
-            except Exception:
-                created = None
+        try:
+            import mediapipe as mp
+        except Exception:
+            self._unavailable = True
+            self._warn_once()
+            return False
+        created = self._create_landmarker(
+            mp.tasks.vision.RunningMode.IMAGE
+        )
         if created is None:
             self._unavailable = True
             self._warn_once()
@@ -171,7 +183,35 @@ class HandMasker:
         self._landmarker = created
         return True
 
-    def _landmarks(self, frame, max_width=None):
+    def _ensure_video(self):
+        """Landmarker em modo VIDEO, criado sob demanda.
+
+        O modo VIDEO do MediaPipe rastreia a mao entre quadros e
+        pula a deteccao de palma enquanto ela esta localizada —
+        no modo IMAGE cada chamada recomeca do zero (pesquisa de
+        performance de 2026-11-03, T4). Falha ao criar ou ao
+        detectar marca o modo como indisponivel e a presenca cai
+        para o IMAGE permanentemente: degradacao, nunca erro.
+        """
+        if self._video_landmarker is not None:
+            return True
+        if self._video_unavailable:
+            return False
+        try:
+            import mediapipe as mp
+        except Exception:
+            self._video_unavailable = True
+            return False
+        created = self._create_landmarker(
+            mp.tasks.vision.RunningMode.VIDEO
+        )
+        if created is None:
+            self._video_unavailable = True
+            return False
+        self._video_landmarker = created
+        return True
+
+    def _landmarks(self, frame, max_width=None, timestamp_ms=None):
         """Marcos das maos no frame: lista de arrays (21, 2) em px
         do frame original, [] sem mao, None se indisponivel.
 
@@ -179,8 +219,17 @@ class HandMasker:
         marcos (normalizados pelo MediaPipe) sao reescalados de
         volta — a geometria e a mesma, o custo de pre-processamento
         cai com os pixels.
+
+        Com timestamp_ms (o carimbo de captura do frame), a
+        deteccao roda no landmarker VIDEO com detect_for_video; o
+        carimbo e forcado estritamente crescente, como a API
+        exige. Sem carimbo, ou se o modo VIDEO falhar, cai no
+        landmarker IMAGE de sempre.
         """
-        if not self._ensure():
+        use_video = (
+            timestamp_ms is not None and self._ensure_video()
+        )
+        if not use_video and not self._ensure():
             return None
         import mediapipe as mp
 
@@ -194,7 +243,24 @@ class HandMasker:
             )
         rgb = cv2.cvtColor(work, cv2.COLOR_BGR2RGB)
         image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-        result = self._landmarker.detect(image)
+        result = None
+        if use_video:
+            timestamp = max(
+                int(timestamp_ms), self._last_video_ts + 1
+            )
+            try:
+                result = self._video_landmarker.detect_for_video(
+                    image, timestamp
+                )
+                self._last_video_ts = timestamp
+            except Exception:
+                self._video_unavailable = True
+                self._video_landmarker = None
+                result = None
+        if result is None:
+            if not self._ensure():
+                return None
+            result = self._landmarker.detect(image)
         frame_h, frame_w = frame.shape[:2]
         hands = []
         for hand in result.hand_landmarks or []:
@@ -222,7 +288,7 @@ class HandMasker:
         )
         return cv2.dilate(mask, kernel)
 
-    def presence_signature(self, frame):
+    def presence_signature(self, frame, timestamp_ms=None):
         """Assinatura de presenca sem construir mascara nenhuma.
 
         Devolve None (indisponivel), (0.0, 0.0, 0.0) (sem mao) ou
@@ -240,7 +306,11 @@ class HandMasker:
         A mascara cheia (mask()) continua existindo para o caminho
         legado de visibilidade da tinta, que precisa dos pixels.
         """
-        hands = self._landmarks(frame, max_width=_PRESENCE_MAX_WIDTH)
+        hands = self._landmarks(
+            frame,
+            max_width=_PRESENCE_MAX_WIDTH,
+            timestamp_ms=timestamp_ms,
+        )
         if hands is None:
             return None
         if not hands:
