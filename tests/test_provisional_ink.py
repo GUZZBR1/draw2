@@ -21,6 +21,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from draw import app as app_module  # noqa: E402
+from draw import ink_layers as ink_layers_module  # noqa: E402
 
 H, W = 60, 80
 STRONG = (slice(5, 15), slice(5, 25))
@@ -112,7 +113,7 @@ def _drive_until(worker, generation, predicate, timeout=5.0):
 def test_worker_display_shows_provisional_before_poll_confirms(
     monkeypatch,
 ):
-    monkeypatch.setattr(app_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
     strong_twice = _prob([(STRONG, 0.95)])
     fake = _ScriptedProbInk([strong_twice])
     worker = app_module._PageCleanWorker(fake).start()
