@@ -233,6 +233,10 @@ def main(argv=None):
     trace_dir = run_dir / "trace"
     trace_dir.mkdir(parents=True, exist_ok=True)
     train_t7._arm_compile_cache(run_dir)
+    if args.device == "tpu":
+        # Match train_torchtpu.py: libtpu reads scoped VMEM flags only
+        # during initialization, before importing torch.
+        train_t7._arm_scoped_vmem(train_t7.SCOPED_VMEM_DEFAULT_KIB)
 
     # TorchTPU reads its cache environment during torch import.
     import torch
