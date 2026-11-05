@@ -42,6 +42,7 @@ import json
 import math
 import os
 import sys
+import time
 from pathlib import Path
 
 import cv2
@@ -597,6 +598,50 @@ def probe_batch_size(
     return chosen, report
 
 
+def utilization_receipt(torch, device, epoch_s, steps, batch_size, precision, probe_report=None):
+    """Recibo de utilização da 1ª época (mesmo espírito do receipt do TPU).
+
+    Tempo/passo e amostras/s sempre; em CUDA, pico de VRAM via torch.cuda
+    e utilização instantânea da GPU via pynvml SE ele estiver instalado
+    (dependência mole: sem pynvml o campo fica null, nada quebra).
+    """
+    steps = max(int(steps), 1)
+    receipt = {
+        "epoch": 0,
+        "epoch_s": round(float(epoch_s), 1),
+        "s_per_step": round(float(epoch_s) / steps, 3),
+        "samples_s": round(steps * batch_size / float(epoch_s), 2) if epoch_s > 0 else None,
+        "batch_size": int(batch_size),
+        "precision": precision,
+        "device": str(device),
+        "probe_batch": (
+            {str(k): v for k, v in probe_report.items()} if probe_report else None
+        ),
+        "gpu_name": None,
+        "vram_peak_gib": None,
+        "vram_total_gib": None,
+        "gpu_util_percent_sample": None,
+    }
+    if torch.device(device).type == "cuda":
+        receipt["gpu_name"] = torch.cuda.get_device_name(0)
+        receipt["vram_peak_gib"] = round(torch.cuda.max_memory_allocated() / 2**30, 2)
+        receipt["vram_total_gib"] = round(
+            torch.cuda.get_device_properties(0).total_memory / 2**30, 2
+        )
+        try:
+            import pynvml
+
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            receipt["gpu_util_percent_sample"] = int(
+                pynvml.nvmlDeviceGetUtilizationRates(handle).gpu
+            )
+            pynvml.nvmlShutdown()
+        except Exception:  # noqa: BLE001 - pynvml é opcional; ausência não é erro
+            receipt["gpu_util_percent_sample"] = None
+    return receipt
+
+
 def train_one_epoch(
     model,
     loader,
@@ -1132,7 +1177,9 @@ def main(argv=None):
 
     best_iou, bad_epochs = -1.0, 0
     history = []
+    run_started = time.perf_counter()
     for epoch in range(epochs):
+        epoch_started = time.perf_counter()
         loss = train_one_epoch(
             model,
             train_loader,
@@ -1144,8 +1191,27 @@ def main(argv=None):
             accumulation_steps=accumulation_steps,
             amp_dtype=amp_dtype,
         )
+        epoch_s = time.perf_counter() - epoch_started
         metrics = evaluate(model, val_loader, device)
-        history.append({"epoch": epoch, "train_loss": loss, "val": metrics})
+        history.append({"epoch": epoch, "train_loss": loss, "val": metrics, "epoch_s": round(epoch_s, 1)})
+        if epoch == 0:
+            receipt = utilization_receipt(
+                torch,
+                device,
+                epoch_s,
+                len(train_loader),
+                batch_size,
+                precision,
+                probe_report=probe_report,
+            )
+            receipt["projected_total_min"] = round(
+                epoch_s * epochs / 60, 1
+            )
+            receipt["elapsed_s"] = round(time.perf_counter() - run_started, 1)
+            (out_dir / "receipt.json").write_text(
+                json.dumps(receipt, indent=2), encoding="utf-8"
+            )
+            print(f"RECEIPT {json.dumps(receipt)}")
         print(f"época {epoch}: loss {loss:.4f}, val_mean_iou {metrics['mean_iou']:.4f}")
         torch.save(model.state_dict(), out_dir / "checkpoints" / "last.pt")
         if metrics["mean_iou"] > best_iou:
