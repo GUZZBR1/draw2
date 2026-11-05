@@ -259,7 +259,7 @@ def main(argv=None):
             raise SystemExit("CUDA indisponível neste runtime")
         device = torch.device("cuda")
         hbm = torch.cuda.get_device_properties(device).total_memory
-        if args.precision == "bf16" and not torch.cuda.is_bf16_supported():
+        if args.precision == "bf16" and not T.cuda_bf16_supported(torch, device):
             raise SystemExit("GPU sem bf16; rode com --precision fp32")
         norm_count = 0
 

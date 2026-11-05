@@ -447,6 +447,24 @@ def warmup_cosine_scheduler(optimizer, total_steps, warmup_ratio):
     return torch.optim.lr_scheduler.LambdaLR(optimizer, multiplier)
 
 
+def cuda_bf16_supported(torch, device):
+    """True only when CUDA bf16 has a real engine behind it (Ampere+).
+
+    `torch.cuda.is_bf16_supported()` alone is not enough: on current
+    torch it returns True on Turing (e.g. T4) via emulation, but cuDNN
+    has no bf16 engine there and the first convolution dies with
+    "GET was unable to find an engine to execute this computation"
+    (measured on Colab, 2026-11-05). Require capability >= 8 as well.
+    """
+    if not bool(getattr(torch.cuda, "is_bf16_supported", lambda: False)()):
+        return False
+    try:
+        major, _minor = torch.cuda.get_device_capability(device)
+    except Exception:
+        return False
+    return major >= 8
+
+
 def configure_mixed_precision(torch, device, training_cfg):
     """Select configured bf16/fp16 on CUDA, fp32 elsewhere."""
     if torch.device(device).type != "cuda":
@@ -455,7 +473,7 @@ def configure_mixed_precision(torch, device, training_cfg):
     fallback = training_cfg.get("mixed_precision_fallback", "fp16")
     if preferred == "fp32":
         return "fp32", None, None
-    supports_bf16 = bool(getattr(torch.cuda, "is_bf16_supported", lambda: False)())
+    supports_bf16 = cuda_bf16_supported(torch, device)
     precision = preferred if preferred == "bf16" and supports_bf16 else fallback
     if precision == "bf16":
         return precision, torch.bfloat16, None
