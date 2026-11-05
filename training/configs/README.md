@@ -20,6 +20,25 @@ idêntico a `base.json` hoje).
   bloco `t7` da config porque quem o aplica é o `training/train_tpu.py`
   (`--decoder`), não o `train.py`; ver a nota dentro do arquivo.
 
+Configs do corpo irmão 3 classes (`training/train_ink3.py` — corpo
+gerado, linhagem distinta do SegFormer; ver `docs/TREINO.md`):
+
+- `ink-3class.json` — corrida completa tinta × impresso: 30 épocas,
+  3000/1800/2400 páginas (sg/nb/rb), `real_kd_steps` 0. Cópia fiel da
+  config do pacote v4 (`cfg_3class.json`).
+- `ink-3class-smoke.json` — smoke da mesma corrida (`smoke: true`,
+  1 época, contagens reduzidas pelo próprio corpo). Cópia fiel de
+  `cfg_3class_smoke.json`.
+
+O esquema dessas duas é o do corpo 3 classes (chaves planas:
+`epochs`, `n_sg`, `n_nb`, `n_rb`, `real_kd_steps`, `smoke`), não o
+bloco `training` do `train.py`. Uso:
+
+```bash
+DRAW_WORK=<dir_de_saida> python training/train_ink3.py \
+  --config training/configs/ink-3class-smoke.json
+```
+
 Convenções úteis em qualquer config (bloco `training`):
 
 - `"batch_size": "auto"` — dimensiona o batch pela VRAM rodando o passo
