@@ -12,9 +12,9 @@ sem o usuário encostar em pip, probe ou célula extra:
    imagem é o provado, e mexer nele quebra o backend. (O
    training/requirements.txt é da rota CUDA/py3.11-3.12 e NÃO é
    usado aqui: ele fixa torch==2.11, que destruiria o par
-   torch 2.14 + torch_tpu 0.2.0 da imagem TPU do Colab.) Se o
-   torch_tpu faltar, tenta UMA vez a rota documentada dele
-   (índice CPU oficial); se torch faltar, para com a explicação.
+   torch 2.14 + torch_tpu 0.2.0 da imagem TPU do Colab.) Se
+   torch ou torch_tpu faltar, para com a explicação; nunca tenta
+   substituir nenhum dos dois.
 2. PROBE — roda training/torchtpu_probe.py em subprocesso (este
    processo NUNCA toca no device): exige DEV_OK + PROBE_STEP_OK
    e grava o recibo em <out-dir>/probe.json.
@@ -28,8 +28,7 @@ sem o usuário encostar em pip, probe ou célula extra:
    <out-dir>, log completo em <work>/train_t7.log. Se o
    metrics.json da pasta já está validated, não treina de novo.
 
-Flags: --smoke-only (para no passo 3), --skip-smoke (pula o 3 —
-a responsabilidade é de quem chamou), --epochs N, --precision
+Flags: --smoke-only (para no passo 3), --epochs N, --precision
 bf16|fp32, --batch N, --device tpu|cpu, --work-dir/--data-dir/
 --out-dir/--smoke-out-dir, --no-install (não instala nada: só
 confere e para), --force (ignora carimbos), --dry-run (imprime
@@ -72,7 +71,7 @@ INSTALLABLE = {
     "onnxruntime": "onnxruntime",
 }
 # Presença obrigatória mas NUNCA instalados por este lançador.
-REQUIRED_NO_INSTALL = ("numpy", "torch")
+REQUIRED_NO_INSTALL = ("numpy", "torch", "torch_tpu")
 ALL_MODULES = ("cv2", "numpy", "torch", "transformers",
                "albumentations", "onnx", "onnxruntime")
 
@@ -165,18 +164,11 @@ def _ensure_deps(args, work):
              "execucao pra TPU e rode de novo.")
         return False
     to_install = [INSTALLABLE[m] for m in missing if m in INSTALLABLE]
-    if missing and "torch_tpu" in missing:
-        # Rota documentada do TorchTPU quando a imagem nao traz.
-        to_install.append("torch_tpu==0.2.0")
     if to_install:
         if args.no_install:
             _log("ERRO: --no-install e faltam:", ", ".join(to_install))
             return False
-        extra = []
-        if "torch_tpu==0.2.0" in to_install:
-            extra = ["--extra-index-url",
-                     "https://download.pytorch.org/whl/cpu"]
-        rc, _ = _pip_install(to_install + extra, work / "pip_t7.log")
+        rc, _ = _pip_install(to_install, work / "pip_t7.log")
         if rc != 0:
             _log("ERRO: pip falhou (ver pip_t7.log na pasta de "
                  "trabalho)")
@@ -299,9 +291,6 @@ def main(argv=None):
                     "dependencias -> probe -> smoke -> corrida.")
     parser.add_argument("--smoke-only", action="store_true",
                         help="Para depois do smoke aprovado.")
-    parser.add_argument("--skip-smoke", action="store_true",
-                        help="Pula o smoke (responsabilidade de "
-                             "quem chamou).")
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--precision", choices=("bf16", "fp32"),
                         default="bf16")
@@ -363,11 +352,8 @@ def main(argv=None):
         return 2
     if not _probe(args, out_dir):
         return 2
-    if not args.skip_smoke:
-        if not _smoke(args, smoke_out):
-            return 4
-    elif not args.smoke_only:
-        _log("AVISO: --skip-smoke — corrida sem o portao do smoke")
+    if not _smoke(args, smoke_out):
+        return 4
     if args.smoke_only:
         _log("RUN_T7_SMOKE_ONLY_OK")
         return 0
