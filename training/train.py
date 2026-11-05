@@ -493,6 +493,110 @@ def loader_kwargs(torch, device, training_cfg):
     return kwargs
 
 
+def probe_batch_size(
+    torch,
+    model,
+    dataset,
+    class_weights,
+    device,
+    scaler=None,
+    amp_dtype=None,
+    start=8,
+    target_fraction=0.85,
+):
+    """Maior batch que cabe em ~target_fraction da VRAM, medido no PASSO REAL.
+
+    Cada candidato roda forward + combined_loss + backward + passo de
+    otimizador num lote de verdade do dataset, com o mesmo autocast/scaler
+    da corrida — todos os termos da loss que a corrida usa. Sonda parcial
+    não é sonda: a v2 agressiva mediu só parte do grafo, escolheu batch
+    192 e o passo real estourou OOM com o termo que faltava (2026-11-03).
+
+    Restaura os pesos ao fim (a sonda não treina). Sem CUDA: no-op limpo,
+    retorna (start, {}). Retorna (batch, {candidato: GiB ou "oom"}).
+    """
+    import torch.nn.functional as F
+    from torch.utils.data import DataLoader
+
+    start = max(int(start), 1)
+    if torch.device(device).type != "cuda" or len(dataset) == 0:
+        return start, {}
+    total_gib = torch.cuda.get_device_properties(0).total_memory / 2**30
+    budget_gib = target_fraction * total_gib
+    saved_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+    probe_optimizer = torch.optim.AdamW(model.parameters(), lr=1e-5)
+
+    def try_batch(bs):
+        loader = DataLoader(dataset, batch_size=bs, shuffle=False, num_workers=0)
+        batch = next(iter(loader))
+        if len(batch) == 3:
+            images, masks, sample_weights = batch
+            sample_weights = sample_weights.to(device)
+        else:
+            images, masks = batch
+            sample_weights = None
+        images, masks = images.to(device), masks.to(device)
+        probe_optimizer.zero_grad(set_to_none=True)
+        torch.cuda.reset_peak_memory_stats()
+        try:
+            with torch.autocast(
+                device_type="cuda", dtype=amp_dtype, enabled=amp_dtype is not None
+            ):
+                logits = model(pixel_values=images).logits
+                if logits.shape[-2:] != masks.shape[-2:]:
+                    logits = F.interpolate(
+                        logits, size=masks.shape[-2:], mode="bilinear", align_corners=False
+                    )
+                loss = combined_loss(
+                    logits, masks, class_weights, sample_weights=sample_weights
+                )
+            if scaler is not None:
+                scaler.scale(loss).backward()
+                scaler.step(probe_optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                probe_optimizer.step()
+            torch.cuda.synchronize()
+        except RuntimeError as exc:
+            if "out of memory" not in str(exc).lower():
+                raise
+            return None
+        finally:
+            probe_optimizer.zero_grad(set_to_none=True)
+        return torch.cuda.max_memory_allocated() / 2**30
+
+    report = {}
+    chosen = None
+    bs = start
+    while bs >= 1:  # desce até um candidato respeitar a meta de VRAM
+        peak = try_batch(bs)
+        report[bs] = round(peak, 2) if peak is not None else "oom"
+        if peak is not None and peak <= budget_gib:
+            chosen = bs
+            break
+        bs //= 2
+    if chosen is None:  # nem batch 1 respeitou a meta: usa 1 e segue (a corrida decide)
+        chosen = 1
+    while chosen < len(dataset):  # sobe dobrando enquanto couber na meta
+        nxt = min(chosen * 2, len(dataset))
+        if nxt == chosen:
+            break
+        peak = try_batch(nxt)
+        report[nxt] = round(peak, 2) if peak is not None else "oom"
+        if peak is None or peak > budget_gib:
+            break
+        chosen = nxt
+    model.load_state_dict(saved_state)
+    model.to(device)
+    torch.cuda.empty_cache()
+    print(
+        f"sonda de batch (passo real): escolhido {chosen} "
+        f"(VRAM total {total_gib:.1f} GiB, meta {budget_gib:.1f} GiB) -> {report}"
+    )
+    return chosen, report
+
+
 def train_one_epoch(
     model,
     loader,
@@ -899,6 +1003,12 @@ def main(argv=None):
     parser.add_argument("--smoke-dir", default="/tmp/draw-smoke")
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument(
+        "--probe-batch",
+        action="store_true",
+        help="Dimensiona o batch pela VRAM rodando o passo real de treino (só CUDA); "
+        "equivale a batch_size: \"auto\" na config.",
+    )
     args = parser.parse_args(argv)
 
     cfg = load_config(args.config)
@@ -936,7 +1046,10 @@ def main(argv=None):
 
     tr = cfg["training"]
     epochs = args.epochs or tr["epochs"]
-    batch_size = args.batch_size or tr["batch_size"]
+    raw_batch = args.batch_size or tr.get("batch_size", 8)
+    probe_requested = bool(args.probe_batch or raw_batch == "auto")
+    batch_size = 8 if raw_batch == "auto" else int(raw_batch)
+    probe_report = None
     torch.manual_seed(tr["seed"])
     np.random.seed(tr["seed"])
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -972,11 +1085,6 @@ def main(argv=None):
     val_ds = build_dataset(args.data_dir, "val", cfg, augment=False)
     test_ds = build_dataset(args.data_dir, "test", cfg, augment=False)
     configure_fast_runtime(torch, device)
-    dl_kwargs = loader_kwargs(torch, device, tr)
-    print(f"dataloader: {dl_kwargs}")
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, **dl_kwargs)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, **dl_kwargs)
-    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, **dl_kwargs)
     train_pairs = synthetic_train_pairs + real_pairs
     counts = pixel_counts(train_pairs)
     print(
@@ -993,6 +1101,25 @@ def main(argv=None):
         )
 
     model = build_model(cfg).to(device)
+    precision, amp_dtype, scaler = configure_mixed_precision(torch, device, tr)
+    class_weights = torch.tensor(cfg["loss"]["cross_entropy_class_weights"], dtype=torch.float32, device=device)
+    if probe_requested:
+        batch_size, probe_report = probe_batch_size(
+            torch,
+            model,
+            train_ds,
+            class_weights,
+            device,
+            scaler=scaler,
+            amp_dtype=amp_dtype,
+            start=batch_size,
+            target_fraction=float(tr.get("probe_vram_fraction", 0.85)),
+        )
+    dl_kwargs = loader_kwargs(torch, device, tr)
+    print(f"dataloader: {dl_kwargs} | batch_size: {batch_size}")
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, **dl_kwargs)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, **dl_kwargs)
+    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, **dl_kwargs)
     optimizer = torch.optim.AdamW(model.parameters(), lr=tr["learning_rate"], weight_decay=tr["weight_decay"])
     accumulation_steps = max(int(tr.get("gradient_accumulation_steps", 1)), 1)
     steps_per_epoch = math.ceil(len(train_loader) / accumulation_steps)
@@ -1001,9 +1128,7 @@ def main(argv=None):
         total_steps=epochs * max(steps_per_epoch, 1),
         warmup_ratio=tr["warmup_ratio"],
     )
-    precision, amp_dtype, scaler = configure_mixed_precision(torch, device, tr)
     print(f"precisão de treino: {precision}; acumulação: {accumulation_steps}")
-    class_weights = torch.tensor(cfg["loss"]["cross_entropy_class_weights"], dtype=torch.float32, device=device)
 
     best_iou, bad_epochs = -1.0, 0
     history = []
