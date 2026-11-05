@@ -27,6 +27,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from draw import app as app_module  # noqa: E402
+from draw import ink_layers as ink_layers_module  # noqa: E402
 
 H, W = 40, 60
 
@@ -66,9 +67,9 @@ def _wait_resting(worker, timeout=5.0):
 
 
 def _rig(monkeypatch):
-    monkeypatch.setattr(app_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.02)
-    monkeypatch.setattr(app_module, "_IDLE_PROBE_SECONDS", 0.05)
-    monkeypatch.setattr(app_module, "_HAND_REST_STILL_SECONDS", 0.3)
+    monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.02)
+    monkeypatch.setattr(ink_layers_module, "_IDLE_PROBE_SECONDS", 0.05)
+    monkeypatch.setattr(ink_layers_module, "_HAND_REST_STILL_SECONDS", 0.3)
     fake = _SettlingInk()
     worker = app_module._PageCleanWorker(fake).start()
     generation = worker.new_generation()
@@ -143,9 +144,9 @@ class _GrowingInk:
 
 def test_active_drawing_never_rests_even_without_motion_reports(
         monkeypatch):
-    monkeypatch.setattr(app_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.02)
-    monkeypatch.setattr(app_module, "_IDLE_PROBE_SECONDS", 0.05)
-    monkeypatch.setattr(app_module, "_HAND_REST_STILL_SECONDS", 0.3)
+    monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.02)
+    monkeypatch.setattr(ink_layers_module, "_IDLE_PROBE_SECONDS", 0.05)
+    monkeypatch.setattr(ink_layers_module, "_HAND_REST_STILL_SECONDS", 0.3)
     fake = _GrowingInk()
     worker = app_module._PageCleanWorker(fake).start()
     try:
