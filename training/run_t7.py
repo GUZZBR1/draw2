@@ -30,9 +30,20 @@ sem o usuário encostar em pip, probe ou célula extra:
    As fases imprimem progresso ao vivo; se uma ficar sem saída por
    20s, o launcher mostra um heartbeat. Logs anteriores ficam em
    <work>/run_history/.
+   Escada E1001 (CompileTimeScopedVmemOom do XLA, medido em
+   2026-11-05: o copy [32,128,128,128] do decode head pede 24,01M
+   de VMEM scoped contra o default de 16M): o corpo já arma
+   --xla_tpu_scoped_vmem_limit_kib=65536 antes do import do torch;
+   se mesmo assim o log da corrida trouxer o E1001, este lançador
+   relança a corrida UMA vez em processo novo com o limite no teto
+   útil da v5e (131072 KiB — a flag trava na inicialização do
+   libtpu, por isso só processo novo adianta); persistindo o
+   E1001, relança sem --compile (o caminho eager é o provado pelo
+   smoke). Cada degrau é anunciado no log (FALLBACK_E1001).
 
 Flags: --smoke-only (para no passo 3), --epochs N, --precision
-bf16|fp32, --batch N, --device tpu|cpu, --work-dir/--data-dir/
+bf16|fp32, --batch N, --scoped-vmem-kib N, --device tpu|cpu,
+--work-dir/--data-dir/
 --out-dir/--smoke-out-dir, --no-install (não instala nada: só
 confere e para), --force (ignora carimbos), --dry-run (imprime
 o plano e os comandos exatos, sem executar nada).
@@ -147,7 +158,8 @@ def _archive_previous_log(log_path):
     return archived
 
 
-def _run_stream(cmd, log_path, phase="subprocesso", heartbeat_s=20):
+def _run_stream(cmd, log_path, phase="subprocesso", heartbeat_s=20,
+                env=None):
     """Subprocesso com saída ao vivo + log em arquivo.
 
     Devolve (rc, texto) — o texto serve pros portões por linha
@@ -169,7 +181,7 @@ def _run_stream(cmd, log_path, phase="subprocesso", heartbeat_s=20):
         p = subprocess.Popen([str(c) for c in cmd],
                              stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, text=True,
-                             bufsize=1)
+                             bufsize=1, env=env)
 
         def pump_output():
             for line in p.stdout:
@@ -280,15 +292,17 @@ def _smoke(args, smoke_out):
              "o smoke de novo")
     smoke_out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
+    smoke_cmd = [sys.executable, str(BODY),
+                 "--device", args.device,
+                 "--precision", args.precision,
+                 "--epochs", "1", "--train-count", "96",
+                 "--val-count", "16", "--test-count", "16",
+                 "--data-dir", str(smoke_out / "data"),
+                 "--out-dir", str(smoke_out)]
+    if args.batch is not None:
+        smoke_cmd += ["--batch", str(args.batch)]
     rc, out = _run_stream(
-        [sys.executable, str(BODY),
-         "--device", args.device,
-         "--precision", args.precision,
-         "--epochs", "1", "--train-count", "96",
-         "--val-count", "16", "--test-count", "16",
-         "--data-dir", str(smoke_out / "data"),
-         "--out-dir", str(smoke_out)],
-        smoke_out.parent / "smoke_t7.log", phase="smoke")
+        smoke_cmd, smoke_out.parent / "smoke_t7.log", phase="smoke")
     receipt_path = smoke_out / "receipt.json"
     ok = (rc == 0 and "TREINO_TORCHTPU_DONE" in out
           and "DELIVERY validated" in out and receipt_path.exists())
@@ -306,6 +320,30 @@ def _smoke(args, smoke_out):
     return True
 
 
+SCOPED_VMEM_FLAG = "--xla_tpu_scoped_vmem_limit_kib"
+# Teto scoped utilizável da v5e pela doc do OpenXLA (E1001). O
+# corpo arma 65536 por padrão; a escada da corrida sobe pra este
+# teto antes de desistir do compile.
+SCOPED_VMEM_MAX_KIB = 131072
+
+
+def _is_scoped_vmem_oom(text):
+    return "ScopedVmemOom" in text or "ERRO_E1001" in text
+
+
+def _env_with_scoped_vmem(kib):
+    """Cópia do ambiente com a flag scoped definida em
+    LIBTPU_INIT_ARGS (troca a existente ou anexa, preservando as
+    demais flags). Vale pro processo filho: o libtpu lê na
+    inicialização dele."""
+    env = dict(os.environ)
+    toks = [t for t in env.get("LIBTPU_INIT_ARGS", "").split()
+            if not t.startswith(SCOPED_VMEM_FLAG + "=")]
+    toks.append(f"{SCOPED_VMEM_FLAG}={kib}")
+    env["LIBTPU_INIT_ARGS"] = " ".join(toks)
+    return env
+
+
 def _already_validated(out_dir):
     metrics = out_dir / "metrics.json"
     if not metrics.exists():
@@ -318,26 +356,51 @@ def _already_validated(out_dir):
 
 
 def _run(args, data_dir, out_dir):
-    """Passo 4: corrida completa com compile e gate final."""
+    """Passo 4: corrida completa com compile e gate final.
+
+    Escada E1001 (ver o docstring): tentativa normal (o corpo arma
+    scoped=65536) -> processo novo com scoped no teto útil
+    (131072) -> sem --compile (eager, o caminho do smoke). Degrau
+    novo só entra se o log do degrau anterior trouxer o E1001;
+    qualquer outra falha para na hora.
+    """
     if _already_validated(out_dir) and not args.force:
         _log("CORRIDA JA CONCLUIDA E VALIDADA nesta pasta "
              "(metrics.json). Nada a fazer; --force recomeca.")
         return 0
     out_dir.mkdir(parents=True, exist_ok=True)
-    cmd = [sys.executable, str(BODY), "--compile",
-           "--device", args.device,
-           "--precision", args.precision,
-           "--epochs", str(args.epochs),
-           "--data-dir", str(data_dir),
-           "--out-dir", str(out_dir)]
+    base = [sys.executable, str(BODY),
+            "--device", args.device,
+            "--precision", args.precision,
+            "--epochs", str(args.epochs),
+            "--data-dir", str(data_dir),
+            "--out-dir", str(out_dir)]
     if args.batch is not None:
-        cmd += ["--batch", str(args.batch)]
-    rc, _ = _run_stream(cmd, out_dir.parent / "train_t7.log",
-                        phase="treino completo")
-    if rc == 0 and _already_validated(out_dir):
-        _log("CORRIDA CONCLUIDA E VALIDADA. ONNX e checkpoints "
-             f"em {out_dir}")
-        return 0
+        base += ["--batch", str(args.batch)]
+    if args.scoped_vmem_kib is not None:
+        base += ["--scoped-vmem-kib", str(args.scoped_vmem_kib)]
+    log_path = out_dir.parent / "train_t7.log"
+    attempts = [
+        ("compile, scoped do corpo", ["--compile"], None),
+        ("compile, scoped no teto", ["--compile"],
+         _env_with_scoped_vmem(SCOPED_VMEM_MAX_KIB)),
+        ("eager (sem --compile)", [], None),
+    ]
+    rc = 1
+    for i, (label, extra, env) in enumerate(attempts):
+        if i:
+            _log(f"FALLBACK_E1001: tentando de novo — {label}")
+        rc, out = _run_stream(base + extra, log_path,
+                              phase="treino completo", env=env)
+        if rc == 0 and _already_validated(out_dir):
+            _log("CORRIDA CONCLUIDA E VALIDADA. ONNX e checkpoints "
+                 f"em {out_dir}")
+            return 0
+        if not _is_scoped_vmem_oom(out):
+            break
+        if i == len(attempts) - 1:
+            _log("FALLBACK_E1001 ESGOTADO: nem o teto de VMEM "
+                 "scoped nem o eager resolveram.")
     _log(f"CORRIDA SEM ENTREGA VALIDADA (rc={rc}). Checkpoints, "
          "history e logs estao na pasta da corrida.")
     return 3
@@ -354,6 +417,12 @@ def main(argv=None):
                         default="bf16")
     parser.add_argument("--batch", type=int, default=None,
                         help="Lote por device (padrao do corpo: 32).")
+    parser.add_argument("--scoped-vmem-kib", type=int, default=None,
+                        help="Limite de VMEM scoped do XLA em KiB, "
+                             "repassado ao corpo (padrao do corpo: "
+                             "65536). A escada E1001 da corrida sobe "
+                             "pro teto util (131072) sozinha se "
+                             "estourar.")
     parser.add_argument("--device", choices=("tpu", "cpu"),
                         default="tpu")
     parser.add_argument("--work-dir", default=None,
@@ -395,6 +464,8 @@ def main(argv=None):
              "--test-count 16 (eager)")
         _log("  4) corrida:", sys.executable, BODY, "--compile",
              f"--epochs {args.epochs} --precision {args.precision}")
+        _log("  4b) se E1001 (VMEM scoped): retry com "
+             "scoped=131072 KiB e, persistindo, sem --compile")
         _log("DRY_RUN_OK")
         return 0
 
