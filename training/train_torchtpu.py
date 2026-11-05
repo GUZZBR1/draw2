@@ -127,8 +127,8 @@ def _arm_compile_cache(out_dir):
 SCOPED_VMEM_FLAG = "--xla_tpu_scoped_vmem_limit_kib"
 SCOPED_VMEM_DEFAULT_KIB = 65536
 # Teto scoped utilizável documentado pelo OpenXLA (E1001): v5e
-# 131072 KiB, v6e 131008 KiB. Acima disso a flag não compra nada.
-SCOPED_VMEM_MAX_KIB = 131072
+# 131072 KiB, v6e 131008 KiB. Use o teto comum seguro para ambas.
+SCOPED_VMEM_MAX_KIB = 131008
 
 
 def _scoped_vmem_in(args_str):
@@ -158,7 +158,7 @@ def _arm_scoped_vmem(kib):
     inicialização do backend e ignora mudança posterior no mesmo
     processo. Sem isto, o --compile da corrida T7 morre no 1º passo
     com o E1001 (o copy [32,128,128,128] do decode head pede
-    24,01M contra o default de 16384 KiB). Flag já presente no
+  24,01M contra o default de 16384 KiB). Flag já presente no
     ambiente vence (é o canal do run_t7.py na escada de retry e de
     quem lança à mão); ``kib=0`` desliga a intervenção. Devolve o
     limite efetivo em KiB, ou None.
@@ -679,7 +679,7 @@ def main(argv=None):
             _log("ERRO_E1001: CompileTimeScopedVmemOom — o limite "
                  f"scoped em vigor ({scoped_kib} KiB) nao coube. "
                  "Relance em processo novo com --scoped-vmem-kib "
-                 f"maior (teto util da v5e: {SCOPED_VMEM_MAX_KIB}) "
+                 f"maior (teto seguro v5e/v6e: {SCOPED_VMEM_MAX_KIB}) "
                  "ou sem --compile.")
         raise
 

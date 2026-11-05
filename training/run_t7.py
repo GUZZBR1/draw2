@@ -36,7 +36,7 @@ sem o usuário encostar em pip, probe ou célula extra:
    --xla_tpu_scoped_vmem_limit_kib=65536 antes do import do torch;
    se mesmo assim o log da corrida trouxer o E1001, este lançador
    relança a corrida UMA vez em processo novo com o limite no teto
-   útil da v5e (131072 KiB — a flag trava na inicialização do
+   seguro de v5e/v6e (131008 KiB — a flag trava na inicialização do
    libtpu, por isso só processo novo adianta); persistindo o
    E1001, relança sem --compile (o caminho eager é o provado pelo
    smoke). Cada degrau é anunciado no log (FALLBACK_E1001).
@@ -323,10 +323,10 @@ def _smoke(args, smoke_out):
 
 
 SCOPED_VMEM_FLAG = "--xla_tpu_scoped_vmem_limit_kib"
-# Teto scoped utilizável da v5e pela doc do OpenXLA (E1001). O
-# corpo arma 65536 por padrão; a escada da corrida sobe pra este
-# teto antes de desistir do compile.
-SCOPED_VMEM_MAX_KIB = 131072
+# Teto scoped utilizável comum de v5e/v6e pela doc do OpenXLA
+# (E1001): v5e 131072 KiB, v6e 131008 KiB. O corpo arma 65536
+# por padrão; a escada sobe até o teto seguro para ambas.
+SCOPED_VMEM_MAX_KIB = 131008
 
 
 def _is_scoped_vmem_oom(text):
@@ -362,7 +362,7 @@ def _run(args, data_dir, out_dir):
 
     Escada E1001 (ver o docstring): tentativa normal (o corpo arma
     scoped=65536) -> processo novo com scoped no teto útil
-    (131072) -> sem --compile (eager, o caminho do smoke). Degrau
+    (131008) -> sem --compile (eager, o caminho do smoke). Degrau
     novo só entra se o log do degrau anterior trouxer o E1001;
     qualquer outra falha para na hora.
     """
@@ -448,7 +448,7 @@ def main(argv=None):
                         help="Limite de VMEM scoped do XLA em KiB, "
                              "repassado ao corpo (padrao do corpo: "
                              "65536). A escada E1001 da corrida sobe "
-                             "pro teto util (131072) sozinha se "
+                             "pro teto util (131008) sozinha se "
                              "estourar.")
     parser.add_argument("--device", choices=("tpu", "cuda", "cpu"),
                         default="tpu")
@@ -512,7 +512,7 @@ def main(argv=None):
                  f"--device {args.device} --batches {args.bench_batches} "
                  f"--workers {args.bench_workers}")
         _log("  4b) se E1001 (VMEM scoped): retry com "
-             "scoped=131072 KiB e, persistindo, sem --compile")
+             "scoped=131008 KiB e, persistindo, sem --compile")
         _log("DRY_RUN_OK")
         return 0
 
