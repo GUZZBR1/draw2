@@ -171,18 +171,6 @@ class _LazyTextureMaps:
         return val
 
 
-def _texture_maps(frame):
-    """Mapas de textura do frame inteiro (compatibilidade direta)."""
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    return {
-        "saturation": hsv[:, :, 1],
-        "value": hsv[:, :, 2],
-        "laplacian": cv2.Laplacian(gray, cv2.CV_32F),
-        "edges": cv2.Canny(gray, 30, 100),
-    }
-
-
 def _candidate_interior_roi(frame_shape, corners):
     """Recorta e erode a máscara do interior apenas na bounding box."""
     fh, fw = frame_shape[:2]
@@ -205,27 +193,6 @@ def _candidate_interior_roi(frame_shape, corners):
     if not selected.any():
         return None
     return slice(y0, y1), slice(x0, x1), selected
-
-
-def _texture_features(frame, corners, maps=None):
-    """Mede o interior de um quadrilátero candidato.
-
-    Retorna (fração de branco, densidade de bordas, variância do
-    Laplaciano). Opera sobre a caixa delimitadora do interior encolhido
-    para não alocar nem erodir máscaras do frame inteiro por candidato.
-    """
-    if maps is None:
-        maps = _LazyTextureMaps(frame)
-    roi = _candidate_interior_roi(frame.shape, corners)
-    if roi is None:
-        return 0.0, 0.0, 0.0
-    ys, xs, selected = roi
-    saturation = maps["saturation"][ys, xs][selected]
-    value = maps["value"][ys, xs][selected]
-    white_fraction = float(np.mean((saturation < 60) & (value > 180)))
-    laplacian_variance = float(np.var(maps["laplacian"][ys, xs][selected]))
-    edge_density = float(np.mean(maps["edges"][ys, xs][selected] > 0))
-    return white_fraction, edge_density, laplacian_variance
 
 
 def _texture_verdict(frame, corners, maps=None):
