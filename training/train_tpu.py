@@ -52,6 +52,7 @@ monta o modelo C=128, dá 1 passo de treino e exporta/valida.
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
