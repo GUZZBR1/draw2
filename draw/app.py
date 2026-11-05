@@ -130,6 +130,10 @@ from .ink_layers import (
     _INK_VOTE_MIN_HITS as _INK_VOTE_MIN_HITS,
     _INK_FRONTIER_RADIUS as _INK_FRONTIER_RADIUS,
     _INK_FRONTIER_KERNEL as _INK_FRONTIER_KERNEL,
+    _REGISTRATION_IDENTITY_TOL as _REGISTRATION_IDENTITY_TOL,
+    _corners_page_matrix as _corners_page_matrix,
+    _registration_matrix as _registration_matrix,
+    _registration_is_identity as _registration_is_identity,
     _LayeredInkAccumulator as _LayeredInkAccumulator,
     _PageCleanWorker as _PageCleanWorker,
     _render_layered_canvas as _render_layered_canvas,
@@ -960,8 +964,17 @@ def run(
                         # moram na trabalhadora e entram no painel
                         # pelo poll_display() logo abaixo, a provisoria
                         # na primeira passada e a confirmada quando o
-                        # voto fecha.
-                        ink_worker.submit(ink_warped, clean_generation)
+                        # voto fecha. Os cantos vao junto: sao o quad
+                        # que retificou ESTE warp, e a trabalhadora
+                        # registra a evidencia de cada passada na
+                        # geometria ancora da geracao — sem isso, o
+                        # quad que anda entre passadas re-projeta a
+                        # tinta assentada e cada alinhamento confirma
+                        # a sua copia (a reimpressao da regua de
+                        # 2026-11-05 em draw/ink_layers.py).
+                        ink_worker.submit(
+                            ink_warped, clean_generation, warp_corners
+                        )
                         if session_recorder is not None:
                             session_recorder.note_warp(
                                 clean_generation, ink_warped)
