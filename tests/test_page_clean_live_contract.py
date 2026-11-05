@@ -21,6 +21,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from draw import app as app_module  # noqa: E402
+from draw import ink_layers as ink_layers_module  # noqa: E402
 
 H, W = 120, 160
 BASE_RECT = (30, 40, 30, 60)
@@ -50,7 +51,7 @@ class _FakeInk:
 
 
 def test_new_ink_reaches_published_canvas_within_3_passes(monkeypatch):
-    monkeypatch.setattr(app_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.02)
+    monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.02)
     fake = _FakeInk()
     worker = app_module._PageCleanWorker(fake).start()
     try:
