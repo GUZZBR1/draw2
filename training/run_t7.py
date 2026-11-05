@@ -27,6 +27,9 @@ sem o usuário encostar em pip, probe ou célula extra:
    training/train_torchtpu.py, checkpoints/history/receipt em
    <out-dir>, log completo em <work>/train_t7.log. Se o
    metrics.json da pasta já está validated, não treina de novo.
+   As fases imprimem progresso ao vivo; se uma ficar sem saída por
+   20s, o launcher mostra um heartbeat. Logs anteriores ficam em
+   <work>/run_history/.
 
 Flags: --smoke-only (para no passo 3), --epochs N, --precision
 bf16|fp32, --batch N, --device tpu|cpu, --work-dir/--data-dir/
@@ -52,8 +55,10 @@ import argparse
 import importlib.util
 import json
 import os
+from queue import Empty, Queue
 import subprocess
 import sys
+from threading import Thread
 import time
 from pathlib import Path
 
@@ -121,28 +126,79 @@ def _authoritative_check():
 
 def _pip_install(packages, log_path):
     cmd = [sys.executable, "-m", "pip", "install", "-q", *packages]
-    return _run_stream(cmd, log_path)
+    return _run_stream(cmd, log_path, phase="dependencias")
 
 
-def _run_stream(cmd, log_path):
+def _archive_previous_log(log_path):
+    """Preserve the previous run before replacing its well-known log."""
+    log_path = Path(log_path)
+    if not log_path.exists():
+        return None
+    history_dir = log_path.parent / "run_history"
+    history_dir.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    archived = history_dir / f"{log_path.stem}_{stamp}{log_path.suffix}"
+    suffix = 1
+    while archived.exists():
+        archived = history_dir / (
+            f"{log_path.stem}_{stamp}_{suffix}{log_path.suffix}")
+        suffix += 1
+    log_path.replace(archived)
+    return archived
+
+
+def _run_stream(cmd, log_path, phase="subprocesso", heartbeat_s=20):
     """Subprocesso com saída ao vivo + log em arquivo.
 
     Devolve (rc, texto) — o texto serve pros portões por linha
-    (DEV_OK, DELIVERY validated, ...).
+    (DEV_OK, DELIVERY validated, ...). Em etapas sem saída, imprime
+    um heartbeat para o notebook continuar mostrando atividade.
     """
+    log_path = Path(log_path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    archived = _archive_previous_log(log_path)
+    if archived:
+        _log("LOG_ANTERIOR", archived)
+    _log(f"INICIO etapa={phase} log={log_path}")
     _log("$", " ".join(str(c) for c in cmd))
     chunks = []
+    lines = Queue()
+    started = time.monotonic()
+    last_output = "aguardando primeira saída"
     with open(log_path, "w", encoding="utf-8") as lf:
         p = subprocess.Popen([str(c) for c in cmd],
                              stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, text=True,
                              bufsize=1)
-        for line in p.stdout:
+
+        def pump_output():
+            for line in p.stdout:
+                lines.put(line)
+            lines.put(None)
+
+        reader = Thread(target=pump_output, daemon=True)
+        reader.start()
+        while True:
+            try:
+                line = lines.get(timeout=heartbeat_s)
+            except Empty:
+                elapsed = int(time.monotonic() - started)
+                _log(f"STATUS etapa={phase} em_execucao={elapsed}s "
+                     f"ultima_saida={last_output!r}")
+                continue
+            if line is None:
+                break
             print(line, end="", flush=True)
             lf.write(line)
             chunks.append(line)
+            stripped = line.strip()
+            if stripped:
+                last_output = stripped[-180:]
+        reader.join()
         rc = p.wait()
-    _log(f"(rc={rc} | log completo: {log_path})")
+    elapsed = int(time.monotonic() - started)
+    _log(f"FIM etapa={phase} rc={rc} duracao={elapsed}s "
+         f"log={log_path}")
     return rc, "".join(chunks)
 
 
@@ -188,7 +244,8 @@ def _probe(args, out_dir):
              "este caminho)")
         return True
     rc, out = _run_stream([sys.executable, str(PROBE)],
-                          out_dir.parent / "probe_t7.log")
+                          out_dir.parent / "probe_t7.log",
+                          phase="probe TPU")
     info = {}
     for line in out.splitlines():
         if line.startswith("PROBE_JSON"):
@@ -231,7 +288,7 @@ def _smoke(args, smoke_out):
          "--val-count", "16", "--test-count", "16",
          "--data-dir", str(smoke_out / "data"),
          "--out-dir", str(smoke_out)],
-        smoke_out.parent / "smoke_t7.log")
+        smoke_out.parent / "smoke_t7.log", phase="smoke")
     receipt_path = smoke_out / "receipt.json"
     ok = (rc == 0 and "TREINO_TORCHTPU_DONE" in out
           and "DELIVERY validated" in out and receipt_path.exists())
@@ -275,7 +332,8 @@ def _run(args, data_dir, out_dir):
            "--out-dir", str(out_dir)]
     if args.batch is not None:
         cmd += ["--batch", str(args.batch)]
-    rc, _ = _run_stream(cmd, out_dir.parent / "train_t7.log")
+    rc, _ = _run_stream(cmd, out_dir.parent / "train_t7.log",
+                        phase="treino completo")
     if rc == 0 and _already_validated(out_dir):
         _log("CORRIDA CONCLUIDA E VALIDADA. ONNX e checkpoints "
              f"em {out_dir}")
@@ -348,15 +406,19 @@ def main(argv=None):
         "device": args.device, "precision": args.precision,
         "epochs": args.epochs}))
 
+    _log("FASE 1/4 dependencias")
     if not _ensure_deps(args, work):
         return 2
+    _log("FASE 2/4 probe")
     if not _probe(args, out_dir):
         return 2
+    _log("FASE 3/4 smoke")
     if not _smoke(args, smoke_out):
         return 4
     if args.smoke_only:
         _log("RUN_T7_SMOKE_ONLY_OK")
         return 0
+    _log("FASE 4/4 treino completo")
     return _run(args, data_dir, out_dir)
 
 
