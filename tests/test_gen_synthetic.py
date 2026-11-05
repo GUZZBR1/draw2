@@ -29,10 +29,13 @@ def test_determinism_same_seed():
     assert not np.array_equal(a["rgb"], c["rgb"])
 
 
-def test_mask_only_classes_0_to_3():
+def test_mask_only_classes_0_to_3_and_ignore():
+    # Contrato atual (regra do Lucas, 2026-11-05): classes 0..3 e
+    # 255=ignore para pixel ambíguo. Antes era só 0..3 — todo pixel
+    # ganhava um rótulo duro, inclusive os de borda sub-pixel.
     for scene_type in ("normal", "hand_no_sheet", "white_object", "empty_table"):
         scene = gs.compose_scene(11, "train", 1, scene_type, hand=_hand())
-        assert set(np.unique(scene["mask"]).tolist()) <= {0, 1, 2, 3}
+        assert set(np.unique(scene["mask"]).tolist()) <= {0, 1, 2, 3, 255}
         assert scene["rgb"].shape == (512, 512, 3)
         assert scene["mask"].shape == (512, 512)
         assert scene["ink_full"].shape == (512, 512)
@@ -94,7 +97,8 @@ def test_generate_dataset_split_no_leakage_and_files(tmp_path):
             for fname in scene["files"]:
                 assert (tmp_path / split / fname).is_file()
             mask = cv2.imread(str(tmp_path / split / scene["files"][1]), cv2.IMREAD_GRAYSCALE)
-            assert set(np.unique(mask).tolist()) <= {0, 1, 2, 3}
+            assert set(np.unique(mask).tolist()) <= {0, 1, 2, 3, 255}
+    assert manifest["ignore_index"] == 255
     # Nenhuma fonte (mão, papel, fundo) em dois splits.
     for key in ("hand_source", "paper_source", "background_source"):
         per_split = {}
@@ -103,6 +107,96 @@ def test_generate_dataset_split_no_leakage_and_files(tmp_path):
         assert per_split["train"].isdisjoint(per_split["val"])
         assert per_split["train"].isdisjoint(per_split["test"])
         assert per_split["val"].isdisjoint(per_split["test"])
+
+
+def test_ambiguity_ignore_unit_rules():
+    # Regra do Lucas: pixel ambíguo = 255, nunca rótulo inventado.
+    # Unidade direta sobre _ambiguity_ignore com coberturas sintéticas.
+    mask = np.zeros((1, 6), dtype=np.uint8)
+    mask[0] = [gs.INK, gs.INK, gs.PAPER, gs.PAPER, gs.HAND, gs.BACKGROUND]
+    ink_cov = np.array([[0.5, 0.95, 0.5, 0.2, 0.0, 0.0]], dtype=np.float32)
+    paper_cov = np.array([[1.0, 1.0, 1.0, 1.0, 0.0, 0.5]], dtype=np.float32)
+    hand_cov = np.array([[0.0, 0.0, 0.0, 0.0, 0.5, 0.0]], dtype=np.float32)
+    out, causes = gs._ambiguity_ignore(mask, paper_cov, ink_cov, hand_cov)
+    # tinta em empate (0,5) -> ignore; tinta dominante (0,95) -> fica.
+    assert out[0, 0] == 255 and causes["ink_edge"] == 1
+    assert out[0, 1] == gs.INK
+    # papel com tinta em empate por cima -> ignore; tinta fraca (0,2) -> fica.
+    assert out[0, 2] == 255 and causes["ink_on_paper"] == 1
+    assert out[0, 3] == gs.PAPER
+    # mão em empate -> ignore.
+    assert out[0, 4] == 255 and causes["hand_edge"] == 1
+    # fundo com papel em empate por baixo -> ignore.
+    assert out[0, 5] == 255 and causes["paper_edge_out"] == 1
+
+
+def test_ambiguous_pixels_become_ignore_in_scenes():
+    scene = gs.compose_scene(
+        31, "train", 0, "normal", hand=_hand(), hand_placement="over_stroke"
+    )
+    mask = scene["mask"]
+    assert (mask == 255).sum() > 0, "nenhum pixel ambíguo marcado"
+    assert scene["info"]["ignore_fraction"] > 0
+    assert sum(scene["info"]["ignore_causes"].values()) >= (mask == 255).sum()
+    # Ignore é exceção, não regra: menos de 5% da cena.
+    assert scene["info"]["ignore_fraction"] < 0.05
+
+
+def test_no_layers_no_ignore():
+    # Cena vazia: sem papel, sem mão, sem tinta — nada é ambíguo.
+    scene = gs.compose_scene(3, "train", 0, "empty_table")
+    assert (scene["mask"] == 255).sum() == 0
+
+
+def test_visible_majority_stays_supervised():
+    # O traço visível continua tinta e a mão visível continua mão:
+    # o ignore recorta a borda, não o miolo das classes.
+    scene = gs.compose_scene(
+        21, "train", 2, "normal", hand=_hand(), hand_placement="over_stroke"
+    )
+    mask, ink_full = scene["mask"], scene["ink_full"]
+    occluded = (ink_full > 0) & (mask == gs.HAND)
+    visible_ink = (ink_full > 0) & ~occluded
+    kept = (mask == gs.INK) & visible_ink
+    assert visible_ink.sum() > 0
+    assert kept.sum() / visible_ink.sum() >= 0.75
+    assert (mask == gs.HAND).sum() > 0
+
+
+def test_generated_masks_fit_train_contract(tmp_path):
+    # O contrato de treino (training/train.py) já aceita 255: valida e
+    # não conta ignore como classe.
+    from training import train as T
+
+    gs.generate_dataset(tmp_path, seed=7, counts={"train": 4, "val": 1, "test": 1})
+    pairs = T.pair_images_masks(tmp_path / "train")
+    assert pairs
+    for _, mask_path, _ in pairs:
+        mask = T.load_mask(mask_path)  # levanta se houver valor inválido
+        assert set(np.unique(mask).tolist()) <= {0, 1, 2, 3, 255}
+    counts = T.pixel_counts(pairs)
+    assert counts.sum() > 0
+
+
+def test_combined_loss_ignores_255():
+    torch = pytest.importorskip("torch")
+    from training import train as T
+
+    rng = np.random.default_rng(0)
+    logits = torch.tensor(
+        rng.normal(size=(1, 4, 8, 8)), dtype=torch.float32, requires_grad=True
+    )
+    target = torch.full((1, 8, 8), 255, dtype=torch.long)
+    target[0, :4, :4] = 1
+    target[0, 4:, 4:] = 3
+    weights = torch.tensor([1.0, 1.0, 2.0, 4.0])
+    loss = T.combined_loss(logits, target, weights)
+    assert torch.isfinite(loss)
+    loss.backward()
+    # Pixel 100% ignorado: loss ligada ao grafo, gradiente zero.
+    only_ignore = torch.full((1, 8, 8), 255, dtype=torch.long)
+    loss2 = T.combined_loss(logits, only_ignore, weights)
+    assert float(loss2) == 0.0
 
 
 def test_placeholder_hand_is_marked():
