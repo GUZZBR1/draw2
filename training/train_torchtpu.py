@@ -290,12 +290,12 @@ def _train(run_cfg, data_dir, out_dir, device_kind):
         model.train()
         _sync(dev)
         t0 = time.time()
-        # Keep detached scalar losses in short windows instead of building
-        # a device-side chain with ``tot = tot + loss``. TorchTPU may report
-        # an earlier asynchronous execution failure only when that chained
-        # scalar is materialized on the host at epoch end.
-        loss_window = []
-        loss_total = 0.0
+        # Sample scalar losses only at log boundaries and aggregate on the
+        # host. TPU-side scalar reductions/accumulators can fail when they
+        # are materialized, and synchronizing every batch would stall input
+        # pipelining. The final partial window contributes its last batch.
+        sampled_loss_total = 0.0
+        sampled_loss_count = 0
         nb = 0
         opt.zero_grad(set_to_none=True)
         for images, masks in train_loader:
@@ -314,7 +314,6 @@ def _train(run_cfg, data_dir, out_dir, device_kind):
                         align_corners=False)
                 loss = T.combined_loss(logits, masks, cw) / accum
             loss.backward()
-            loss_window.append((loss.detach() * accum).reshape(()))
             nb += 1
             if nb <= 3:
                 _sync(dev)
@@ -325,21 +324,23 @@ def _train(run_cfg, data_dir, out_dir, device_kind):
                 sched.step()
                 opt.zero_grad(set_to_none=True)
             if nb % run_cfg["log_every"] == 0:
-                window_sum = float(torch.stack(loss_window).sum())
-                loss_total += window_sum
-                loss_window.clear()
+                sampled_loss_total += float(loss.detach()) * accum
+                sampled_loss_count += 1
                 _log(f"epoca{epoch} passo{nb}/{len(train_loader)} "
-                     f"loss_media {loss_total / nb:.4f} "
+                     f"loss_amostrada "
+                     f"{sampled_loss_total / sampled_loss_count:.4f} "
                      f"({time.time() - t0:.0f}s)")
         _sync(dev)
         dt = time.time() - t0
-        if loss_window:
-            loss_total += float(torch.stack(loss_window).sum())
-        mean_loss = loss_total / max(nb, 1)
+        if nb and nb % run_cfg["log_every"] != 0:
+            sampled_loss_total += float(loss.detach()) * accum
+            sampled_loss_count += 1
+        mean_loss = sampled_loss_total / max(sampled_loss_count, 1)
         metrics = T.evaluate(model, val_loader, dev)
         iou = metrics["mean_iou"]
         steps = max(nb, 1)
         rec = {"epoch": epoch, "train_loss": round(mean_loss, 4),
+               "train_loss_samples": sampled_loss_count,
                "val_mean_iou": round(iou, 4),
                "epoch_s": round(dt, 1),
                "s_per_step": round(dt / steps, 3),
