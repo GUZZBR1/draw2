@@ -190,10 +190,16 @@ def _resolve_device(kind):
     probe = (torch.ones(1, device=dev) + 1).cpu()
     assert float(probe) == 2.0
     props = torch.tpu.get_device_properties()
+    # A doc 0.2.0 lista hbm_bytes_per_device, mas o objeto real
+    # da 0.2.0 nao expoe esse atributo (medido no Colab em
+    # 2026-11-05: AttributeError derrubava o probe). Leitura
+    # defensiva: HBM e cosmetico do recibo, nunca motivo de queda.
+    hbm = getattr(props, "hbm_bytes_per_device", None) \
+        or getattr(props, "hbm_bytes_per_chip", None)
     info = {
-        "name": props.name,
+        "name": getattr(props, "name", str(dev)),
         "world": torch.accelerator.device_count(),
-        "hbm_gib": round(props.hbm_bytes_per_device / 2**30, 1),
+        "hbm_gib": round(hbm / 2**30, 1) if hbm else None,
         "torch_tpu": tpu_ver,
     }
     return dev, info
