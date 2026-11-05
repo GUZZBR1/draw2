@@ -828,8 +828,9 @@ def generate_dataset(
             "ink_full is NOT a training class. hand_placeholder=true means "
             "synthetic placeholder hand, not FreiHAND. Mask value 255 is "
             "IGNORE (ambiguous pixel, no supervision): sub-pixel layer "
-            "mixtures and strong shadow over paper/ink; per-scene counts "
-            "in ignore_causes."
+            "mixtures only (ink/paper/hand edges); the generator's soft "
+            "shadow does NOT create ignore (measured, audit 2026-11-05). "
+            "Per-scene counts in ignore_causes."
         ),
     }
     negative_cycle = NEGATIVE_TYPES
