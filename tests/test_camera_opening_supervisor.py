@@ -11,6 +11,7 @@ sempre (para nas tentativas maximas) e leitura quebrada (sem reabrir).
 import numpy as np
 
 from draw import app as app_module
+from draw import capture as capture_module
 
 
 class _FakeCapture:
@@ -56,7 +57,7 @@ def test_open_capture_settles_first_try():
 def test_open_capture_reopens_when_blown(monkeypatch):
     probes = iter([149.0, 112.0])
     monkeypatch.setattr(
-        app_module, "_probe_exposure", lambda capture: next(probes)
+        capture_module, "_probe_exposure", lambda capture: next(probes)
     )
     blown = _FakeCapture()
     good = _FakeCapture()
@@ -67,7 +68,7 @@ def test_open_capture_reopens_when_blown(monkeypatch):
 
 
 def test_open_capture_stops_after_max_attempts(monkeypatch):
-    monkeypatch.setattr(app_module, "_probe_exposure", lambda capture: 149.0)
+    monkeypatch.setattr(capture_module, "_probe_exposure", lambda capture: 149.0)
     caps = [_FakeCapture() for _ in range(app_module._EXPOSURE_MAX_ATTEMPTS)]
     factory = _factory(caps)
     result = app_module._open_capture(0, capture_factory=factory)
@@ -77,7 +78,7 @@ def test_open_capture_stops_after_max_attempts(monkeypatch):
 
 
 def test_open_capture_keeps_capture_when_probe_fails(monkeypatch):
-    monkeypatch.setattr(app_module, "_probe_exposure", lambda capture: None)
+    monkeypatch.setattr(capture_module, "_probe_exposure", lambda capture: None)
     cap = _FakeCapture()
     factory = _factory([cap])
     result = app_module._open_capture(0, capture_factory=factory)
@@ -105,7 +106,7 @@ def test_probe_exposure_none_on_read_failure():
 def test_open_probe_recorded_for_report_header():
     cap = _FakeCapture(value=112)
     app_module._open_capture(0, capture_factory=_factory([cap]))
-    probe = app_module._LAST_OPEN_PROBE
+    probe = capture_module._LAST_OPEN_PROBE
     assert probe["desfecho"] == "assentada"
     assert probe["tentativas"] == 1
     assert probe["brilho_medio"] == 112.0
@@ -113,9 +114,9 @@ def test_open_probe_recorded_for_report_header():
 
 def test_open_probe_recorded_when_always_blown(monkeypatch):
     monkeypatch.setattr(
-        app_module, "_probe_exposure", lambda capture: 150.0)
+        capture_module, "_probe_exposure", lambda capture: 150.0)
     caps = [_FakeCapture(value=150) for _ in range(3)]
     app_module._open_capture(0, capture_factory=_factory(caps))
-    probe = app_module._LAST_OPEN_PROBE
+    probe = capture_module._LAST_OPEN_PROBE
     assert probe["desfecho"] == "estourada_seguiu"
     assert probe["tentativas"] == 3
