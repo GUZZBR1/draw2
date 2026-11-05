@@ -7,11 +7,26 @@ rótulo visível:
     1 = paper
     2 = hand
     3 = ink
+    255 = ignore ("desconhecido": pixel ambíguo, sem supervisão)
 
 Regras que este módulo nunca quebra:
 
 * O que a câmera vê é o que é rotulado. Mão por cima de traço rotula
   ``hand``, nunca ``ink``. A máscara de treino é sempre a visível.
+* Pixel ambíguo NÃO ganha rótulo inventado: ganha 255 (ignore), que a
+  loss (``combined_loss``) e as métricas (``tools/seg_metrics.py``) já
+  sabem excluir. Ambíguo = mistura sub-pixel entre camadas na faixa de
+  empate da cobertura (warp/resize/rotação: borda de tinta, borda de
+  papel, borda de mão). A decisão é geométrica, calculada das
+  coberturas INTER_LINEAR das camadas — nunca da cor.
+* A sombra deste gerador NÃO gera ignore, por medição (auditoria de
+  2026-11-05): ela é multiplicativa (≤45%) e preserva o contraste
+  tinta×papel — o pixel sombreado continua verificável. Qualquer
+  limiar nela apagaria 6,5–11% de todo o papel supervisionado sem
+  ambiguidade real correspondente. Sombra OCLUSIVA (a da mão de
+  verdade, que pode esconder traço) é outra coisa: quando existir —
+  em dado real rotulado ou num gerador futuro — os pixels sob ela são
+  candidatos a ignore.
 * ``ink_full`` é uma máscara SEPARADA, guardada por cena, com o desenho
   completo antes da oclusão. Ela NÃO é classe de treino: serve para
   avaliar, no futuro, a memória temporal do Draw.
@@ -35,7 +50,7 @@ Uso:
 Saída por cena (em ``<out>/<split>/``)::
 
     scene_0001.png            # RGB (BGR no arquivo, padrão OpenCV)
-    scene_0001_mask.png       # 1 canal, valores 0..3 (visível)
+    scene_0001_mask.png       # 1 canal, valores 0..3 e 255=ignorado
     scene_0001_ink_full.png   # 1 canal, 0/255 (desenho completo)
 
 Mais ``<out>/manifest.json`` com seed, splits por fonte e, por cena,
@@ -65,6 +80,21 @@ BACKGROUND = 0
 PAPER = 1
 HAND = 2
 INK = 3
+IGNORE = 255
+
+# Faixa de empate sub-pixel (cobertura da camada no pixel). Fora dela,
+# a classe majoritária é o que a câmera vê — rótulo honesto. DENTRO
+# dela (ou abaixo dela, para a classe rotulada), o pixel é mistura sem
+# vencedor visível: rotular seria inventar -> ignore. Calibração
+# medida (auditoria de 2026-11-05, draw-lab/parallel-2026-11-05/masks/
+# REPORT.md): a cobertura dos pixels rotulados como tinta concentra-se
+# em 1,0 (mediana) com p10=0,60 — a faixa [0,40, 0,60] sacrifica ~10%
+# da supervisão de tinta, justamente a fração de borda/em empate, e
+# ~2% da de mão. Um AMB_HI de 0,85 foi medido e REJEITADO: custava 37%
+# da supervisão de tinta (o traço fino é fino por natureza; a cobertura
+# fracionária dele não é ambiguidade de classe, é geometria).
+AMB_LO = 0.40
+AMB_HI = 0.60
 
 CLASSES = {0: "background", 1: "paper", 2: "hand", 3: "ink"}
 
@@ -433,8 +463,16 @@ def _background(rng: np.random.Generator, source: str) -> np.ndarray:
 
 def _warp_to_scene(
     rng: np.random.Generator, paper: np.ndarray, ink: np.ndarray, placement: str
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Warp do papel para a cena. Devolve (rgb_warp, paper_mask, ink_warp, quad)."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Warp do papel para a cena.
+
+    Devolve (rgb_warp, paper_mask, ink_warp, quad, paper_cov, ink_cov).
+    As coberturas são o MESMO warp com INTER_LINEAR sobre os campos
+    binários: fração real de papel/tinta em cada pixel da cena. O RGB é
+    warp LINEAR e as máscaras duras são NEAREST — onde a cobertura é
+    fracionária, o pixel visível é mistura e o rótulo duro é invenção;
+    a cobertura é o que permite marcar esses pixels como ignore.
+    """
     h, w = paper.shape[:2]
     src = np.array([[0, 0], [w, 0], [w, h], [0, h]], dtype=np.float32)
     if placement == "tiny_sheet":
@@ -466,29 +504,50 @@ def _warp_to_scene(
         dst = (corners @ rot.T + np.array([cx, cy], dtype=np.float32)).astype(np.float32)
     mat = cv2.getPerspectiveTransform(src, dst)
     rgb_w = cv2.warpPerspective(paper, mat, (SIZE, SIZE))
+    paper_field = np.full((h, w), 255, dtype=np.uint8)
     paper_mask = cv2.warpPerspective(
-        np.full((h, w), 255, dtype=np.uint8), mat, (SIZE, SIZE), flags=cv2.INTER_NEAREST
+        paper_field, mat, (SIZE, SIZE), flags=cv2.INTER_NEAREST
     )
     ink_w = cv2.warpPerspective(ink, mat, (SIZE, SIZE), flags=cv2.INTER_NEAREST)
-    return rgb_w, paper_mask, ink_w, dst
+    paper_cov = cv2.warpPerspective(
+        paper_field.astype(np.float32) / 255.0, mat, (SIZE, SIZE),
+        flags=cv2.INTER_LINEAR,
+    )
+    ink_cov = cv2.warpPerspective(
+        ink.astype(np.float32) / 255.0, mat, (SIZE, SIZE), flags=cv2.INTER_LINEAR
+    )
+    return rgb_w, paper_mask, ink_w, dst, paper_cov, ink_cov
 
 
 def _transform_hand(
     rng: np.random.Generator, hand: HandSource, scale: float
-) -> tuple[np.ndarray, np.ndarray]:
-    """Escala/rotação/espelho/brilho/contraste/temperatura/blur da mão."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Escala/rotação/espelho/brilho/contraste/temperatura/blur da mão.
+
+    Devolve também a cobertura: a máscara da mão atravessa as MESMAS
+    transformações geométricas em INTER_LINEAR (fração de mão por
+    pixel). É ela que separa "mão visível" de "franja de borda" —
+    inclui a faixa de ringing JPEG das máscaras FreiHAND binarizadas
+    em 127, cuja fronteira exata não é verificável.
+    """
     h, w = hand.mask.shape[:2]
     new_w = max(20, int(w * scale))
     new_h = max(20, int(h * scale))
     rgb = cv2.resize(hand.rgb, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
     mask = cv2.resize(hand.mask, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+    cov = cv2.resize(
+        hand.mask.astype(np.float32) / 255.0, (new_w, new_h),
+        interpolation=cv2.INTER_LINEAR,
+    )
     if bool(rng.integers(2)):
         rgb, mask = cv2.flip(rgb, 1), cv2.flip(mask, 1)
+        cov = cv2.flip(cov, 1)
     ang = float(rng.uniform(-40, 40))
     center = (new_w // 2, new_h // 2)
     mat = cv2.getRotationMatrix2D(center, ang, 1.0)
     rgb = cv2.warpAffine(rgb, mat, (new_w, new_h))
     mask = cv2.warpAffine(mask, mat, (new_w, new_h), flags=cv2.INTER_NEAREST)
+    cov = cv2.warpAffine(cov, mat, (new_w, new_h), flags=cv2.INTER_LINEAR)
     # Brilho/contraste.
     alpha = float(rng.uniform(0.85, 1.15))
     beta = float(rng.uniform(-15, 15))
@@ -501,7 +560,7 @@ def _transform_hand(
     rgb = np.clip(rgb, 0, 255).astype(np.uint8)
     if float(rng.random()) < 0.4:
         rgb = cv2.GaussianBlur(rgb, (3, 3), 0)
-    return rgb, (mask > 0).astype(np.uint8) * 255
+    return rgb, (mask > 0).astype(np.uint8) * 255, cov
 
 
 def _paste_hand(
@@ -521,6 +580,24 @@ def _paste_hand(
     region_rgb = hand_rgb[sy0 : hh - ey0, sx0 : hw - ex0]
     rgb[dy0:dy1, dx0:dx1][region_mask] = region_rgb[region_mask]
     mask[dy0:dy1, dx0:dx1][region_mask] = HAND
+
+
+def _paste_coverage(
+    cov_scene: np.ndarray, hand_cov: np.ndarray, cx: int, cy: int
+) -> None:
+    """Acumula a cobertura da mão no mapa da cena (mesma geometria do
+    _paste_hand; duas mãos se compõem por máximo)."""
+    hh, hw = hand_cov.shape[:2]
+    x0, y0 = cx - hw // 2, cy - hh // 2
+    x1, y1 = x0 + hw, y0 + hh
+    sx0, sy0 = max(0, -x0), max(0, -y0)
+    ex0, ey0 = max(0, x1 - SIZE), max(0, y1 - SIZE)
+    dx0, dy0 = max(0, x0), max(0, y0)
+    dx1, dy1 = min(SIZE, x1), min(SIZE, y1)
+    if dx1 <= dx0 or dy1 <= dy0:
+        return
+    region = cov_scene[dy0:dy1, dx0:dx1]
+    np.maximum(region, hand_cov[sy0 : hh - ey0, sx0 : hw - ex0], out=region)
 
 
 def _augment_rgb(rng: np.random.Generator, rgb: np.ndarray) -> np.ndarray:
@@ -549,6 +626,41 @@ def _augment_rgb(rng: np.random.Generator, rgb: np.ndarray) -> np.ndarray:
     return np.clip(img.astype(np.float32) + noise, 0, 255).astype(np.uint8)
 
 
+def _ambiguity_ignore(
+    mask: np.ndarray,
+    paper_cov: np.ndarray | None,
+    ink_cov: np.ndarray | None,
+    hand_cov: np.ndarray,
+) -> tuple[np.ndarray, dict[str, int]]:
+    """Marca como ignore (255) os pixels cujo rótulo duro seria invenção.
+
+    Regra (a do projeto): supervisiona só o que a câmera vê sem
+    ambiguidade. Um pixel é ambíguo quando cai na faixa de empate da
+    cobertura da sua camada (ou da camada que o contamina): borda de
+    tinta sobre papel, borda de papel sobre o fundo, franja de mão
+    sobre qualquer superfície. Onde a mão domina (cobertura > 0,5), a
+    superfície visível é a mão e as camadas de baixo não contam.
+    Devolve (máscara nova, contagem por causa); um pixel pode ter mais
+    de uma causa — a contagem é por causa, não uma partição.
+    """
+    causes: dict[str, np.ndarray] = {}
+    hand_dom = hand_cov > 0.5  # onde a mão é a superfície visível
+    if ink_cov is not None:
+        causes["ink_edge"] = (mask == INK) & (ink_cov < AMB_HI) & ~hand_dom
+        causes["ink_on_paper"] = (mask == PAPER) & (ink_cov > AMB_LO) & ~hand_dom
+    if paper_cov is not None:
+        causes["paper_edge_in"] = (mask == PAPER) & (paper_cov < AMB_HI) & ~hand_dom
+        causes["paper_edge_out"] = (mask == BACKGROUND) & (paper_cov > AMB_LO) & ~hand_dom
+    causes["hand_edge"] = (mask == HAND) & (hand_cov < AMB_HI)
+    causes["hand_tint"] = (mask != HAND) & (hand_cov > AMB_LO) & ~hand_dom
+    ignore = np.zeros(mask.shape, dtype=bool)
+    for region in causes.values():
+        ignore |= region
+    out = mask.copy()
+    out[ignore] = IGNORE
+    return out, {name: int(region.sum()) for name, region in causes.items()}
+
+
 # ---------------------------------------------------------------- cena
 
 
@@ -574,6 +686,8 @@ def compose_scene(
     rgb = _background(rng, background_source)
     mask = np.zeros((SIZE, SIZE), dtype=np.uint8)
     ink_full = np.zeros((SIZE, SIZE), dtype=np.uint8)
+    paper_cov = ink_cov = None
+    hand_cov = np.zeros((SIZE, SIZE), dtype=np.float32)
     info = {
         "scene_type": scene_type,
         "paper_style": paper_style if scene_type not in ("empty_table", "hand_no_sheet", "white_object") else None,
@@ -584,12 +698,21 @@ def compose_scene(
         "hand_placement": None,
         "has_valid_sheet": False,
         "paper_fraction": 0.0,
+        "ignore_fraction": 0.0,
+        "ignore_causes": {},
     }
+
+    def finish(rgb_in: np.ndarray) -> dict:
+        out_rgb = _augment_rgb(rng, rgb_in)
+        final_mask, causes = _ambiguity_ignore(mask, paper_cov, ink_cov, hand_cov)
+        info["ignore_causes"] = causes
+        info["ignore_fraction"] = float((final_mask == IGNORE).mean())
+        return {"rgb": out_rgb, "mask": final_mask, "ink_full": ink_full, "info": info}
 
     # Negativos sem folha: máscara continua background (objeto branco
     # NÃO vira paper — é o ponto destes negativos).
     if scene_type == "empty_table":
-        return {"rgb": _augment_rgb(rng, rgb), "mask": mask, "ink_full": ink_full, "info": info}
+        return finish(rgb)
     if scene_type == "white_object":
         kind = rng.choice(["rectangle", "book", "box", "monitor"])
         x0, y0 = int(rng.integers(60, 200)), int(rng.integers(60, 200))
@@ -598,7 +721,7 @@ def compose_scene(
         cv2.rectangle(rgb, (x0, y0), (x0 + w, y0 + h), color, -1)
         if kind == "book":
             cv2.rectangle(rgb, (x0 + 10, y0 + 10), (x0 + w - 10, y0 + h - 10), (230, 230, 235), 2)
-        return {"rgb": _augment_rgb(rng, rgb), "mask": mask, "ink_full": ink_full, "info": info}
+        return finish(rgb)
 
     paper_quad = None
     if scene_type not in ("hand_no_sheet",):
@@ -606,7 +729,9 @@ def compose_scene(
             "sheet_out" if scene_type == "sheet_out" else "normal"
         )
         paper, ink, _, _ = _paper_canvas(rng, paper_style)
-        rgb_w, paper_mask, ink_w, paper_quad = _warp_to_scene(rng, paper, ink, placement)
+        rgb_w, paper_mask, ink_w, paper_quad, paper_cov, ink_cov = _warp_to_scene(
+            rng, paper, ink, placement
+        )
         on_paper = paper_mask > 0
         rgb[on_paper] = rgb_w[on_paper]
         mask[on_paper] = PAPER
@@ -659,13 +784,15 @@ def compose_scene(
         else:  # center
             cx, cy = int(centroid[0]), int(centroid[1])
             scale = float(rng.uniform(0.7, 1.0))
-        hand_rgb, hand_mask = _transform_hand(rng, hand, scale)
+        hand_rgb, hand_mask, cov1 = _transform_hand(rng, hand, scale)
         _paste_hand(rgb, mask, hand_rgb, hand_mask, cx, cy)
+        _paste_coverage(hand_cov, cov1, cx, cy)
         if second_hand is not None:
-            hand2_rgb, hand2_mask = _transform_hand(rng, second_hand, 0.7)
+            hand2_rgb, hand2_mask, cov2 = _transform_hand(rng, second_hand, 0.7)
             _paste_hand(rgb, mask, hand2_rgb, hand2_mask, int(SIZE * 0.2), int(SIZE * 0.8))
+            _paste_coverage(hand_cov, cov2, int(SIZE * 0.2), int(SIZE * 0.8))
 
-    return {"rgb": _augment_rgb(rng, rgb), "mask": mask, "ink_full": ink_full, "info": info}
+    return finish(rgb)
 
 
 def generate_dataset(
@@ -692,13 +819,18 @@ def generate_dataset(
         "seed": seed,
         "image_size": SIZE,
         "classes": {str(k): v for k, v in CLASSES.items()},
+        "ignore_index": IGNORE,
         "splits": splits,
         "hand_base_splits": hand_base_splits,
         "hand_mask_threshold": HAND_MASK_THRESHOLD,
         "scenes": [],
         "notes": (
             "ink_full is NOT a training class. hand_placeholder=true means "
-            "synthetic placeholder hand, not FreiHAND."
+            "synthetic placeholder hand, not FreiHAND. Mask value 255 is "
+            "IGNORE (ambiguous pixel, no supervision): sub-pixel layer "
+            "mixtures only (ink/paper/hand edges); the generator's soft "
+            "shadow does NOT create ignore (measured, audit 2026-11-05). "
+            "Per-scene counts in ignore_causes."
         ),
     }
     negative_cycle = NEGATIVE_TYPES
