@@ -5,6 +5,61 @@ binários históricos `draw_seg_v3_dyn.onnx` e `page_clean_unet.onnx`: o
 primeiro treina o SegFormer de quatro classes; o segundo é uma rodada de
 candidato U-Net. Nenhum candidato entra em produção sem os gates reais.
 
+## Fluxo consolidado: o treino mora no repo (2026-11-05)
+
+Regra do projeto: **nada de corpo de treino feito por fora a cada
+corrida**. O corpo vive em `training/`, versionado, e cada corrida o
+melhora no lugar. Kaggle/Colab são só lançadores finos.
+
+Um comando, depois do clone:
+
+```bash
+pip install -r training/requirements.txt
+python training/train.py --config training/configs/base.json \
+  --data-dir dataset/synthetic --out-dir out
+```
+
+- **Configs por experimento** em `training/configs/` (ver o README de lá):
+  experimento novo = config nova, nunca corpo novo. Sem `--config`, vale
+  o default histórico `training/config.json`.
+- **Lançadores finos** em `training/launchers/` (`kaggle.ipynb`,
+  `colab.ipynb`): 3 células — clonar/puxar o repo, instalar
+  `training/requirements.txt`, smoke + corrida pelo comando acima.
+  Notebook não contém corpo de treino.
+- **Loader/runtime agressivo por padrão** (bloco `training` da config):
+  `pin_memory` em CUDA, `persistent_workers` + `prefetch_factor` com
+  workers > 0, TF32 e `cudnn.benchmark` ligados, `num_workers` default
+  `min(núcleos, 8)` quando a config não fixa. Desligar:
+  `"fast_loader": false` ou `"num_workers": 0`. Em CPU nada muda.
+- **Sonda de batch pela VRAM**: `--probe-batch` (ou
+  `"batch_size": "auto"` na config) roda o **passo real** de treino —
+  forward, loss completa, backward e passo do otimizador em lotes reais —
+  e escolhe o maior batch dentro de ~85% da VRAM
+  (`"probe_vram_fraction"` ajusta). Sonda parcial não é aceita: a lição
+  medida de 2026-11-03 é que medir só parte do grafo escolhe batch que o
+  passo real estoura em OOM. Sem CUDA, a sonda é um no-op limpo.
+- **Recibo de utilização**: a 1ª época grava `receipt.json` em
+  `--out-dir` com tempo/passo, amostras/s, projeção de duração, pico e
+  total de VRAM (CUDA) e utilização de GPU via pynvml quando ele está
+  instalado — mesmo espírito do `receipt.json` do `train_tpu.py`.
+  Treino que subutiliza o hardware é defeito: confira o recibo antes de
+  deixar a corrida seguir.
+- **TPU** continua no adapter `training/train_tpu.py`, que reusa este
+  corpo (não é um segundo corpo).
+
+### Migração pendente: corpo 3 classes (tinta × impresso)
+
+A corrida de 3 classes (fundo × impresso × tinta) **ainda não** é uma
+config deste corpo, e fingir que é seria mentira: a arquitetura difere
+(U-Net page-clean gerada por patches ancorados, linhagem do corpo tri/
+destilação, com KD e clDice — não o SegFormer de 4 classes daqui) e o
+corpo dela vive fora do repo (`draw-lab/ink-3class-run/`, pacote do
+Guss). A migração certa é trazer aquele corpo para `training/` como
+módulo irmão quando a corrida for retomada — aí sim ele ganha config em
+`training/configs/`, sonda e recibo pelos mesmos mecanismos. Até lá, o
+modelo de tinta em produção segue o da linhagem page-clean, intocado
+por esta consolidação.
+
 ## SegFormer: quatro classes
 
 ```bash
