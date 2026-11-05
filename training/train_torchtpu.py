@@ -290,7 +290,12 @@ def _train(run_cfg, data_dir, out_dir, device_kind):
         model.train()
         _sync(dev)
         t0 = time.time()
-        tot = torch.zeros((), device=dev)
+        # Keep detached scalar losses in short windows instead of building
+        # a device-side chain with ``tot = tot + loss``. TorchTPU may report
+        # an earlier asynchronous execution failure only when that chained
+        # scalar is materialized on the host at epoch end.
+        loss_window = []
+        loss_total = 0.0
         nb = 0
         opt.zero_grad(set_to_none=True)
         for images, masks in train_loader:
@@ -309,7 +314,7 @@ def _train(run_cfg, data_dir, out_dir, device_kind):
                         align_corners=False)
                 loss = T.combined_loss(logits, masks, cw) / accum
             loss.backward()
-            tot = tot + loss.detach() * accum
+            loss_window.append((loss.detach() * accum).reshape(()))
             nb += 1
             if nb <= 3:
                 _sync(dev)
@@ -320,12 +325,17 @@ def _train(run_cfg, data_dir, out_dir, device_kind):
                 sched.step()
                 opt.zero_grad(set_to_none=True)
             if nb % run_cfg["log_every"] == 0:
+                window_sum = float(torch.stack(loss_window).sum())
+                loss_total += window_sum
+                loss_window.clear()
                 _log(f"epoca{epoch} passo{nb}/{len(train_loader)} "
-                     f"loss_media {float(tot) / nb:.4f} "
+                     f"loss_media {loss_total / nb:.4f} "
                      f"({time.time() - t0:.0f}s)")
         _sync(dev)
         dt = time.time() - t0
-        mean_loss = float(tot) / max(nb, 1)
+        if loss_window:
+            loss_total += float(torch.stack(loss_window).sum())
+        mean_loss = loss_total / max(nb, 1)
         metrics = T.evaluate(model, val_loader, dev)
         iou = metrics["mean_iou"]
         steps = max(nb, 1)
