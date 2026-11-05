@@ -49,8 +49,10 @@ varredura seguinte se o receipt mostrar HBM sobrando). LR 1,4e-4 =
 ``--grad-accum`` disponível pra recompor lote efetivo maior sem
 subir o lote por device.
 
-Uso (na sessão Colab com TPU v5e-1/v6e-1, após o preparo):
-    python training/train_torchtpu.py            # smoke embutido não:
+Uso canônico (sessão Colab com TPU v5e-1/v6e-1): o lançador
+``training/run_t7.py`` cuida de dependências, probe em
+subprocesso, smoke com portão e desta corrida — um comando só.
+Direto neste corpo (quem chama assume o preparo):
     python training/train_torchtpu.py --epochs 1 --train-count 96 \
         --val-count 16 --test-count 16           # <- assim é o smoke
 
@@ -113,7 +115,15 @@ def _preflight():
     import importlib
 
     for mod in ("cv2", "numpy", "torch", "transformers"):
-        m = importlib.import_module(mod)
+        try:
+            m = importlib.import_module(mod)
+        except ImportError:
+            _log(f"ERRO: modulo '{mod}' ausente neste runtime. "
+                 "Rode pelo training/run_t7.py (ele instala os "
+                 "extras puros sozinho) ou instale manualmente: "
+                 "pip install opencv-contrib-python-headless "
+                 "transformers onnx onnxruntime albumentations")
+            raise SystemExit(2)
         _log("MOD", mod, getattr(m, "__version__", "?"))
     try:
         m = importlib.import_module("albumentations")
@@ -175,7 +185,9 @@ def _resolve_device(kind):
         return torch.device("cpu"), {"name": "cpu", "world": 1}
     try:
         import torch_tpu  # noqa: F401  (registro explicito do backend)
-        tpu_ver = torch_tpu.__version__
+        # A 0.2.0 pode nao expor __version__ (medido no Colab em
+        # 2026-11-05): a versao e recibo, nunca motivo de queda.
+        tpu_ver = getattr(torch_tpu, "__version__", "?")
     except ImportError:
         _log("ERRO: torch_tpu nao instalado neste runtime — este corpo "
              "e TorchTPU. No Colab atual ele ja vem na imagem; fora "
@@ -233,7 +245,13 @@ def _train(run_cfg, data_dir, out_dir, device_kind):
          "| torch", torch.__version__)
     torch.manual_seed(run_cfg["seed"])
     if dev.type == "tpu":
-        torch.tpu.manual_seed_all(run_cfg["seed"])
+        # manual_seed_all do namespace tpu e conveniencia da API;
+        # se uma versao do backend nao expoe-la, a seed global ja
+        # foi fixada e a corrida nao pode cair por isso.
+        seed_all = getattr(getattr(torch, "tpu", None),
+                           "manual_seed_all", None)
+        if seed_all is not None:
+            seed_all(run_cfg["seed"])
     cfg = T.load_config(str(REPO_ROOT / "training" / "config.json"))
     train_ds = T.build_dataset(data_dir, "train", cfg,
                                augment=run_cfg.get("augment", True))
