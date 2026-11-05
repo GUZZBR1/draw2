@@ -40,6 +40,7 @@ métricas possam ser testados sem GPU e sem torch instalado.
 import argparse
 import json
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -458,6 +459,38 @@ def configure_mixed_precision(torch, device, training_cfg):
     if precision == "fp16":
         return precision, torch.float16, torch.amp.GradScaler("cuda")
     return "fp32", None, None
+
+
+def configure_fast_runtime(torch, device):
+    """Liga TF32 e o benchmark do cuDNN em CUDA; em CPU não muda nada."""
+    if torch.device(device).type != "cuda":
+        return
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cudnn.benchmark = True
+
+
+def loader_kwargs(torch, device, training_cfg):
+    """Kwargs agressivos de DataLoader, gated por config (defaults ligados).
+
+    - num_workers: config manda; sem config, min(núcleos, 8).
+    - pin_memory só em CUDA (em CPU é custo sem ganho).
+    - persistent_workers/prefetch_factor só com workers > 0 (o PyTorch
+      rejeita os dois com num_workers=0).
+    Desligar: "fast_loader": false na config, ou num_workers: 0.
+    """
+    workers = training_cfg.get("num_workers")
+    if workers is None:
+        workers = min(os.cpu_count() or 1, 8)
+    kwargs = {"num_workers": int(workers)}
+    if not training_cfg.get("fast_loader", True):
+        return kwargs
+    if torch.device(device).type == "cuda":
+        kwargs["pin_memory"] = True
+    if kwargs["num_workers"] > 0:
+        kwargs["persistent_workers"] = True
+        kwargs["prefetch_factor"] = int(training_cfg.get("prefetch_factor", 2))
+    return kwargs
 
 
 def train_one_epoch(
@@ -938,9 +971,12 @@ def main(argv=None):
     )
     val_ds = build_dataset(args.data_dir, "val", cfg, augment=False)
     test_ds = build_dataset(args.data_dir, "test", cfg, augment=False)
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=tr["num_workers"])
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=tr["num_workers"])
-    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=tr["num_workers"])
+    configure_fast_runtime(torch, device)
+    dl_kwargs = loader_kwargs(torch, device, tr)
+    print(f"dataloader: {dl_kwargs}")
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, **dl_kwargs)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, **dl_kwargs)
+    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, **dl_kwargs)
     train_pairs = synthetic_train_pairs + real_pairs
     counts = pixel_counts(train_pairs)
     print(
