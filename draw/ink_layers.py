@@ -194,6 +194,75 @@ _INK_FRONTIER_KERNEL = np.ones(
 )
 
 
+# Registro da evidencia na geometria ancora da geracao (medido
+# na regua desta frente, 2026-11-05, draw-lab/parallel-2026-11-05/
+# repassada): o acumulador vive numa grade fixa da pagina, mas a
+# geometria que retifica cada passada anda — a cadeia rastreador
+# + mediana do app sustenta deslocamentos de varios px por
+# dezenas de passadas quando um vies persistente (a mao sobre um
+# canto) puxa o quad, e ate o tremor de +-1 px entre passadas
+# basta. Sem registro, a evidencia entra na grade na posicao em
+# que AQUELE quad a projetou: a janela do voto e de 0,75 s e nao
+# distingue "tinta nova" de "a mesma tinta re-projetada 2 px ao
+# lado" — cada alinhamento confirma a sua copia e a confirmada
+# degenera para a uniao de todas as alinhagens, a tinta assentada
+# reimpressa camada sobre camada. Na regua (pagina real assentada
+# do cache de 2026-11-01, 300 passadas, nenhum conteudo novo):
+# geometria congelada confirma 20.137 px e para; tremor de +-1 px
+# confirma 45.528 px; deriva lenta de 3 px, 42.930 px; vies de
+# canto sustentado, 71.548 px — contra unioes de 47.472/42.711/
+# 76.302 px das mascaras das alinhagens: o voto, sob geometria
+# movel, e a uniao antiga com outro nome.
+# O registro: a primeira passada da geracao fixa a geometria
+# ancora; o mapa de cada passada seguinte e re-projetado para a
+# grade da ancora (M = A @ C^-1, homografias camera->pagina da
+# ancora e da passada) antes do voto. Mover o caderno vira so
+# re-registro: o conteudo confirmado nao anda nem duplica
+# (registrar uma vez, adaptar por substituicao). O custo e um
+# warpPerspective por passada sobre o mapa float, ~ms contra os
+# ~168 ms da passada do modelo; geometria igual a da ancora (o
+# caso assentado, com o quad congelado) pula o warp.
+_REGISTRATION_IDENTITY_TOL = 1e-4
+
+
+def _corners_page_matrix(corners, width, height):
+    """Homografia camera->pagina de um quad, na grade do mapa.
+
+    Mesma convencao de draw.paper.perspective_matrix (os cantos
+    na ordem do rastreador, casando posicionalmente com o destino
+    (0,0), (W,0), (W,H), (0,H)), com o destino no tamanho do
+    mapa da passada: e nessa grade que ancora e passada
+    precisam conversar.
+    """
+    destination = np.array(
+        [(0, 0), (width, 0), (width, height), (0, height)],
+        dtype=np.float32,
+    )
+    source = np.asarray(corners, dtype=np.float32).reshape(4, 2)
+    return cv2.getPerspectiveTransform(source, destination)
+
+
+def _registration_matrix(anchor_corners, corners, shape):
+    """M que leva o mapa desta passada para a grade da ancora.
+
+    Um ponto fisico da pagina tem UMA coordenada na ancora:
+    p_ancora = A @ C^-1 @ p_passada, com A e C as homografias
+    camera->pagina da ancora e desta passada.
+    """
+    height, width = shape
+    anchor = _corners_page_matrix(anchor_corners, width, height)
+    current = _corners_page_matrix(corners, width, height)
+    return anchor @ np.linalg.inv(current)
+
+
+def _registration_is_identity(matrix):
+    """True se a matriz nao move pixel nenhum (tol sub-pixel)."""
+    return bool(
+        np.max(np.abs(matrix - np.eye(3, dtype=np.float64)))
+        < _REGISTRATION_IDENTITY_TOL
+    )
+
+
 class _LayeredInkAccumulator:
     """Tinta de uma geracao em duas camadas: provisoria e confirmada.
 
@@ -373,7 +442,12 @@ class _PageCleanWorker:
     publicado da geracao anterior; a uniao da trabalhadora zera na
     primeira passada da geracao nova. Resultado de geracao velha
     nunca entra no canvas novo, mesmo com uma passada em voo na
-    troca. Blocos sujos por diff de pixels NAO entram aqui: medido
+    troca. Dentro da geracao, a evidencia de cada passada e
+    registrada na geometria da primeira (a ancora) antes do voto:
+    o quad que retifica anda entre passadas, e sem o registro cada
+    alinhamento confirmava a sua copia da mesma tinta — a
+    reimpressao medida na regua de 2026-11-05 (ver
+    _REGISTRATION_IDENTITY_TOL). Blocos sujos por diff de pixels NAO entram aqui: medido
     nesta webcam, o churn entre quadros consecutivos parados
     (media de |diff| por bloco ~1,5-2,0 niveis; maximo pos-blur
     4-6) empata ou supera o sinal de um traco novo no bloco
@@ -396,6 +470,13 @@ class _PageCleanWorker:
         self._error = None
         # Estado privado da trabalhadora (so ela toca):
         self._worker_generation = -1
+        # Geometria ancora da geracao: os cantos da primeira
+        # passada com cantos. Toda evidencia posterior e
+        # registrada nela antes do voto (ver _registration_matrix).
+        # None enquanto a geracao nao teve passada com cantos —
+        # chamadores que nao informam cantos (ferramentas, testes
+        # antigos) seguem com a evidencia na propria geometria.
+        self._anchor_corners = None
         self._accumulator = _LayeredInkAccumulator(
             threshold=getattr(page_clean, "threshold", 0.7)
         )
@@ -453,7 +534,24 @@ class _PageCleanWorker:
             self._condition.notify_all()
             return self._generation
 
-    def submit(self, warped, generation):
+    def submit(self, warped, generation, corners=None):
+        """Entrega o warp mais recente (latest-wins).
+
+        corners e o quad que retificou ESTE warp (os mesmos
+        cantos que o chamador passou ao warp_sheet): a
+        trabalhadora registra a evidencia da passada na
+        geometria ancora da geracao antes do voto. Cantos fora
+        do formato (4, 2) sao tratados como ausentes — um quad
+        malformado nao pode derrubar a thread da tinta; sem
+        cantos, a passada entra na propria geometria.
+        """
+        if corners is not None:
+            try:
+                corners = np.asarray(corners, dtype=np.float32)
+            except (TypeError, ValueError):
+                corners = None
+            if corners is not None and corners.shape != (4, 2):
+                corners = None
         with self._condition:
             if self._stopped or generation != self._generation:
                 return
@@ -463,7 +561,9 @@ class _PageCleanWorker:
                 # porque ela e atraso real de atualizacao.
                 self._telemetry_replaced += 1
             self._telemetry_submits += 1
-            self._pending = (warped, generation, time.monotonic())
+            self._pending = (
+                warped, generation, time.monotonic(), corners
+            )
             self._condition.notify_all()
 
     def set_hand_presence(self, present, moved=False):
@@ -657,7 +757,9 @@ class _PageCleanWorker:
                         return
                 if self._pending is None:
                     continue
-                warped, generation, submitted_at = self._pending
+                warped, generation, submitted_at, corners = (
+                    self._pending
+                )
                 self._pending = None
                 self._last_pass_start = time.monotonic()
                 pass_started_at = self._last_pass_start
@@ -694,6 +796,28 @@ class _PageCleanWorker:
                     self._accumulator.reset()
                     self._generation_passes = 0
                     self._quiet_passes = 0
+                    self._anchor_corners = corners
+                if (
+                    self._anchor_corners is not None
+                    and corners is not None
+                ):
+                    # Registro na ancora: a evidencia desta
+                    # passada e re-projetada para a grade da
+                    # primeira geometria da geracao antes do
+                    # voto, para a mesma tinta nao confirmar de
+                    # novo a cada alinhamento do quad (ver o
+                    # comentario de _REGISTRATION_IDENTITY_TOL).
+                    matrix = _registration_matrix(
+                        self._anchor_corners, corners, prob.shape
+                    )
+                    if not _registration_is_identity(matrix):
+                        prob = cv2.warpPerspective(
+                            prob,
+                            matrix,
+                            (prob.shape[1], prob.shape[0]),
+                            flags=cv2.INTER_LINEAR,
+                            borderValue=0.0,
+                        )
                 result = self._accumulator.add(prob)
                 if (
                     result["confirmed_changed"]
