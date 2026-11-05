@@ -16,6 +16,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from draw import app as app_module  # noqa: E402
+from draw import ink_layers as ink_layers_module  # noqa: E402
 
 H, W = 40, 60
 
@@ -39,7 +40,7 @@ class _BlockingInk:
 def test_telemetry_counts_replaced_pending_and_stamps_stages(
         monkeypatch):
     monkeypatch.setattr(
-        app_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
+        ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
     fake = _BlockingInk()
     worker = app_module._PageCleanWorker(fake).start()
     try:
@@ -96,7 +97,7 @@ def test_telemetry_counts_replaced_pending_and_stamps_stages(
 
 def test_telemetry_snapshot_is_a_copy(monkeypatch):
     monkeypatch.setattr(
-        app_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
+        ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
     fake = _BlockingInk()
     fake.release.set()
     worker = app_module._PageCleanWorker(fake).start()
