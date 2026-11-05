@@ -453,6 +453,8 @@ def configure_mixed_precision(torch, device, training_cfg):
         return "fp32", None, None
     preferred = training_cfg.get("mixed_precision", "bf16")
     fallback = training_cfg.get("mixed_precision_fallback", "fp16")
+    if preferred == "fp32":
+        return "fp32", None, None
     supports_bf16 = bool(getattr(torch.cuda, "is_bf16_supported", lambda: False)())
     precision = preferred if preferred == "bf16" and supports_bf16 else fallback
     if precision == "bf16":
@@ -469,6 +471,29 @@ def configure_fast_runtime(torch, device):
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
     torch.backends.cudnn.benchmark = True
+
+
+def _model_logits(model, images):
+    """Accepta SegformerOutput ou Tensor (saída do DataParallel multi-GPU)."""
+    output = model(pixel_values=images)
+    return output if hasattr(output, "shape") else output.logits
+
+
+def _data_parallel(torch, model):
+    """Usa todas as GPUs visíveis sem mudar o contrato do modelo base."""
+    if not torch.cuda.is_available() or torch.cuda.device_count() < 2:
+        return model, model
+
+    class LogitsOnly(torch.nn.Module):
+        def __init__(self, wrapped):
+            super().__init__()
+            self.wrapped = wrapped
+
+        def forward(self, pixel_values):
+            return self.wrapped(pixel_values=pixel_values).logits
+
+    parallel = torch.nn.DataParallel(LogitsOnly(model))
+    return parallel, model
 
 
 def loader_kwargs(torch, device, training_cfg):
@@ -543,7 +568,7 @@ def probe_batch_size(
             with torch.autocast(
                 device_type="cuda", dtype=amp_dtype, enabled=amp_dtype is not None
             ):
-                logits = model(pixel_values=images).logits
+                logits = _model_logits(model, images)
                 if logits.shape[-2:] != masks.shape[-2:]:
                     logits = F.interpolate(
                         logits, size=masks.shape[-2:], mode="bilinear", align_corners=False
@@ -675,7 +700,7 @@ def train_one_epoch(
             dtype=amp_dtype,
             enabled=amp_dtype is not None,
         ):
-            logits = model(pixel_values=images).logits
+            logits = _model_logits(model, images)
             if logits.shape[-2:] != masks.shape[-2:]:
                 logits = F.interpolate(
                     logits, size=masks.shape[-2:], mode="bilinear", align_corners=False
@@ -743,7 +768,7 @@ def evaluate(model, loader, device, target_loader=None):
             else:
                 images, masks = batch
             images = images.to(device)
-            logits = model(pixel_values=images).logits
+            logits = _model_logits(model, images)
             if logits.shape[-2:] != masks.shape[-2:]:
                 import torch.nn.functional as F
 
@@ -1049,6 +1074,10 @@ def main(argv=None):
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument(
+        "--precision", choices=("bf16", "fp16", "fp32"), default=None,
+        help="Substitui a precisão mista da config nesta corrida.",
+    )
+    parser.add_argument(
         "--probe-batch",
         action="store_true",
         help="Dimensiona o batch pela VRAM rodando o passo real de treino (só CUDA); "
@@ -1059,6 +1088,8 @@ def main(argv=None):
     cfg = load_config(args.config)
     if args.smoke:
         return smoke(args.smoke_dir)
+    if args.precision is not None:
+        cfg["training"]["mixed_precision"] = args.precision
 
     real_manifest = None
     real_labels_unverified = False
@@ -1145,7 +1176,9 @@ def main(argv=None):
             f"não revisados: {real_labels_unverified}"
         )
 
-    model = build_model(cfg).to(device)
+    model, base_model = _data_parallel(torch, build_model(cfg).to(device))
+    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        print(f"data parallel: usando {torch.cuda.device_count()} GPUs CUDA")
     precision, amp_dtype, scaler = configure_mixed_precision(torch, device, tr)
     class_weights = torch.tensor(cfg["loss"]["cross_entropy_class_weights"], dtype=torch.float32, device=device)
     if probe_requested:
@@ -1213,11 +1246,11 @@ def main(argv=None):
             )
             print(f"RECEIPT {json.dumps(receipt)}")
         print(f"época {epoch}: loss {loss:.4f}, val_mean_iou {metrics['mean_iou']:.4f}")
-        torch.save(model.state_dict(), out_dir / "checkpoints" / "last.pt")
+        torch.save(base_model.state_dict(), out_dir / "checkpoints" / "last.pt")
         if metrics["mean_iou"] > best_iou:
             best_iou = metrics["mean_iou"]
             bad_epochs = 0
-            torch.save(model.state_dict(), out_dir / "checkpoints" / "best.pt")
+            torch.save(base_model.state_dict(), out_dir / "checkpoints" / "best.pt")
         else:
             bad_epochs += 1
             if bad_epochs >= tr["early_stopping"]["patience_epochs"]:
@@ -1228,16 +1261,16 @@ def main(argv=None):
     # Não-fatal: se a exportação falhar, as métricas e os demais artefatos
     # ainda são escritos, e a falha fica registrada em onnx_validation —
     # antes, uma falha aqui perdia o metrics.json inteiro após o treino.
-    model.load_state_dict(torch.load(out_dir / "checkpoints" / "best.pt", map_location=device))
+    base_model.load_state_dict(torch.load(out_dir / "checkpoints" / "best.pt", map_location=device))
     onnx_path = out_dir / cfg["export"]["onnx"]
     try:
-        export_onnx(model, str(onnx_path), cfg)
-        onnx_check = validate_onnx(model, onnx_path, val_loader, device, cfg)
+        export_onnx(base_model, str(onnx_path), cfg)
+        onnx_check = validate_onnx(base_model, onnx_path, val_loader, device, cfg)
     except Exception as exc:  # noqa: BLE001 - registrar, não perder o treino
         print(f"AVISO: exportação ONNX falhou ({exc}); métricas serão escritas sem ONNX.", file=sys.stderr)
         onnx_check = {"status": "failed", "error": str(exc)}
-    final_metrics = evaluate(model, val_loader, device)
-    final_metrics["test"] = evaluate(model, test_loader, device)
+    final_metrics = evaluate(base_model, val_loader, device)
+    final_metrics["test"] = evaluate(base_model, test_loader, device)
     final_metrics["onnx_validation"] = onnx_check
     final_metrics["delivery_status"] = onnx_delivery_status(onnx_check)
     final_metrics["history"] = history

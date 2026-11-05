@@ -11,20 +11,27 @@ Regra do projeto: **nada de corpo de treino feito por fora a cada
 corrida**. O corpo vive em `training/`, versionado, e cada corrida o
 melhora no lugar. Kaggle/Colab são só lançadores finos.
 
-Um comando, depois do clone:
+Um comando de treino, depois do clone (GPU ou TPU detectada pelo runtime):
 
 ```bash
 pip install -r training/requirements.txt
-python training/train.py --config training/configs/base.json \
+python training/run.py --backend auto --config training/configs/base.json \
   --data-dir dataset/synthetic --out-dir out
 ```
+
+`training/requirements.txt` instala somente dependências do projeto. Torch,
+NumPy e o runtime de aceleração são fornecidos pela imagem da plataforma e
+não são substituídos durante a instalação. `training/run.py` direciona CUDA
+para `train.py`, TPU XLA para `train_tpu.py` e TorchTPU para `run_t7.py`.
+Em CUDA, `--batch-size auto` (padrão) mede o passo real e escolhe o batch pela
+VRAM; em TPU, cada adaptador mantém seu dimensionamento próprio.
 
 - **Configs por experimento** em `training/configs/` (ver o README de lá):
   experimento novo = config nova, nunca corpo novo. Sem `--config`, vale
   o default histórico `training/config.json`.
 - **Lançadores finos** em `training/launchers/` (`kaggle.ipynb`,
-  `colab.ipynb`): 3 células — clonar/puxar o repo, instalar
-  `training/requirements.txt`, smoke + corrida pelo comando acima.
+  `colab.ipynb`): clonar/puxar o repo, instalar
+  `training/requirements.txt`, smoke + corrida por `training/run.py`.
   Notebook não contém corpo de treino.
 - **Loader/runtime agressivo por padrão** (bloco `training` da config):
   `pin_memory` em CUDA, `persistent_workers` + `prefetch_factor` com

@@ -1,8 +1,9 @@
-# Direct training/runtime dependencies; Python 3.11 or 3.12.
-# Select the PyTorch wheel/index that matches the target CUDA runtime.
-numpy==1.26.4
-opencv-contrib-python==4.11.0.86
-torch==2.11.0
+# Shared training dependencies for Kaggle/Colab GPU and TPU runtimes.
+# Accelerator frameworks (torch, torch_xla, torch_tpu) and NumPy come from
+# the selected runtime image and must not be replaced by this file.
+ml-dtypes==0.5.4
+# Albumentations already depends on this package; install one OpenCV wheel only.
+opencv-python-headless==4.11.0.86
 transformers>=5.5.0,<6
 albumentations==2.0.8
 onnx==1.23.0

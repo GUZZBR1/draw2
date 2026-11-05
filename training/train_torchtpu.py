@@ -194,7 +194,7 @@ def _preflight():
             _log(f"ERRO: modulo '{mod}' ausente neste runtime. "
                  "Rode pelo training/run_t7.py (ele instala os "
                  "extras puros sozinho) ou instale manualmente: "
-                 "pip install opencv-contrib-python-headless "
+                 "pip install opencv-python-headless "
                  "transformers onnx onnxruntime albumentations")
             raise SystemExit(2)
         _log("MOD", mod, getattr(m, "__version__", "?"))

@@ -7,12 +7,12 @@ sem o usuário encostar em pip, probe ou célula extra:
 
 1. DEPENDÊNCIAS — confere os módulos que o corpo precisa e
    instala SO os extras puros que faltarem (onnx, onnxruntime,
-   albumentations, opencv-contrib-python-headless, transformers).
+   albumentations, opencv-python-headless, transformers).
    NUNCA instala nem atualiza torch/torch_tpu/numpy: o par da
    imagem é o provado, e mexer nele quebra o backend. (O
-   training/requirements.txt é da rota CUDA/py3.11-3.12 e NÃO é
-   usado aqui: ele fixa torch==2.11, que destruiria o par
-   torch 2.14 + torch_tpu 0.2.0 da imagem TPU do Colab.) Se
+   training/requirements.txt contém só dependências de usuário e
+   não é necessário neste caminho: Torch, TorchTPU e NumPy vêm da
+   imagem do Colab.) Se
    torch ou torch_tpu faltar, para com a explicação; nunca tenta
    substituir nenhum dos dois.
 2. PROBE — roda training/torchtpu_probe.py em subprocesso (este
@@ -82,7 +82,7 @@ BENCHMARK = HERE / "benchmark_t7.py"
 # Extras puros: instalar é seguro porque nenhum deles é o par
 # torch/torch_tpu nem o numpy contra o qual o torch foi buildado.
 INSTALLABLE = {
-    "cv2": "opencv-contrib-python-headless",
+    "cv2": "opencv-python-headless",
     "transformers": "transformers",
     "albumentations": "albumentations",
     "onnx": "onnx",
