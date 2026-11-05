@@ -32,6 +32,17 @@ a documentação oficial do TorchTPU 0.2.0
 - ``--compile`` liga ``torch.compile(backend="tpu")`` (a orientação
   oficial é provar eager primeiro, compilar depois: o smoke roda
   eager; a corrida pode ligar o compile);
+- limite de VMEM scoped do XLA armado ANTES do import do torch
+  (``LIBTPU_INIT_ARGS=--xla_tpu_scoped_vmem_limit_kib=...``): com
+  --compile, o copy do decode head [32,128,128,128] pediu 24,01M de
+  VMEM scoped e estourou o default de 16M (OpenXLA E1001,
+  CompileTimeScopedVmemOom — medido no Colab em 2026-11-05; não é
+  OOM de HBM). O teto scoped utilizável da v5e é 128M; o padrão
+  aqui é 65536 KiB (o valor dos exemplos oficiais do Google),
+  respeitando flag já presente no ambiente, ajustável por
+  ``--scoped-vmem-kib`` (0 desliga). Como o libtpu trava as flags
+  na inicialização, subir o limite exige processo novo — quem
+  relança é o ``training/run_t7.py`` (ver a escada dele);
 - sem ParallelLoader/mark_step/optimizer_step: loader comum com
   workers/prefetch, ``drop_last=True`` no treino (shapes fixos =
   grafos estáveis) e loss sincronizada só nos pontos de log
@@ -111,6 +122,66 @@ def _arm_compile_cache(out_dir):
                           "draw_t7_tier2")
     _log("CACHE_COMPILACAO tier3:", os.environ[
         "TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT"])
+
+
+SCOPED_VMEM_FLAG = "--xla_tpu_scoped_vmem_limit_kib"
+SCOPED_VMEM_DEFAULT_KIB = 65536
+# Teto scoped utilizável documentado pelo OpenXLA (E1001): v5e
+# 131072 KiB, v6e 131008 KiB. Acima disso a flag não compra nada.
+SCOPED_VMEM_MAX_KIB = 131072
+
+
+def _scoped_vmem_in(args_str):
+    """Valor KiB da flag scoped numa string de flags, ou None."""
+    for tok in (args_str or "").split():
+        if tok.startswith(SCOPED_VMEM_FLAG + "="):
+            try:
+                return int(tok.split("=", 1)[1])
+            except ValueError:
+                return None
+    return None
+
+
+def _with_scoped_vmem(args_str, kib):
+    """String de flags com a flag scoped definida (troca ou anexa)."""
+    toks = [t for t in (args_str or "").split()
+            if not t.startswith(SCOPED_VMEM_FLAG + "=")]
+    if kib:
+        toks.append(f"{SCOPED_VMEM_FLAG}={kib}")
+    return " ".join(toks)
+
+
+def _arm_scoped_vmem(kib):
+    """Arma o limite de VMEM scoped no LIBTPU_INIT_ARGS.
+
+    ANTES de qualquer import do torch: o libtpu lê as flags na
+    inicialização do backend e ignora mudança posterior no mesmo
+    processo. Sem isto, o --compile da corrida T7 morre no 1º passo
+    com o E1001 (o copy [32,128,128,128] do decode head pede
+    24,01M contra o default de 16384 KiB). Flag já presente no
+    ambiente vence (é o canal do run_t7.py na escada de retry e de
+    quem lança à mão); ``kib=0`` desliga a intervenção. Devolve o
+    limite efetivo em KiB, ou None.
+    """
+    existing = os.environ.get("LIBTPU_INIT_ARGS", "")
+    current = _scoped_vmem_in(existing)
+    if current is not None:
+        _log("VMEM_SCOPED_KIB", current, "fonte=ambiente")
+        return current
+    if not kib:
+        _log("VMEM_SCOPED_KIB desligado (--scoped-vmem-kib 0); "
+             "vale o default do XLA (16384)")
+        return None
+    kib = min(int(kib), SCOPED_VMEM_MAX_KIB)
+    os.environ["LIBTPU_INIT_ARGS"] = _with_scoped_vmem(existing, kib)
+    _log("VMEM_SCOPED_KIB", kib, "fonte=corpo",
+         "| LIBTPU_INIT_ARGS:", os.environ["LIBTPU_INIT_ARGS"])
+    return kib
+
+
+def _is_scoped_vmem_oom(exc):
+    s = str(exc)
+    return "ScopedVmemOom" in s or "scoped vmem" in s.lower()
 
 
 def _preflight():
@@ -412,6 +483,8 @@ def _train(run_cfg, data_dir, out_dir, device_kind):
             receipt["device"] = info["name"]
             receipt["precision"] = run_cfg["precision"]
             receipt["compile"] = bool(run_cfg["compile"])
+            receipt["scoped_vmem_kib"] = run_cfg.get(
+                "scoped_vmem_kib")
             with open(out_dir / "receipt.json", "w",
                       encoding="utf-8") as f:
                 json.dump(receipt, f, indent=2)
@@ -538,6 +611,14 @@ def main(argv=None):
     parser.add_argument("--log-every", type=int, default=25)
     parser.add_argument("--compile", action="store_true",
                         help="torch.compile(backend='tpu') no treino.")
+    parser.add_argument("--scoped-vmem-kib", type=int, default=None,
+                        help="Limite de VMEM scoped do XLA em KiB "
+                             "(LIBTPU_INIT_ARGS). Padrao: "
+                             f"{SCOPED_VMEM_DEFAULT_KIB} em device "
+                             "tpu (o default do XLA, 16384, estoura "
+                             "o E1001 no copy do decode head); 0 "
+                             "desliga. Flag ja presente no ambiente "
+                             "vence este valor.")
     parser.add_argument("--train-count", type=int, default=4000)
     parser.add_argument("--val-count", type=int, default=400)
     parser.add_argument("--test-count", type=int, default=400)
@@ -560,8 +641,14 @@ def main(argv=None):
     (out_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
 
     # As variaveis do TorchTPU travam na inicializacao do backend:
-    # armar o cache ANTES do preflight importar o torch.
+    # armar o cache e o limite de VMEM scoped ANTES do preflight
+    # importar o torch.
     _arm_compile_cache(out_dir)
+    scoped_kib = None
+    if args.device == "tpu":
+        scoped_kib = _arm_scoped_vmem(
+            SCOPED_VMEM_DEFAULT_KIB if args.scoped_vmem_kib is None
+            else args.scoped_vmem_kib)
 
     batch = args.batch_per_core if args.batch_per_core is not None \
         else args.batch
@@ -569,7 +656,8 @@ def main(argv=None):
         "decoder": args.decoder, "batch": batch,
         "epochs": args.epochs, "lr": args.lr,
         "precision": args.precision, "seed": args.seed,
-        "compile": args.compile, "grad_accum": args.grad_accum,
+        "compile": args.compile, "scoped_vmem_kib": scoped_kib,
+        "grad_accum": args.grad_accum,
         "num_workers": args.num_workers, "log_every": args.log_every,
         "augment": True,
         "n_train": args.train_count, "n_val": args.val_count,
@@ -579,7 +667,21 @@ def main(argv=None):
     _preflight()
     _ensure_data(data_dir, args.seed, args.train_count, args.val_count,
                  args.test_count)
-    return _run(run_cfg, str(data_dir), out_dir, args.device)
+    try:
+        return _run(run_cfg, str(data_dir), out_dir, args.device)
+    except Exception as exc:
+        if _is_scoped_vmem_oom(exc):
+            # E1001: a flag trava na inicializacao do libtpu, entao
+            # subir o limite NESTE processo nao adianta — e preciso
+            # processo novo (o run_t7.py faz isso sozinho na escada
+            # de retry dele). A linha ERRO_E1001 e o sinal que ele
+            # procura no log.
+            _log("ERRO_E1001: CompileTimeScopedVmemOom — o limite "
+                 f"scoped em vigor ({scoped_kib} KiB) nao coube. "
+                 "Relance em processo novo com --scoped-vmem-kib "
+                 f"maior (teto util da v5e: {SCOPED_VMEM_MAX_KIB}) "
+                 "ou sem --compile.")
+        raise
 
 
 if __name__ == "__main__":
