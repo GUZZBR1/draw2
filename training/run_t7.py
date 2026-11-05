@@ -31,8 +31,9 @@ sem o usuário encostar em pip, probe ou célula extra:
    20s, o launcher mostra um heartbeat. Logs anteriores ficam em
    <work>/run_history/.
 
-Flags: --smoke-only (para no passo 3), --epochs N, --precision
-bf16|fp32, --batch N, --device tpu|cpu, --work-dir/--data-dir/
+Flags: --smoke-only (para no passo 3), --benchmark-only (busca
+curta de batch/workers + trace), --epochs N, --precision bf16|fp32,
+--batch N, --device tpu|cuda|cpu, --work-dir/--data-dir/
 --out-dir/--smoke-out-dir, --no-install (não instala nada: só
 confere e para), --force (ignora carimbos), --dry-run (imprime
 o plano e os comandos exatos, sem executar nada).
@@ -65,6 +66,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 BODY = HERE / "train_torchtpu.py"
 PROBE = HERE / "torchtpu_probe.py"
+BENCHMARK = HERE / "benchmark_t7.py"
 
 # Extras puros: instalar é seguro porque nenhum deles é o par
 # torch/torch_tpu nem o numpy contra o qual o torch foi buildado.
@@ -239,9 +241,9 @@ def _ensure_deps(args, work):
 
 def _probe(args, out_dir):
     """Passo 2: prova do device em subprocesso."""
-    if args.device == "cpu":
-        _log("PROBE_SKIP: device=cpu (o selftest do corpo cobre "
-             "este caminho)")
+    if args.device in ("cpu", "cuda"):
+        _log(f"PROBE_SKIP: device={args.device} "
+             "(o benchmark verifica a disponibilidade do device)")
         return True
     rc, out = _run_stream([sys.executable, str(PROBE)],
                           out_dir.parent / "probe_t7.log",
@@ -343,19 +345,53 @@ def _run(args, data_dir, out_dir):
     return 3
 
 
+def _benchmark(args, data_dir, out_dir):
+    """Bounded batch/loader sweep and short hardware profile."""
+    cmd = [sys.executable, str(BENCHMARK),
+           "--device", args.device,
+           "--precision", args.precision,
+           "--data-dir", str(data_dir),
+           "--out-dir", str(out_dir),
+           "--batches", args.bench_batches,
+           "--workers", args.bench_workers,
+           "--warmup-steps", str(args.bench_warmup_steps),
+           "--steps", str(args.bench_steps),
+           "--profile-steps", str(args.bench_profile_steps)]
+    if args.bench_compile:
+        cmd.append("--compile")
+    rc, output = _run_stream(
+        cmd, out_dir.parent / "bench_t7.log", phase="benchmark T7")
+    if rc == 0 and "BENCHMARK_REPORT" in output:
+        _log("BENCHMARK_CONCLUIDO; nenhum checkpoint da corrida foi salvo")
+        return 0
+    _log(f"BENCHMARK_FALHOU rc={rc}; veja {out_dir.parent / 'bench_t7.log'}")
+    return 5
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Lancador unico do treino T7 (TorchTPU): "
                     "dependencias -> probe -> smoke -> corrida.")
     parser.add_argument("--smoke-only", action="store_true",
                         help="Para depois do smoke aprovado.")
+    parser.add_argument("--benchmark-only", action="store_true",
+                        help="Mede T7 sem executar a corrida ou salvar checkpoints.")
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--precision", choices=("bf16", "fp32"),
                         default="bf16")
     parser.add_argument("--batch", type=int, default=None,
                         help="Lote por device (padrao do corpo: 32).")
-    parser.add_argument("--device", choices=("tpu", "cpu"),
+    parser.add_argument("--device", choices=("tpu", "cuda", "cpu"),
                         default="tpu")
+    parser.add_argument("--bench-batches", default="32,64",
+                        help="Até 3 batches para o benchmark, separados por vírgula.")
+    parser.add_argument("--bench-workers", default="0,4,8",
+                        help="Até 3 valores num_workers para o benchmark.")
+    parser.add_argument("--bench-steps", type=int, default=10)
+    parser.add_argument("--bench-warmup-steps", type=int, default=2)
+    parser.add_argument("--bench-profile-steps", type=int, default=6)
+    parser.add_argument("--bench-compile", action="store_true",
+                        help="Compila uma combinação única e mede o custo inicial.")
     parser.add_argument("--work-dir", default=None,
                         help="Raiz de trabalho (ou env DRAW_T7_WORK).")
     parser.add_argument("--data-dir", default=None)
@@ -370,6 +406,13 @@ def main(argv=None):
                         help="Imprime o plano e os comandos exatos, "
                              "sem executar nada.")
     args = parser.parse_args(argv)
+
+    if args.benchmark_only and args.smoke_only:
+        parser.error("use apenas um entre --benchmark-only e --smoke-only")
+    if args.device == "cuda" and not args.benchmark_only:
+        parser.error("--device cuda está disponível neste launcher com --benchmark-only")
+    if args.device == "cpu" and args.benchmark_only:
+        parser.error("--benchmark-only aceita --device tpu ou cuda")
 
     work = Path(args.work_dir or os.environ.get("DRAW_T7_WORK")
                 or _default_workdir())
@@ -395,6 +438,10 @@ def main(argv=None):
              "--test-count 16 (eager)")
         _log("  4) corrida:", sys.executable, BODY, "--compile",
              f"--epochs {args.epochs} --precision {args.precision}")
+        if args.benchmark_only:
+            _log("  benchmark:", sys.executable, BENCHMARK,
+                 f"--device {args.device} --batches {args.bench_batches} "
+                 f"--workers {args.bench_workers}")
         _log("DRY_RUN_OK")
         return 0
 
@@ -412,6 +459,9 @@ def main(argv=None):
     _log("FASE 2/4 probe")
     if not _probe(args, out_dir):
         return 2
+    if args.benchmark_only:
+        _log("BENCHMARK_ONLY: pulando smoke e corrida")
+        return _benchmark(args, data_dir, out_dir)
     _log("FASE 3/4 smoke")
     if not _smoke(args, smoke_out):
         return 4
