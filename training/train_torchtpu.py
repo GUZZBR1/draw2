@@ -21,7 +21,9 @@ a documentação oficial do TorchTPU 0.2.0
   com o torch_tpu instalado); UM processo, sem spawn — nas TPUs
   atuais do Colab (v5e-1/v6e-1) há 1 chip só (world=1);
 - AMP padrão do backend: ``torch.amp.autocast("tpu", bf16)``;
-  sincronização e contagem de devices via ``torch.accelerator``;
+  LayerNorms executam em fp32 com autocast desligado por um bug de
+  lowering do TorchTPU 0.2.0; sincronização e contagem de devices via
+  ``torch.accelerator``;
 - nome/HBM do chip via ``torch.tpu.get_device_properties()``;
 - cache de compilação persistente (Tier 3) apontado pra dentro de
   --out-dir ANTES do import do torch (as variáveis do TorchTPU
@@ -177,6 +179,55 @@ def _build_model_t7(cfg, decoder):
     )
 
 
+def _patch_tpu_bf16_layer_norms(model):
+    """Run LayerNorm in fp32 under TPU bf16 autocast.
+
+    TorchTPU 0.2.0 / libtpu 0.0.50 can fail to lower LayerNorm when
+    autocast promotes a bf16 activation while the module parameters stay
+    fp32. The resulting StableHLO type error is reported asynchronously
+    at a later tensor materialization. Keep the module tree and parameter
+    names intact while doing the normalization in fp32 with autocast off.
+    """
+    import torch
+    import torch.nn.functional as F
+
+    class _TpuBf16SafeLayerNorm(torch.nn.LayerNorm):
+        def forward(self, input):
+            output_dtype = input.dtype
+            with torch.autocast(device_type="tpu", enabled=False):
+                output = F.layer_norm(
+                    input.float(), self.normalized_shape,
+                    self.weight.float() if self.weight is not None else None,
+                    self.bias.float() if self.bias is not None else None,
+                    self.eps,
+                )
+            return output.to(dtype=output_dtype)
+
+    count = 0
+
+    def replace_children(parent):
+        nonlocal count
+        for name, child in list(parent.named_children()):
+            if isinstance(child, torch.nn.LayerNorm):
+                safe = _TpuBf16SafeLayerNorm(
+                    child.normalized_shape,
+                    eps=child.eps,
+                    elementwise_affine=child.elementwise_affine,
+                    bias=child.bias is not None,
+                )
+                if child.elementwise_affine:
+                    safe.weight = child.weight
+                    safe.bias = child.bias
+                safe.train(child.training)
+                setattr(parent, name, safe)
+                count += 1
+            else:
+                replace_children(child)
+
+    replace_children(model)
+    return count
+
+
 def _resolve_device(kind):
     """Devolve (torch.device, info) provando o device ANTES do treino."""
     import torch
@@ -266,6 +317,10 @@ def _train(run_cfg, data_dir, out_dir, device_kind):
     _log("modelo T7 ok; linear_fuse:",
          tuple(model.decode_head.linear_fuse.weight.shape),
          "| params:", sum(p.numel() for p in model.parameters()))
+    use_amp = run_cfg["precision"] == "bf16" and dev.type == "tpu"
+    if use_amp:
+        patched_norms = _patch_tpu_bf16_layer_norms(model)
+        _log("TPU_BF16_LAYER_NORM_FP32", patched_norms)
     model = model.to(dev)
     train_model = model
     if run_cfg["compile"] and dev.type == "tpu":
@@ -281,7 +336,6 @@ def _train(run_cfg, data_dir, out_dir, device_kind):
         warmup_ratio=tr["warmup_ratio"])
     cw = torch.tensor(cfg["loss"]["cross_entropy_class_weights"],
                       dtype=torch.float32, device=dev)
-    use_amp = run_cfg["precision"] == "bf16" and dev.type == "tpu"
     out_dir = Path(out_dir)
     best_iou = -1.0
     t_start = time.time()
