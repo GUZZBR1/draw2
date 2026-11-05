@@ -21,6 +21,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from draw import app as app_module  # noqa: E402
+from draw import ink_layers as ink_layers_module  # noqa: E402
 
 H, W = 40, 60
 
@@ -52,10 +53,10 @@ def _feed(worker, generation, seconds):
 
 
 def test_rest_without_hand_signal(monkeypatch):
-    monkeypatch.setattr(app_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.02)
-    monkeypatch.setattr(app_module, "_IDLE_PROBE_SECONDS", 0.30)
+    monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.02)
+    monkeypatch.setattr(ink_layers_module, "_IDLE_PROBE_SECONDS", 0.30)
     monkeypatch.setattr(
-        app_module, "_NO_HAND_REST_AFTER_STILL_PASSES", 3)
+        ink_layers_module, "_NO_HAND_REST_AFTER_STILL_PASSES", 3)
     fake = _ShiftingInk()
     worker = app_module._PageCleanWorker(fake).start()
     try:
