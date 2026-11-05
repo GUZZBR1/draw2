@@ -47,18 +47,59 @@ python training/train.py --config training/configs/base.json \
 - **TPU** continua no adapter `training/train_tpu.py`, que reusa este
   corpo (não é um segundo corpo).
 
-### Migração pendente: corpo 3 classes (tinta × impresso)
+### Corpo 3 classes (tinta × impresso): migrado (2026-11-05)
 
-A corrida de 3 classes (fundo × impresso × tinta) **ainda não** é uma
-config deste corpo, e fingir que é seria mentira: a arquitetura difere
-(U-Net page-clean gerada por patches ancorados, linhagem do corpo tri/
-destilação, com KD e clDice — não o SegFormer de 4 classes daqui) e o
-corpo dela vive fora do repo (`draw-lab/ink-3class-run/`, pacote do
-Guss). A migração certa é trazer aquele corpo para `training/` como
-módulo irmão quando a corrida for retomada — aí sim ele ganha config em
-`training/configs/`, sonda e recibo pelos mesmos mecanismos. Até lá, o
-modelo de tinta em produção segue o da linhagem page-clean, intocado
-por esta consolidação.
+A corrida de 3 classes (fundo × impresso × tinta) **não** é uma
+config do corpo SegFormer — a arquitetura difere (U-Net page-clean
+destilada, com KD por canal/logit e clDice) — e agora vive no repo
+como módulo irmão:
+
+- `training/train_ink3.py` — o corpo (versão v4 corrigida: contrato
+  de metrics com `run_kind`/`planned_epochs`, smoke fecha em
+  `smoke_finished`, `finished` só com as épocas planejadas
+  cumpridas, resume ignora metrics de smoke). **Arquivo gerado**:
+  não editar à mão.
+- `training/build_ink3_body.py` — o gerador, fonte de verdade do
+  corpo: 31 patches ancorados da linhagem + 1 patch de encaixe no
+  repo (`--config`/`DRAW_CFG`), sobre a base vendada
+  `training/train_body_tri.py` (cópia byte a byte do corpo tri de
+  `draw-lab/tri-run-2026-11-02/`). Regenerar com
+  `python training/build_ink3_body.py` reproduz o corpo byte a byte.
+- Configs: `training/configs/ink-3class.json` (30 épocas,
+  3000/1800/2400, `real_kd_steps` 0) e
+  `training/configs/ink-3class-smoke.json` — cópias fiéis das
+  configs do pacote v4, no esquema plano deste corpo.
+- Testes: `tests/test_ink3_core.py` — as 19 provas da suíte v4
+  (self-test real do corpo, marcos/tau, resume, contrato de
+  metrics). As amostras são geradas pelos geradores da linhagem
+  page-clean, que seguem em `draw-lab/page-clean-v0` (env
+  `DRAW_PAGE_CLEAN_V0` aponta pra eles; sem eles, o teste pula).
+
+Comandos (mesmo padrão de lançador fino; o corpo lê a config de
+`{DRAW_WORK}/cfg.json` ou do `--config`, e consome o staging de
+dados de dentro do `DRAW_WORK` — `input/`, `ink-pairs/`,
+`page-clean/`, que continua vindo dos datasets/pacote):
+
+```bash
+pip install -r training/requirements.txt
+DRAW_WORK=out/ink3-smoke python training/train_ink3.py \
+  --config training/configs/ink-3class-smoke.json
+DRAW_WORK=out/ink3 python training/train_ink3.py \
+  --config training/configs/ink-3class.json
+```
+
+Agressividade: este corpo tem maquinaria própria (AMP fiado só no
+treino, `plan_batch` da linhagem com meta de 78% da VRAM, pipeline
+de patches por pool determinístico) — a sonda e o recibo do
+`train.py` **não** foram forçados pra dentro dele nesta migração;
+se um dia fizerem sentido aqui, entram como patch novo no gerador,
+com prova do self-test.
+
+O que continua fora, de propósito: o pacote v4 do Guss (bundle +
+notebook no Drive) segue **intocado** e é ainda a entrega da rerun
+dele; as próximas iterações da corrida 3 classes é que nascem
+daqui. O modelo de tinta em produção segue o da linhagem
+page-clean, intocado por esta migração.
 
 ## SegFormer: quatro classes
 
