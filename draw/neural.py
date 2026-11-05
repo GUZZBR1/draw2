@@ -305,11 +305,6 @@ def _session_contract(session):
     )
 
 
-def _session_input_size(session):
-    """Resolução de entrada: a do arquivo, se fixa; senão _INPUT_SIZE."""
-    return _session_contract(session).size[0]
-
-
 def _order_corners(points):
     return _paper._order_corners(points)
 
