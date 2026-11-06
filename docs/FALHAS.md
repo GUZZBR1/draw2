@@ -67,11 +67,12 @@ como se fosse reimpresso a cada rodada.
    recuperação de identidade F-11, um `drop` seguido de reabertura
    chamava `new_generation()` e zerava o acumulador. Agora o app
    preserva uma referência e só reusa o canvas quando a primeira
-   máscara registrada reencontra ≥65% da tinta confirmada; conteúdo
-   divergente começa limpo. Porém, na baseline com página real de
-   2026-11-06, os 16/16 retornos que chegam à decisão caem em
-   `new_page`: a recuperação de identidade não dispara (F-09/F-11).
-   O erro de comparação está separado do registro abaixo.
+   máscara registrada reencontra ≥65% da tinta confirmada, agora
+   com dilatação e contenção ≥50%; conteúdo divergente começa
+   limpo. Na baseline real histórica, anterior a essa correção,
+   os 16/16 retornos decidiam `new_page` (F-09/F-11). A correção
+   já passa na régua sintética; falta repetir a página real nessa
+   revisão. O erro de comparação é separado do registro abaixo.
 4. **Provisória → confirmada pinta o mesmo traço duas vezes.** A
    camada provisória aparece em cinza na primeira passada e a
    confirmada repinta em preto por cima quando o voto fecha
@@ -371,8 +372,10 @@ perda passam (tempo e quadros sem confirmação); salto de posição
 exige persistência antes de confirmar. Antes da mitigação F-11, a
 reabertura sempre zerava o canvas. Agora o app preserva a referência
 e pede a decisão por conteúdo na primeira máscara após o retorno;
-na baseline com página real essa decisão falha em todos os retornos
-que chegam a ela; ainda falta vídeo real. A troca de página
+na baseline real anterior à correção de identidade essa decisão
+falhava em todos os retornos que chegavam a ela. A correção com
+dilatação/contenção passa na régua sintética; faltam repetição real
+nessa revisão e vídeo real. A troca de página
 legítima e o movimento ainda compartilham o evento `drop`, dependendo
 da comparação de conteúdo. (O gatilho fino de virada por cobertura existe mas está
 **desligado por padrão** desde o hotfix de 2026-11-01: na mesa real
@@ -397,11 +400,14 @@ conteúdo.
   `generations_created = 0` e `new_confirmed_px_outside_tol = 0`.
   Cenário `drop_and_return`: a folha some por 6/30/150 quadros
   (detector falha com a folha à vista, ou a folha sai do quadro) e
-  volta na mesma pose — só reporte, sem veto. `--app-logic main`
+  volta na mesma pose — agora com portão de sobrevivência, perda
+  zero e crescimento residual ≤25 px. `--app-logic main`
   (padrão) espelha a recuperação de identidade de 87f52e4 (drop
   deixa a identidade pendente; a reabertura chama
   `new_generation(preserve_identity=True)` e a primeira passada
-  mantém o canvas se o recall ≥ `_PAGE_IDENTITY_MIN_RECALL`);
+  mantém o canvas se o recall ≥ `_PAGE_IDENTITY_MIN_RECALL` e a
+  contenção ≥ `_PAGE_IDENTITY_MIN_CONTAINMENT`, com dilatação
+  pela tolerância de fronteira na correção já integrada);
   `--app-logic legacy` espelha o laço anterior (drop →
   `new_generation()`).
 - Replay sintético de "moveu = mesmo canvas" também em
@@ -430,19 +436,26 @@ conteúdo.
     (8/8). 30 e 150 quadros (≥ `_SHEET_LOST_*`): 16/16 com `drop` +
     reabertura = 2 `new_generation()`, canvas zerado e reconstruído
     com −919 a −2.527 px a menos que antes.
-  - drop e volta, com a recuperação de identidade (`main`): **o mesmo
-    16/16 zerado**, agora com 1 `new_generation()` e decisão
-    `new_page` em 16/16 — a mesma página, na mesma pose, dá recall
-    0,58–0,61, abaixo de 0,65. Medido sem movimento: uma passada
-    acima de 0,7 cobre só 57–62 % do canvas confirmado, que cresceu
-    pela fronteira para o ombro sub-limiar (passadas acima de 0,3
-    cobrem ~95 %). Na página sintética, o portão de identidade
-    compara grandezas diferentes; o mapa real reproduz o problema
-    (baseline abaixo). 6 quadros: 8/8 sobrevivem (sem drop).
-  - sensibilidade à latência da detecção: com 20 ms (um quadro),
-    36,7 ms e 100 ms os vereditos e as contagens acima não mudam
+  - drop e volta, com a recuperação de identidade (`main`): antes da
+    correção de identidade (2026-11-06), o mesmo 16/16 zerado, com 1
+    `new_generation()` e decisão `new_page` em 16/16 — a mesma
+    página, na mesma pose, dava recall 0,58–0,61, abaixo de 0,65.
+    Depois da correção (comparação dilatada pela tolerância de
+    fronteira + contenção dual, ver F-11): **24/24 sobrevivem** com
+    folga — decisão `same_page` nos 16 drops (recall dilatado
+    0,86–0,87), canvas sem perda, crescimento residual de 1–13 px
+    fora da tolerância (teto do portão: 25 px). 6 quadros: 8/8
+    sobrevivem (sem drop).
+  - troca de conteúdo no retorno (`drop_and_turn`, página sintética de
+    conteúdo distinto): 8/8 drops decidem `new_page` (recall
+    dilatado ~0,025, contenção ~0,025) e o canvas não é herdado; os
+    6 quadros curtos passam por vacuidade (sem drop).
+  - sensibilidade histórica à latência da detecção, antes da correção
+    de identidade: com 20 ms (um quadro), 36,7 ms e 100 ms os vereditos
+    e as contagens da baseline original não mudam
     (15/15, 8/8 e 16/16); só os px mexem em até ~350.
-- **Baseline com página real (2026-11-06), lógica `main` — MEDIDO
+- **Baseline histórica com página real (2026-11-06), lógica `main`
+  em `d4690d5`, anterior à correção F-11 — MEDIDO
   EM LABORATÓRIO, não promoção:** rodada informada pelo Lucas,
   `source: "real"`, artefato local
   `~/workspace/draw-lab/replay-ruler-2026-11-01/baseline_real_main_2026-11-06.json`.
@@ -456,8 +469,9 @@ conteúdo.
     (150 quadros), nos dois modos de ausência e em todos os regimes
     de mão, dão **`new_page` em 16/16 retornos**, somados.
     Ausência curta (6 quadros) não chega à decisão: o tracker
-    segura. Confirma F-09/F-11: a recuperação por identidade nunca
-    dispara nos retornos avaliados desta página real.
+    segura. Confirma a falha F-09/F-11 da revisão medida: a
+    recuperação por identidade nunca dispara nesses retornos.
+    Não é o veredito da correção posterior já em `main`.
   - `move_same_canvas`: **REPROVADO**, zero gerações criadas, mas
     **+1.911 a +9.383 px confirmados novos fora da tolerância**
     com mão presente ou sem sinal; pior caso: mão parada no
@@ -473,8 +487,9 @@ conteúdo.
     passa. A página real corrige, portanto, o negativo sintético
     que não expunha essa sensibilidade.
 
-**Separação de causas — recall de identidade não é registro.** O
-recall **0,58–0,61** de `drop_and_return`, abaixo do corte 0,65,
+**Separação de causas — recall de identidade não é registro.** Na
+baseline histórica, o recall **0,58–0,61** de `drop_and_return`,
+abaixo do corte 0,65,
 vem do nível de comparação: uma passada `>0,7` cobre só **57–62%**
 do confirmado, que cresceu pelo halo da fronteira; `>0,3` cobre
 **~95%**. Isso ocorre sem movimento, não demonstra desalinhamento
@@ -486,14 +501,15 @@ separação por conteúdo na página real:
 | Passada @0,5 | 0,86–0,88 | 0,10 |
 | Núcleo erodido @0,7 | 0,84 | 0,08 |
 
-Esses níveis são diagnósticos para um experimento de identidade
-separado, não autorização para baixar o corte em produção nem
-recalibrar F-11 junto com o portão de tremor.
+Esses níveis são diagnósticos; a correção já integrada compara com
+dilatação e contenção dual (F-11), sem baixar o recall de 0,65.
+Não recalibrar F-11 junto com o portão de tremor.
 
 - **Lacuna fechada:** falta da rodada com a página real do draw-lab.
   **Buracos restantes:** não há limiar de quedas aceitáveis; o
   movimento ainda é de quad sintético sobre mapa real, não vídeo
-  real de caderno movido, e a identidade segue reprovada.
+  real de caderno movido; a identidade corrigida tem prova sintética,
+  ainda sem nova rodada com página real.
 
 ## F-10 — Apagar no papel não apaga no digital
 
@@ -544,12 +560,35 @@ novo sem herdar os traços anteriores. `tests/test_app_session_state.py`
 leva queda/retorno da mesma cena pelo laço do app e compara o canvas
 entre gerações. A telemetria por sessão registra a decisão, o recall
 e os pixels de referência da primeira máscara após a recuperação. O app
-usa recall mínimo de 65% da tinta confirmada.
+usa recall mínimo de 65% e contenção mínima de 50%, com comparação
+dilatada pela tolerância de fronteira.
 
 - `tools/replay_reregister.py`, cenário `drop_and_return` (ver F-09):
-  a recuperação de identidade decide `new_page` em 16/16 retornos da
-  mesma página tanto na baseline sintética quanto na de página
-  real (recall 0,58–0,61 < 0,65; níveis de comparação, não registro).
+  antes da correção de identidade, `new_page` em 16/16 retornos da
+  mesma página nas baselines sintética e real (recall 0,58–0,61 <
+  0,65; níveis de comparação, não registro). Depois da correção,
+  **resolvido na régua sintética** — a recuperação decide `same_page`
+  nos 16 drops e o canvas sobrevive 24/24 (ver F-09 para os números).
+  A correção: a comparação de identidade dilata os dois lados pela
+  tolerância de fronteira (`_IDENTITY_DILATION_KERNEL = 2 ×
+  _INK_FRONTIER_RADIUS + 1`) e exige contenção dual — o recall da
+  tinta antiga reencontrada **e** a tinta da passada caindo sobre o
+  canvas anterior, ambos ≥ `_PAGE_IDENTITY_MIN_RECALL`/`_PAGE_IDENTITY_MIN_CONTAINMENT`
+  = 0,65 no recall e 0,5 na contenção. A contenção fica abaixo do
+  recall porque tinta nova desenhada durante o drop é legítima:
+  medição que calibrou (2026-11-06, 4 mãos × 3 estágios): mesma
+  página recall/containment 0,876–0,925 / 1,0; página diferente
+  0,218–0,240 / 0,231–0,251; mesma página com +75% de tinta nova
+  cai para containment 0,65 — com 0,5 aceita ~1,8x de crescimento
+  e mantém margem de 2x contra página diferente. Sem esse teto, a
+  guarda rejeitaria a mesma página e perderia o canvas.
+- `tools/replay_reregister.py`, cenário `drop_and_turn` (guarda da
+  correção): a página de conteúdo distinto que volta após o drop
+  decide `new_page` em 8/8 drops efetivos na régua sintética
+  (recall dilatado ~0,025), sem herdar o canvas — a dilatação não
+  abriu falso positivo nesse teste. Na fonte real, a régua usa
+  espelho vertical da página como proxy de conteúdo distinto, não
+  vídeo de uma troca física de folha.
 - `tools/replay_reregister.py`, cenário `sway_negative` (ver F-07):
   página parada, o ajuste do detector balança até 314 px de canto
   por 60 s de cena — perfil suave (senoides de 2–5 s por canto) e
@@ -676,14 +715,16 @@ somente na régua. Entrada obrigatória: cache
 **Não aceitar fallback sintético como rodada real.** Guardar scripts,
 hashes de código/modelo/entradas, parâmetros, mapas e JSON no lab;
 somente protocolo e vereditos textuais viajam para o repo. Baselines
-rodam ali sob demanda. A referência é a baseline real `main` de F-09;
-se a revisão ou entrada mudar, repetir A antes de comparar B.
+rodam ali sob demanda. A baseline real histórica de F-09 fixa os
+números do problema de movimento. Como a identidade mudou em `main`,
+repetir A com a revisão corrigida e entradas reais antes de comparar
+B; manter a mesma identidade nos dois braços.
 
 Executar A/B com as mesmas entradas, ruído, latência e quatro regimes
 de mão, separados por célula, nunca só uma média:
 
 - `control_static`, cinco movimentos de `move_same_canvas`,
-  `drop_and_return` de 6/30/150 quadros nos dois modos e
+  `drop_and_return` e `drop_and_turn` de 6/30/150 quadros nos dois modos e
   `sway_negative` suave/biestável até 314 px. Flag de virada
   desligada como configuração decisória; ligada apenas diagnóstico.
 - Tremor reversível de ±1 px, deriva lenta de 3 px e viés sustentado
@@ -714,7 +755,7 @@ ECC posterior.
 |---|---|
 | `move_same_canvas` | Eliminar os **+1.911 a +9.383 px**: `new_confirmed_px_outside_tol = 0`, nenhuma perda, canvas idêntico segundo a tolerância vigente e `generations_created = 0`; sem crescimento espúrio nas passadas intermediárias. |
 | Re-ancoragem | Hash do confirmado inalterado no evento; próximo traço no lugar (`ink_geometry_error_px ≤ 5`, limite já usado na régua), confirmado em até 12 passadas após ficar visível. Não vale preservar canvas congelando a captura. |
-| `drop_and_return` | Manter o comportamento de A: 6 quadros sem decisão; 30/150 com `new_page` em 16/16, mesmos eventos/recall dentro da precisão reportada. Isso é **não-regressão de uma falha conhecida**, não aprovação F-11. |
+| `drop_and_return` e `drop_and_turn` | Manter os portões e o comportamento de A na revisão corrigida: mesma página sobrevive sem perda e com crescimento residual ≤25 px; conteúdo distinto após drop decide `new_page`, sem herdar canvas. 6 quadros sem drop não provam identidade. Comparar eventos/recall/contenção com A; se A falhar na nova rodada real, registrar a falha separada e não atribuí-la ao portão de tremor. Os 16/16 `new_page` históricos não são alvo a preservar. |
 | `sway_negative` e `control_static` | Continuar aprovados no padrão, sem geração espúria; manter explícitas as células sem passadas. A flag ligada continua diagnóstico separado. |
 | Tremor, deriva e viés com página parada | Nenhuma cópia fora da tolerância nem perda contra a referência assentada; não trocar o ganho no movimento pela volta do mecanismo dos 71.548 px. |
 | Disponibilidade | Abstenção limitada a 12 passadas; toda aprovação de movimento exige passadas após a perturbação e prova do traço novo. Empate/ausência de suporte não passa por vacuidade. |
@@ -731,7 +772,8 @@ Com régua e limiar hoje: **F-02, F-05, F-06** (tinta, via
 `tools/judge.py` + `judge_ink.py`) e **F-09** sem limiar
 (`judge_sheet.py`). Parciais: **F-01/F-07** (testes de unidade do
 descanso + replay de laboratório fora da bancada + régua de
-re-registro do laço, sem portão pré-registrado em `tools/judge.py`),
+re-registro do laço, sem portão pré-registrado em `tools/judge.py`;
+F-11 com portão na régua de re-registro, mas ainda sem vídeo real),
 **F-08** (componentes medidos, sem orçamento de ponta a ponta),
 **F-11** (replay de identidade e balanço de 314 px com página real,
 sem vídeo real) e **F-09** (quedas contadas
@@ -740,12 +782,17 @@ cena/acumulador, não de modelo isolado.
 
 O "moveu = mesmo canvas" de F-07/F-09 deixou de ser buraco de
 medição e virou falha medida: `tools/replay_reregister.py` reprova o
-laço atual. A baseline **com página real**, lógica `main`, de
+laço no cenário de movimento. A baseline **com página real**, lógica
+`main` anterior à correção F-11, de
 2026-11-06 confirma a sintética: movimento com mão presente ou sem
 sinal soma **1,9–9,4 mil px** de cópia deslocada sem nenhum
 `new_generation()`; após 30/150 quadros de ausência, a identidade
-decide `new_page` em **16/16**, por comparação de níveis, não por
-registro. Controle e balanço passam no padrão; o evento de virada
+decidia `new_page` em **16/16**, por comparação de níveis, não por
+registro. Com a correção de identidade já em `main`, a régua
+**sintética** preserva a mesma página 24/24 e rejeita o conteúdo
+distinto nos 8 drops efetivos. Ainda falta repetir a rodada de
+página real nessa revisão corrigida. Controle e balanço passam no
+padrão na baseline real histórica; o evento de virada
 ligado cria 9 gerações no biestável. **A lacuna da página real está
 fechada**. Falta vídeo real de caderno movido e provar o portão de
 tremor pré-registrado acima; o ataque de oclusão é outra frente.

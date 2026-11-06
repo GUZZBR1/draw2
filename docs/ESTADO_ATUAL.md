@@ -66,7 +66,7 @@ regressão do modelo.
 | Prioridade | Problema observável | Estado | Próxima prova que separa causas |
 |---|---|---|---|
 | 1 | Tradução dos dados reais em exemplos julgáveis | A memória atual registra dados brutos suficientes e uma esteira que sela sessões inteiras para treino/holdout. O primeiro lote citado tem 5 sessões/25 páginas de holdout em rascunho, 0 revisadas, e a maioria das sessões é de teste de câmera, não desenho. | Revisar os rótulos independentes do holdout e coletar sessões de desenho reais. Até haver holdout revisado, resultado de modelo não fecha decisão. |
-| 2 | Identidade da página e queda/reentrada (F-09/F-11) | A versão de passada única escolhida como base é do Santleme; a alternativa da Julia, com herança julgada pelo voto e migração de âncora, ficou arquivada na worktree da VM. Na baseline com página real, a versão em `main` decide `new_page` em 16/16 retornos médios/longos da mesma página: recall ≥65% contra confirmado com halo compara níveis diferentes. | Tratar identidade em experimento separado. Para movimento sem drop, provar primeiro o portão de tremor desenhado em `docs/FALHAS.md`: a baseline soma +1.911 a +9.383 px dentro da geração. Não adicionar registro, que já está ativo, nem mudar produção antes do veredito. |
+| 2 | Identidade da página e queda/reentrada (F-09/F-11) | A base de passada única é do Santleme; a alternativa da Julia ficou arquivada. A baseline real histórica em `d4690d5` decidia `new_page` em 16/16 retornos médios/longos por comparação de níveis diferentes. A correção já em `main` usa dilatação e contenção dual: na régua sintética a mesma página sobrevive 24/24 e o conteúdo distinto é rejeitado em 8 drops efetivos; falta repetir a página real nessa revisão. | Preservar a identidade corrigida nos dois braços do experimento. Para movimento sem drop, provar o portão de tremor de `docs/FALHAS.md`: a baseline soma +1.911 a +9.383 px dentro da geração. Não adicionar registro, que já está ativo, nem mudar produção neste PR documental. |
 | 3 | Presença e geometria da folha em cena real (F-03/F-09) | Relatórios de sessão variam muito; não registram ground truth de quando a folha estava visível. O comparativo de 24 frames é estático. A memória registra que os modelos A/B noturnos falharam ausência real, apesar de um deles melhorar fundo hostil. | Um mesmo vídeo rotulado, executado nos hashes de detector; medir presença/ausência, erro dos quatro cantos, quedas e latência por regime. Julgar Modelo C contra esses casos antes de promover. |
 | 4 | Traço fino, fantasma e impresso (F-02/F-05/F-06) | Há gates estáticos. W8 tem recall fino reportado em 0,40164 contra corte 0,402; o detector de tinta binário confunde impressão com tinta. TRI ainda não está promovido. | Candidato só avança se passar todos os gates no holdout real e depois no replay de cena; não otimizar IoU sozinho. |
 | 5 | Mão sobre a página (F-03/F-04) | A presença da mão é assíncrona e controla a cadência/descanso. Na `main`, o page-clean recebe o warp sem máscara de visibilidade. Há relato de patch de oclusão em outra worktree, não integrado aqui. | Integrar e provar o ataque separadamente com mão nos pixels, não só booleano de presença. Medir perda, duplicação e atraso; não atribuir a ele a correção do recall F-11, que falha sem oclusão. |
@@ -78,8 +78,9 @@ regressão do modelo.
 - **F-01 — tinta repassada:** o usuário confirmou no teste de mesa que
   parou de repassar após PR #35. A regressão de registro por geometria
   tem replay de unidade. A reentrada de página era uma causa separada e
-  tem mitigação sintética, mas falha em 16/16 retornos médios/longos
-  na baseline com página real. Movimento sem drop é outra falha:
+  falhava em 16/16 retornos médios/longos na baseline real anterior
+  à correção F-11. A correção já passa na régua sintética, ainda
+  sem nova rodada real. Movimento sem drop é outra falha:
   cópia dentro da geração, apesar do registro ativo.
 - **O modelo não está absolvido nem condenado:** as métricas de máscara
   apontam problemas reais de tinta; os frames estáticos favorecem a
@@ -103,9 +104,10 @@ regressão do modelo.
 
 1. Completar a revisão do holdout independente e coletar sessões de
    desenho reais para que os próximos vereditos tenham alvo confiável.
-2. Provar na régua o portão de tremor sem alterar produção e atacar o
-   nível de comparação F-11 em experimento separado; depois fechar
-   vídeo real e teste de mesa. A rodada com página real já foi feita.
+2. Provar na régua o portão de tremor sem alterar produção, mantendo
+   a identidade corrigida em ambos os braços. A rodada real histórica
+   já foi feita; repetir com a correção F-11, depois fechar vídeo real
+   e teste de mesa.
 3. Usar o mesmo vídeo rotulado para comparar hashes de detector e
    separar falha do modelo, tracker, câmera e regra de queda; incluir
    o Modelo C quando a avaliação estiver disponível.

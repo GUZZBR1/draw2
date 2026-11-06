@@ -291,9 +291,11 @@ história:
   A alternativa da Julia, com herança julgada pelo voto e migração
   de âncora, ficou arquivada na worktree da VM; a dele, de passada
   única, é a base escolhida. Correção da autoria invertida na revisão
-  anterior. A baseline com página real de 2026-11-06 reprova essa
+  anterior. A baseline real histórica em `d4690d5` reprovou essa
   recuperação: `new_page` em 16/16 retornos médios/longos; níveis
-  de comparação, não falta de registro (ver `docs/FALHAS.md`).
+  de comparação, não falta de registro. A correção posterior já em
+  `main` usa dilatação/contenção dual e passa na régua sintética;
+  falta repetir a página real nessa revisão (ver `docs/FALHAS.md`).
 - **F-10 — apagar no papel não apaga no digital.** Por construção: a
   camada de tinta é monotônica dentro da geração. Segue aberta.
 - **O gargalo de verdade não é o modelo (auditoria de 2026-11-06).**
@@ -371,12 +373,15 @@ história:
   revisão. Não perpetuar “treinando” como estado observado. Quando
   houver artefato, julgar ausência/estabilidade na bancada; o
   veredito final é a mesa dele.
-- **F-01 mitigada ao vivo; F-07/F-09/F-11 ainda reprovadas na régua.**
+- **F-01 mitigada ao vivo; movimento F-07 ainda reprovado na régua.**
   A base de identidade em passada única é do Santleme, não da Julia;
   a alternativa arquivada é dela. A página real confirmou duplicação
-  sem reset e `new_page` em todos os 16 retornos médios/longos. O
-  próximo experimento é o portão de tremor de `docs/FALHAS.md`, sem
-  alterar produção antes do veredito.
+  sem reset e, antes da correção F-11, `new_page` nos 16 retornos
+  médios/longos. A correção de identidade já em `main` preserva a
+  mesma página 24/24 na régua sintética e rejeita conteúdo distinto
+  em 8 drops efetivos; falta repetir a página real nessa revisão.
+  O próximo experimento é o portão de tremor de `docs/FALHAS.md`,
+  sem alterar produção neste passo.
 - **Oclusão em frente separada:** patch relatado em outra worktree,
   ainda não integrado nesta `main`; presença de mão na régua não
   injeta oclusão nos pixels e não cura o recall F-11 sem mão.
