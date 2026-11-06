@@ -379,6 +379,11 @@ def _run(args, data_dir, out_dir):
             "--out-dir", str(out_dir)]
     if args.batch is not None:
         base += ["--batch", str(args.batch)]
+    for flag, value in (("--train-count", args.train_count),
+                        ("--val-count", args.val_count),
+                        ("--test-count", args.test_count)):
+        if value is not None:
+            base += [flag, str(value)]
     if args.scoped_vmem_kib is not None:
         base += ["--scoped-vmem-kib", str(args.scoped_vmem_kib)]
     log_path = out_dir.parent / "train_t7.log"
@@ -440,6 +445,14 @@ def main(argv=None):
     parser.add_argument("--benchmark-only", action="store_true",
                         help="Mede T7 sem executar a corrida ou salvar checkpoints.")
     parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--train-count", type=int, default=None,
+                        help="Imagens de treino geradas (padrao do "
+                             "corpo: 4000). Reduzir encurta geracao e "
+                             "epoca; e a alavanca de teto de tempo.")
+    parser.add_argument("--val-count", type=int, default=None,
+                        help="Imagens de validacao (padrao: 400).")
+    parser.add_argument("--test-count", type=int, default=None,
+                        help="Imagens de teste (padrao: 400).")
     parser.add_argument("--precision", choices=("bf16", "fp32"),
                         default="bf16")
     parser.add_argument("--batch", type=int, default=None,
@@ -505,8 +518,15 @@ def main(argv=None):
         _log("  3) smoke:", sys.executable, BODY,
              "--epochs 1 --train-count 96 --val-count 16 "
              "--test-count 16 (eager)")
+        extra = "".join(
+            f" {flag} {value}" for flag, value in (
+                ("--batch", args.batch),
+                ("--train-count", args.train_count),
+                ("--val-count", args.val_count),
+                ("--test-count", args.test_count)) if value is not None)
         _log("  4) corrida:", sys.executable, BODY, "--compile",
-             f"--epochs {args.epochs} --precision {args.precision}")
+             f"--epochs {args.epochs} --precision {args.precision}"
+             f"{extra}")
         if args.benchmark_only:
             _log("  benchmark:", sys.executable, BENCHMARK,
                  f"--device {args.device} --batches {args.bench_batches} "

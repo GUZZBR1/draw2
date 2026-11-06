@@ -123,6 +123,12 @@ def build_command(args: argparse.Namespace, backend: str) -> list[str]:
                     "--val-count", "16", "--test-count", "16"]
         elif args.epochs is not None:
             cmd += ["--epochs", str(args.epochs)]
+        if not args.smoke:
+            for flag, value in (("--train-count", args.train_count),
+                                ("--val-count", args.val_count),
+                                ("--test-count", args.test_count)):
+                if value is not None:
+                    cmd += [flag, str(value)]
         if args.batch_size != "auto":
             cmd += ["--batch-per-core", str(args.batch_size)]
         if args.precision is not None:
@@ -136,6 +142,12 @@ def build_command(args: argparse.Namespace, backend: str) -> list[str]:
                "--out-dir", out, "--smoke-out-dir", args.smoke_dir]
         if not args.smoke and args.epochs is not None:
             cmd += ["--epochs", str(args.epochs)]
+        if not args.smoke:
+            for flag, value in (("--train-count", args.train_count),
+                                ("--val-count", args.val_count),
+                                ("--test-count", args.test_count)):
+                if value is not None:
+                    cmd += [flag, str(value)]
         if args.batch_size != "auto":
             cmd += ["--batch", str(args.batch_size)]
         if args.precision is not None:
@@ -161,6 +173,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--allow-unverified-real-train", action="store_true")
     parser.add_argument("--out-dir", default="out")
     parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--train-count", type=int, default=None,
+                        help="Só rotas TPU (dados gerados em sessão): "
+                             "imagens de treino (padrão do corpo: 4000).")
+    parser.add_argument("--val-count", type=int, default=None,
+                        help="Só rotas TPU: imagens de validação (400).")
+    parser.add_argument("--test-count", type=int, default=None,
+                        help="Só rotas TPU: imagens de teste (400).")
     parser.add_argument(
         "--batch-size", type=_batch_size, default="auto",
         help="auto usa a sonda de VRAM em CUDA; em TPU mantém o lote padrão.",
