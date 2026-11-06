@@ -204,6 +204,9 @@ def main(argv=None):
     parser.add_argument("--precision", choices=("bf16", "fp32"), default="bf16")
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--out-dir", required=True)
+    parser.add_argument("--train-count", type=int, default=4000)
+    parser.add_argument("--val-count", type=int, default=400)
+    parser.add_argument("--test-count", type=int, default=400)
     parser.add_argument("--batches", default="32,64")
     parser.add_argument("--workers", default="0,4,8")
     parser.add_argument("--warmup-steps", type=int, default=2)
@@ -266,7 +269,8 @@ def main(argv=None):
     cfg = T.load_config(str(REPO_ROOT / "training" / "config.json"))
     data_dir = Path(args.data_dir)
     train_t7._ensure_data(
-        data_dir, seed=42, n_train=4000, n_val=400, n_test=400)
+        data_dir, seed=42, n_train=args.train_count,
+        n_val=args.val_count, n_test=args.test_count)
     torch.manual_seed(42)
     model_start = time.perf_counter()
     model = train_t7._build_model_t7(cfg, decoder=128)

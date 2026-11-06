@@ -379,6 +379,8 @@ def _run(args, data_dir, out_dir):
             "--out-dir", str(out_dir)]
     if args.batch is not None:
         base += ["--batch", str(args.batch)]
+    if args.num_workers is not None:
+        base += ["--num-workers", str(args.num_workers)]
     for flag, value in (("--train-count", args.train_count),
                         ("--val-count", args.val_count),
                         ("--test-count", args.test_count)):
@@ -438,6 +440,89 @@ def _benchmark(args, data_dir, out_dir):
     return 5
 
 
+def _effective_budget_min(budget_min, elapsed_s):
+    """Teto que sobra pro corpo, descontado o tempo que o
+    lançador já queimou (deps, probe, smoke, sonda de eficiência).
+
+    Sem teto -> None. Estouro total do relógio da sessão -> piso
+    de 0,5 min: o corpo ainda roda 1 época e entrega, em vez de
+    a sessão morrer sem modelo.
+    """
+    if budget_min is None:
+        return None
+    return max(budget_min - elapsed_s / 60.0, 0.5)
+
+
+def _pick_tuning(report, base_batch=32, base_workers=4):
+    """Escolhe (batch, workers) por amostras/s do relatório do
+    benchmark; devolve também a linha de base (lote padrão do
+    corpo) pra comparação honesta. None se o relatório não tem
+    resultados utilizáveis."""
+    results = [r for r in report.get("results", [])
+               if r.get("samples_per_second", 0) > 0]
+    if not results:
+        return None
+    best = max(results, key=lambda r: r["samples_per_second"])
+    base = next((r for r in results
+                 if r["batch"] == base_batch
+                 and r["num_workers"] == base_workers), None)
+    return {"batch": best["batch"], "num_workers": best["num_workers"],
+            "samples_per_second": best["samples_per_second"],
+            "base_samples_per_second":
+                base["samples_per_second"] if base else None}
+
+
+def _probe_tune(args, data_dir, bench_dir):
+    """Sonda de eficiência pré-corrida: roda o benchmark limitado
+    (passo real, dados reais) e adota lote/workers mais rápidos
+    em args. Falha da sonda NUNCA bloqueia a corrida: registra e
+    segue com os padrões. Retorna True se adotou uma escolha."""
+    bench_dir.mkdir(parents=True, exist_ok=True)
+    cmd = [sys.executable, str(BENCHMARK),
+           "--device", args.device,
+           "--precision", args.precision,
+           "--data-dir", str(data_dir),
+           "--out-dir", str(bench_dir),
+           "--batches", "32,64",
+           "--workers", "0,4",
+           "--warmup-steps", "2",
+           "--steps", "8",
+           "--profile-steps", "2",
+           "--train-count", str(args.train_count or 4000),
+           "--val-count", str(args.val_count or 400),
+           "--test-count", str(args.test_count or 400)]
+    rc, _ = _run_stream(cmd, bench_dir.parent / "bench_tune.log",
+                        phase="sonda de eficiencia")
+    report_path = bench_dir / "benchmark.json"
+    if rc != 0 or not report_path.exists():
+        _log(f"AUTO_TUNE_FALHOU rc={rc}; seguindo com os padroes "
+             "(lote 32, workers do corpo)")
+        return False
+    try:
+        pick = _pick_tuning(json.loads(
+            report_path.read_text(encoding="utf-8")))
+    except Exception as exc:
+        _log(f"AUTO_TUNE_RELATORIO_INVALIDO: {exc}; padroes mantidos")
+        return False
+    if pick is None:
+        _log("AUTO_TUNE_SEM_RESULTADO; padroes mantidos")
+        return False
+    args.batch = pick["batch"]
+    args.num_workers = pick["num_workers"]
+    base = pick["base_samples_per_second"]
+    _log("AUTO_TUNE", json.dumps({
+        "batch": pick["batch"], "num_workers": pick["num_workers"],
+        "samples_per_second": pick["samples_per_second"],
+        "base_32_w4_samples_per_second": base,
+        "ganho_vs_base": (round(pick["samples_per_second"] / base, 2)
+                          if base else None)}))
+    if pick["batch"] != 32:
+        _log("AUTO_TUNE_AVISO: lote diferente de 32 com o LR "
+             "calibrado pro 32 (direcao conservadora: nao mexi "
+             "no LR; confira o receipt da epoca 1)")
+    return True
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Lancador unico do treino T7 (TorchTPU): "
@@ -450,6 +535,16 @@ def main(argv=None):
     parser.add_argument("--budget-min", type=float, default=None,
                         help="Teto de parede em minutos, repassado "
                              "ao corpo (0/ausente = sem teto).")
+    parser.add_argument("--num-workers", type=int, default=None,
+                        help="Workers do loader na corrida (padrao "
+                             "do corpo: 4; a sonda pode escolher).")
+    parser.add_argument("--auto-tune", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="Antes da corrida, mede lote x workers "
+                             "com o passo real (benchmark limitado) "
+                             "e adota o mais rapido em amostras/s. "
+                             "So quando --batch nao foi fixado; "
+                             "--no-auto-tune desliga.")
     parser.add_argument("--train-count", type=int, default=None,
                         help="Imagens de treino geradas (padrao do "
                              "corpo: 4000). Reduzir encurta geracao e "
@@ -544,6 +639,7 @@ def main(argv=None):
 
     work.mkdir(parents=True, exist_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
+    t_session0 = time.time()
     _log("RUN_T7", json.dumps({
         "work": str(work), "data": str(data_dir),
         "out": str(out_dir), "smoke_out": str(smoke_out),
@@ -566,6 +662,16 @@ def main(argv=None):
         _log("RUN_T7_SMOKE_ONLY_OK")
         return 0
     _log("FASE 4/4 treino completo")
+    if args.budget_min is not None:
+        effective = _effective_budget_min(
+            args.budget_min, time.time() - t_session0)
+        if effective < args.budget_min:
+            _log(f"BUDGET_CLOCK: setup+smoke consumiram "
+                 f"{args.budget_min - effective:.1f} min do teto; "
+                 f"o corpo recebe --budget-min {effective:.1f}")
+        args.budget_min = effective
+    if args.auto_tune and args.batch is None and args.device == "tpu":
+        _probe_tune(args, data_dir, work / "bench_probe")
     return _run(args, data_dir, out_dir)
 
 
