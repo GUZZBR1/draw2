@@ -24,11 +24,13 @@ Draw runs in real time in daily use on the author's desk: one command,
 neural sheet detection and the page-clean ink model by default, on any
 sheet or notebook page.
 
-The open problem is generalization. Current models are judged on the
-author's setup and on public document datasets; a sealed test set from
-other desks, cameras, and lighting is the missing ruler, and building
-it is active work. Numbers in this README are from the author's setup
-unless stated otherwise.
+The open problems are capture reliability and generalization. Current
+models are judged on the author's setup and on public document datasets;
+a sealed test set from other desks, cameras, and lighting is the missing
+ruler. The current failure map and prioritized evidence gaps are in
+[docs/ESTADO_ATUAL.md](docs/ESTADO_ATUAL.md) and
+[docs/FALHAS.md](docs/FALHAS.md). Numbers in this README are from the
+author's setup unless stated otherwise.
 
 ## Quick start
 
@@ -135,8 +137,9 @@ sheet, and remains the detector on a clone without the models.
 ### Ink
 
 The default ink model is a lightweight U-Net (122 K parameters) that
-maps the rectified page to an ink probability map in 256 × 256 tiles,
-separating stroke from ruling, paper texture, and shadow. New ink
+maps the rectified page to an ink probability map in 256 × 256 tiles.
+It suppresses much of the ruling, paper texture, and shadow, but it
+does not reliably distinguish handwriting from printed content. New ink
 appears immediately as a provisional layer; the confirmed canvas is
 what a multi-pass vote ratifies, with a frontier gate that keeps
 sub-threshold borders from accumulating into strokes no single pass
@@ -144,9 +147,11 @@ saw. Only real change moves the canvas: when the page is settled and
 nothing is being drawn, the ink worker rests at zero passes — moving
 the notebook re-registers geometry without touching the drawing.
 
-Hand presence comes from MediaPipe landmarks, sampled asynchronously:
-the region under the hand is treated as unknown (it neither gains nor
-loses ink), and a still hand does not keep the ink worker awake.
+Hand presence comes from MediaPipe landmarks, sampled asynchronously.
+In the current page-clean path, presence controls the ink worker's
+cadence and rest behavior; the page-clean model still receives the
+unmasked warp, so pixels covered by the hand are not yet treated as
+unknown evidence. Occlusion-aware ink is an open issue.
 
 ### Fallbacks
 
@@ -244,14 +249,14 @@ selftest on Python 3.11 and 3.12.
 
 ## Roadmap
 
-Done: real-time markerless capture on any sheet or notebook page;
-neural sheet detection; page-clean ink with a confirmed canvas that
-only moves on real change; hand-aware ink; combined thread caps and
-the current performance work; session reports.
+Done: real-time markerless capture on the author's desk; neural sheet
+detection; page-clean ink with a confirmed canvas; hand-presence-aware
+worker cadence; combined thread caps and session reports. Page identity,
+occlusion handling, erasure, and cross-desk reliability remain open.
 
-In progress: the external test set for generalization; ink quality —
-a three-class ink/print model that separates handwriting from printed
-content on the page.
+In progress: the external test set for generalization; ink quality — a
+three-class ink/print candidate intended to separate handwriting from
+printed content. No such candidate is promoted to the production path.
 
 Planned: vector strokes (order, path, smoothing); interpretation of
 shapes, letters, and diagrams; integration with a first target system

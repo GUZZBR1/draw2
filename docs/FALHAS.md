@@ -37,7 +37,7 @@ Convenções:
 | F-08 | Jitter/latência que impede desenhar | orquestração/folha | maior | parcial — ver F-08 |
 | F-09 | Folha perdida com o caderno movido (e a tinta vai junto) | folha/orquestração | maior | sim, sem limiar |
 | F-10 | Apagar no papel não apaga no digital | acumulador | maior | sem régua ainda |
-| F-11 | Página nova lida como a mesma (ou vice-versa) | orquestração | maior | sem régua ainda |
+| F-11 | Página nova lida como a mesma (ou vice-versa) | orquestração | maior | parcial — replay sintético de identidade |
 
 ## F-01 — Tinta repassada/reimpressa em camadas
 
@@ -63,12 +63,13 @@ como se fosse reimpresso a cada rodada.
    e a sonda de 1 Hz segue alimentando o voto para sempre — a
    exposição 1 continua viva nessa configuração, só contida pela
    porta de fronteira.
-3. **Reset de geração republica a página inteira.** Quando a folha
-   cai e volta (ver F-09), o app chama `new_generation()`
-   (`draw/app.py`: evento `drop` do tracker e reabertura de sessão) e
-   o acumulador recomeça do zero: toda a tinta da página é
-   redetectada, reconfirmada e republicada — na tela, a página
-   inteira é "impressa de novo".
+3. **Reentrada de folha podia republicar a página inteira.** Antes da
+   recuperação de identidade F-11, um `drop` seguido de reabertura
+   chamava `new_generation()` e zerava o acumulador. Agora o app
+   preserva uma referência e só reusa o canvas quando a primeira
+   máscara registrada reencontra ≥65% da tinta confirmada; conteúdo
+   divergente começa limpo. A prova atual é sintética, ainda sem
+   replay real de movimento/oclusão.
 4. **Provisória → confirmada pinta o mesmo traço duas vezes.** A
    camada provisória aparece em cinza na primeira passada e a
    confirmada repinta em preto por cima quando o voto fecha
@@ -324,11 +325,12 @@ F-01, causa 3).
 **Causa provável:** o tracker (`draw/sheet_track.py`,
 `_SheetTracker.update`) descarta a folha quando os critérios de
 perda passam (tempo e quadros sem confirmação); salto de posição
-exige persistência antes de confirmar. No app, `drop` e reabertura
-chamam `new_generation()` e zeram o canvas exibido
-(`draw/app.py`). A troca de página legítima usa o mesmo caminho —
-mover o caderno e trocar a folha são, hoje, o mesmo evento para o
-canvas. (O gatilho fino de virada por cobertura existe mas está
+exige persistência antes de confirmar. Antes da mitigação F-11, a
+reabertura sempre zerava o canvas. Agora o app preserva a referência
+e pede a decisão por conteúdo na primeira máscara após o retorno;
+essa distinção ainda não foi validada em vídeo real. A troca de página
+legítima e o movimento ainda compartilham o evento `drop`, dependendo
+da comparação de conteúdo. (O gatilho fino de virada por cobertura existe mas está
 **desligado por padrão** desde o hotfix de 2026-11-01: na mesa real
 ele disparava a cada 2–5 s com o balanço de geometria do caderno
 aberto — cantos oscilando até 314 px — zerando o canvas sem parar.)
@@ -337,15 +339,15 @@ aberto — cantos oscilando até 314 px — zerando o canvas sem parar.)
 desenha; pela invariância dele (F-07), mover não pode custar o
 conteúdo.
 
-**Como se mede — régua existe, sem limiar:**
+**Como se mede — régua parcial, sem limiar para quedas:**
 
 - Bancada `judge_sheet.py`: conta **quedas e recuperações** por clip
   SmartDoc e na sequência da mesa, e presença na sequência — tudo
   reportado sem veto no `JULGAMENTO.md`.
-- **Buraco:** não há limiar de quedas aceitáveis nem régua de
-  "moveu = mesmo canvas": falta o replay de re-registro (mover a
-  folha com o desenho assentado e exigir canvas confirmado idêntico
-  ao fim, a menos de re-warp) — é a segunda metade da régua de F-07.
+- Replay sintético de "moveu = mesmo canvas" está em
+  `tests/test_ink_registration.py`; exige canvas confirmado idêntico
+  pixel a pixel após re-registro. Falta repetir com vídeo real e
+  definir limiar de quedas aceitáveis na bancada.
 
 ## F-10 — Apagar no papel não apaga no digital
 
@@ -389,12 +391,20 @@ geometria realista.
 perder a atual destrói uma. É F-09/F-01 vistos pelo eixo da
 identidade da página.
 
-**Como se mede — SEM RÉGUA AINDA.** Régua que falta: corpus de
-transições (troca real de folha × balanço/movimento sem troca, os
-dois em vídeo real), com portão duplo: toda troca detectada em
-≤ N s **e** zero troca falsa por hora de balanço. O teste negativo
-tem que ser balanço realista (314 px de canto medidos), não borracha
-em warp estático — a lição do hotfix está registrada no código.
+**Como se mede — régua parcial.** `tests/test_ink_registration.py`
+reproduz os dois casos de identidade por conteúdo: página movida,
+mesmo canvas confirmado pixel a pixel; conteúdo divergente, canvas
+novo sem herdar os traços anteriores. `tests/test_app_session_state.py`
+leva queda/retorno da mesma cena pelo laço do app e compara o canvas
+entre gerações. A telemetria por sessão registra a decisão, o recall
+e os pixels de referência da primeira máscara após a recuperação. O app
+usa recall mínimo de 65% da tinta confirmada.
+Continua faltando o corpus de transições reais (troca real de folha ×
+balanço/movimento sem troca, os dois em vídeo real), com portão
+duplo: toda troca detectada em ≤ N s **e** zero troca falsa por hora
+de balanço. O teste negativo tem que incluir balanço realista (314 px
+de canto medidos), não borracha em warp estático — a lição do hotfix
+está registrada no código.
 
 ## O buraco de medição, resumido
 
@@ -402,9 +412,11 @@ Com régua e limiar hoje: **F-02, F-05, F-06** (tinta, via
 `tools/judge.py` + `judge_ink.py`) e **F-09** sem limiar
 (`judge_sheet.py`). Parciais: **F-01/F-07** (testes de unidade do
 descanso + replay de laboratório fora da bancada, sem portão
-pré-registrado de app) e **F-08** (componentes medidos, sem
-orçamento de ponta a ponta). Sem régua nenhuma: **F-03, F-04, F-10,
-F-11** — todas de **cena/orquestração**, nenhuma de modelo isolado.
+pré-registrado de app), **F-08** (componentes medidos, sem
+orçamento de ponta a ponta), **F-11** (replay sintético de identidade,
+sem vídeo real) e **F-09** (quedas contadas sem limiar). Sem régua
+dedicada: **F-03, F-04 e F-10** — falhas de cena/acumulador, não de
+modelo isolado.
 O padrão é o achado: a bancada julga bem o modelo de tinta; o que
 não tem juiz é o comportamento do sistema com a mão na cena, com a
 página trocando e com o tempo passando — que é onde moram as queixas

@@ -76,6 +76,7 @@ def _run_headless(plan, fake_ink_factory, period_s=0.006):
 
     real_open = app_module._open_capture
     real_page_clean = app_module.page_clean_module.PageCleanInk
+    real_neural_detector = app_module.neural_module.NeuralSheetDetector
     real_imshow, real_wait = cv2.imshow, cv2.waitKey
     real_destroy = cv2.destroyAllWindows
     errors = []
@@ -88,6 +89,20 @@ def _run_headless(plan, fake_ink_factory, period_s=0.006):
 
     app_module._open_capture = lambda _source: capture
     app_module.page_clean_module.PageCleanInk = fake_ink_factory
+
+    class _NoNeuralDetector:
+        last_presence_logit = None
+
+        def __init__(self, _path):
+            pass
+
+        def load(self):
+            return True
+
+        def detect_sheet_with_confidence(self, _frame):
+            return None, None
+
+    app_module.neural_module.NeuralSheetDetector = _NoNeuralDetector
     cv2.imshow, cv2.waitKey = spy.imshow, spy.waitKey
     cv2.destroyAllWindows = spy.destroyAllWindows
     try:
@@ -98,6 +113,7 @@ def _run_headless(plan, fake_ink_factory, period_s=0.006):
     finally:
         app_module._open_capture = real_open
         app_module.page_clean_module.PageCleanInk = real_page_clean
+        app_module.neural_module.NeuralSheetDetector = real_neural_detector
         cv2.imshow, cv2.waitKey = real_imshow, real_wait
         cv2.destroyAllWindows = real_destroy
     return spy, capture, errors, finished
@@ -151,12 +167,14 @@ def _fake_ink_class(generations, blob_only_first=True, fail=False):
     return _FakeInk
 
 
-def _patched_generation_counter(monkeypatch, generations):
+def _patched_generation_counter(monkeypatch, generations, preserve_flags=None):
     original = app_module._PageCleanWorker.new_generation
 
-    def counted(self):
+    def counted(self, **kwargs):
         generations[0] += 1
-        return original(self)
+        if preserve_flags is not None:
+            preserve_flags.append(kwargs.get("preserve_identity", False))
+        return original(self, **kwargs)
 
     monkeypatch.setattr(app_module._PageCleanWorker, "new_generation", counted)
 
@@ -200,6 +218,52 @@ def test_new_sheet_does_not_inherit_the_previous_canvas(monkeypatch):
     assert not with_ink, (
         f"{len(with_ink)} quadros mostraram tinta da folha anterior "
         f"depois de a folha nova ser detectada: {with_ink[:5]}"
+    )
+
+
+def test_same_page_recovery_preserves_canvas_through_app_loop(monkeypatch):
+    """Uma queda breve e retorno da mesma página não abre canvas duplicado."""
+    generations = [0]
+    preserve_flags = []
+    _patched_generation_counter(monkeypatch, generations, preserve_flags)
+    original_poll_display = app_module._PageCleanWorker.poll_display
+    canvases_by_generation = {}
+
+    def capture_display(self, generation, after_version=0):
+        result = original_poll_display(self, generation, after_version)
+        if result is not None:
+            version, confirmed, provisional = result
+            canvases_by_generation.setdefault(generation, []).append(
+                (version, confirmed.copy(), provisional.copy())
+            )
+        return result
+
+    monkeypatch.setattr(
+        app_module._PageCleanWorker, "poll_display", capture_display
+    )
+    plan = ["sheet"] * 50 + ["blank"] * 130 + ["sheet"] * 70
+    spy, capture, errors, finished = _run_headless(
+        plan, _fake_ink_class(generations, blob_only_first=False)
+    )
+
+    assert finished and not errors, errors
+    assert capture.released
+    assert generations[0] >= 2, "o replay não causou drop e recuperação"
+    assert preserve_flags[:2] == [False, True], (
+        "só a retomada após drop deve pedir comparação de identidade"
+    )
+
+    initial = canvases_by_generation.get(1, [])
+    recovered = canvases_by_generation.get(2, [])
+    assert initial and recovered, (
+        "o app não publicou canvas nas duas gerações do replay"
+    )
+    initial_confirmed = initial[-1][1]
+    recovered_confirmed = recovered[-1][1]
+    assert np.count_nonzero(initial_confirmed) > 0
+    assert np.array_equal(recovered_confirmed, initial_confirmed), (
+        "retornar à mesma página deve reusar o canvas confirmado "
+        "pixel a pixel, sem duplicá-lo ou zerá-lo"
     )
 
 
