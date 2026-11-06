@@ -42,7 +42,7 @@ python main.py
 ```
 
 Model binaries do not live in git. They are distributed by this
-repository's `models-2026-11-02` Release and verified against
+repository's `models-2026-11-06` Release and verified against
 `models/MANIFEST.json` (sha256 and size) by the fetch script. MediaPipe
 is an optional extra, used for hand tracking:
 

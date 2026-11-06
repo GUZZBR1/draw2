@@ -1,7 +1,7 @@
 """Baixa os modelos oficiais do Draw para a pasta models/.
 
 Os binários de modelo não moram no git (ver models/MANIFEST.json).
-A distribuição oficial é a Release ``models-2026-11-02`` deste
+A distribuição oficial é a Release ``models-2026-11-06`` deste
 repositório no GitHub: download HTTPS direto, sem nenhuma
 credencial. Este script baixa cada arquivo registrado no manifesto,
 confere tamanho e sha256 contra o registro ANTES de instalar, e
@@ -27,7 +27,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MODELS_DIR = REPO_ROOT / "models"
 MANIFEST_PATH = MODELS_DIR / "MANIFEST.json"
-RELEASE_TAG = "models-2026-11-02"
+RELEASE_TAG = "models-2026-11-06"
 DEFAULT_BASE_URL = (
     "https://github.com/santleme/draw/releases/download/" + RELEASE_TAG
 )

@@ -1,10 +1,10 @@
 {
   "models": {
     "draw_seg_v3_dyn.onnx": {
-      "approved_by": "tools/eval_real_frames.py: 43/43, 0 FP, IoU 0,962",
+      "approved_by": "FINE-TUNE no Colab do autor em 2026-11-03 (init v3; pilot do Guss: 297 treino / 422 holdout selado) - FORMA DINAMICA 384 (o binario e o draw_seg_ft_dyn.onnx). Julgamento de laboratorio da forma (JUDGE_FT_384.md, draw-kaggle-ruler/colab-finetune): empate tecnico de qualidade com a forma fixa 512 (holdout selado paper+cantos 92,4% vs 92,7%, sem reconhecimento 32 vs 31, IoU mediano 0,920 vs 0,922) e 2,11x mais rapida por passada de deteccao. Instalado no nome padrao por decisao do autor em 2026-11-03 e em uso ao vivo na mesa dele desde entao (teste ao vivo de 2026-11-03: deteccao 42,2 ms/passada, metade da forma 512). A forma fixa 512 (a159a1d6) esta preservada em draw_seg_v3_dyn.onnx.ft512-a159a1d6.bak, com o MANIFEST dela em MANIFEST.json.ft512.bak; a v3 original (751e74da) segue preservada em draw_seg_v3_dyn.onnx.v3-751e74da.bak e o MANIFEST original em MANIFEST.json.v3.bak; rollbacks em FT_TEST_ROLLBACK.md.",
       "bytes": 15191109,
-      "date": "2026-10-29",
-      "sha256": "751e74da8c310ec7c259c3569ea661aea92f3fc881785c3302809ff862b1ecc0"
+      "date": "2026-11-03",
+      "sha256": "e20a89f0eae7c76d3b2f2cbb286d61ce9e9a0274ce4ad736c7aa902de05e765f"
     },
     "hand_landmarker.task": {
       "approved_by": "modelo oficial do Google MediaPipe (Apache-2.0), sem modificacao; fonte: https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
@@ -19,6 +19,6 @@
       "sha256": "a470bd28d459221a8106b6578d33e99a555de730fcf145444809e83768e0ccfb"
     }
   },
-  "notes": "Integrity record for the model binaries. sha256 and byte size are verified at load time when the file exists; a mismatch is a warning, and DRAW_MODEL_STRICT=1 turns it into an error. The binaries do not live in git: the official distribution is this repository's 'models-2026-11-02' Release, and 'python tools/fetch_models.py' downloads the files listed here into models/, verifying sha256 and size against this record. Without the fetch, a fresh clone runs on the fallbacks (classic sheet detector and legacy ink stack). hand_landmarker.task is a Google MediaPipe model (Apache-2.0), redistributed unmodified from the official source given in its entry.",
+  "notes": "Integrity record for the model binaries. sha256 and byte size are verified at load time when the file exists; a mismatch is a warning, and DRAW_MODEL_STRICT=1 turns it into an error. The binaries do not live in git: the official distribution is this repository's 'models-2026-11-06' Release, and 'python tools/fetch_models.py' downloads the files listed here into models/, verifying sha256 and size against this record. Without the fetch, a fresh clone runs on the fallbacks (classic sheet detector and legacy ink stack). hand_landmarker.task is a Google MediaPipe model (Apache-2.0), redistributed unmodified from the official source given in its entry.",
   "schema": 1
 }
