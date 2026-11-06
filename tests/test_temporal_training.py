@@ -176,6 +176,38 @@ def test_train_one_epoch_pair_path_runs_and_counts():
     ), "o caminho de pares não treinou nada"
 
 
+def test_pair_iterator_wraps_without_caching_whole_loader():
+    """Regressão da noite t8 (2026-11-06): o iterador de pares era um
+    cycle() sobre o loader — ele guarda cada lote que entrega, ~9 MB por
+    par × 10.000 pares, e a RAM do host morria no meio da época 0
+    (rc 247, sem traceback; kernels A v3 e B v1, lote 16 e 32). A
+    iteração tem que recomeçar do zero sem guardar nada."""
+    import inspect
+
+    assert "cycle" not in inspect.getsource(T.train_one_epoch)
+    gen = torch.Generator().manual_seed(6)
+    pair_batch = (
+        torch.randn(2, 3, 16, 16, generator=gen),
+        torch.randint(0, 4, (2, 16, 16), generator=gen),
+        torch.randn(2, 3, 16, 16, generator=gen),
+        torch.randint(0, 4, (2, 16, 16), generator=gen),
+        torch.zeros(2, 16, 16, dtype=torch.uint8),
+    )
+    torch.manual_seed(7)
+    model = _StubModel()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.05)
+    stats: dict = {}
+    # 1 lote de pares alimenta 5 lotes de treino: o wrap tem que acontecer
+    # 4 vezes sem erro e sem guardar os lotes anteriores.
+    loss = T.train_one_epoch(
+        model, _toy_loader(n_batches=5), optimizer, torch.ones(4), "cpu",
+        pair_loader=[pair_batch], pair_fraction=1.0, consistency_weight=1.0,
+        epoch_stats=stats,
+    )
+    assert np.isfinite(loss)
+    assert stats["pair_batches"] == 5
+
+
 # ------------------------------------------------------- dataset de pares
 
 

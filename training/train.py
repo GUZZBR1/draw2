@@ -286,7 +286,129 @@ def build_model(cfg):
         ignore_mismatched_sizes=True,  # cabeça nova: 4 classes, não as do ImageNet
         **extra,
     )
+    if (cfg.get("presence") or {}).get("enabled"):
+        model = _wrap_presence_head(model)
     return model
+
+
+def _wrap_presence_head(base):
+    """Cabeça de PRESENÇA imagem-nível sobre o último estado do encoder.
+
+    Âncora: Chen et al., arXiv:2608.11135 (OPCNet, 2026) — segmentadores
+    treinados sob "o objeto está sempre presente" tinham 97%+ de FP em
+    imagens só-fundo; uma cabeça explícita de existência + treino rico
+    em negativos cortou o FP de fundo para 5,0%. Aqui a cabeça lê o
+    último hidden state do encoder (NÃO os logits da máscara: sinal
+    estruturalmente independente, como manda o protocolo de gate do
+    PEOS-Net, Frontiers in AI 2026), faz pooling global e devolve 1
+    logit por imagem. A saída do modelo ganha a chave
+    ``presence_logit``; ``logits`` segue idêntica.
+    """
+    import torch
+
+    class PresenceSegformer(torch.nn.Module):
+        def __init__(self, wrapped):
+            super().__init__()
+            self.base = wrapped
+            self.config = wrapped.config
+            hidden = int(wrapped.config.hidden_sizes[-1])
+            self.presence_pool = torch.nn.AdaptiveAvgPool2d(1)
+            self.presence_head = torch.nn.Linear(hidden, 1)
+
+        def forward(self, pixel_values):
+            from transformers.modeling_outputs import SemanticSegmenterOutput
+
+            seg = self.base.segformer(
+                pixel_values=pixel_values, output_hidden_states=True
+            )
+            hidden_states = seg.hidden_states
+            logits = self.base.decode_head(hidden_states)
+            pooled = self.presence_pool(hidden_states[-1]).flatten(1)
+            out = SemanticSegmenterOutput(logits=logits)
+            out["presence_logit"] = self.presence_head(pooled).squeeze(-1)
+            return out
+
+    return PresenceSegformer(base)
+
+
+def presence_targets(masks):
+    """1.0 por imagem quando há papel visível (classe 1) ou tinta (3).
+
+    Mão sozinha (2) ou só fundo (0) = ausência. Pixel 255 (ignorado)
+    não cria presença nem ausência: a imagem conta pelo que está
+    rotulado — uma cena sem-papel do gerador é toda fundo/mão.
+    """
+    import torch
+
+    present = (masks == 1) | (masks == 3)
+    return present.reshape(masks.shape[0], -1).any(dim=1).to(torch.float32)
+
+
+def presence_loss(presence_logit, masks, sample_weights=None):
+    """BCE imagem-nível da cabeça de presença (termo L_pres do OPCNet)."""
+    import torch
+    import torch.nn.functional as F
+
+    targets = presence_targets(masks)
+    per_sample = F.binary_cross_entropy_with_logits(
+        presence_logit, targets, reduction="none"
+    )
+    if sample_weights is None:
+        return per_sample.mean()
+    weights = torch.as_tensor(
+        sample_weights, dtype=per_sample.dtype, device=per_sample.device
+    )
+    return (per_sample * weights).sum() / weights.sum().clamp(min=1e-12)
+
+
+class WeightEMA:
+    """Média móvel exponencial dos pesos (pacote de eficiência do C).
+
+    Mantém uma cópia-sombra dos tensores float do modelo, atualizada a
+    cada passo do otimizador: shadow ← decay·shadow + (1−decay)·peso.
+    Avaliar/entregar os pesos-EMA em vez dos crus é ganho de qualidade
+    quase grátis (a trajetória ruidosa do SGD é suavizada); o treino em
+    si não muda. Buffers não-float (contadores etc.) não entram na
+    sombra — na aplicação, só os tensores float são trocados.
+    """
+
+    def __init__(self, model, decay):
+        import torch
+
+        self.decay = float(decay)
+        self.shadow = {
+            k: v.detach().clone()
+            for k, v in model.state_dict().items()
+            if v.dtype.is_floating_point
+        }
+        self._torch = torch
+
+    def update(self, model):
+        torch = self._torch
+        with torch.no_grad():
+            for k, v in model.state_dict().items():
+                if k in self.shadow:
+                    self.shadow[k].mul_(self.decay).add_(
+                        v.detach(), alpha=1.0 - self.decay
+                    )
+
+    def apply(self, model):
+        """Troca os pesos do modelo pelos da sombra; devolve o backup."""
+        torch = self._torch
+        backup = {}
+        with torch.no_grad():
+            for k, v in model.state_dict().items():
+                if k in self.shadow:
+                    backup[k] = v.detach().clone()
+                    v.copy_(self.shadow[k])
+        return backup
+
+    def restore(self, model, backup):
+        torch = self._torch
+        with torch.no_grad():
+            for k, v in model.state_dict().items():
+                if k in backup:
+                    v.copy_(backup[k])
 
 
 def build_dataset(
@@ -297,11 +419,23 @@ def build_dataset(
     extra_pairs=None,
     extra_sample_weight=1.0,
     return_sample_weights=False,
+    cache_mode="none",
+    cache_cap_mb=24576,
 ):
     """Dataset torch. Import lazy: sem torch, esta função não existe.
 
     ``extra_pairs`` pode receber um peso menor para propostas reais não
     revisadas. O peso é por amostra e não altera validação nem teste.
+
+    ``cache_mode="resized"`` (pacote de eficiência do modelo C): decodifica
+    TUDO uma vez na construção, já redimensionado pro tamanho do modelo
+    (imagem LINEAR, máscara NEAREST — as interpolações do caminho normal),
+    e serve de RAM. Sem isso, cada época repaga decode de PNG/JPG +
+    resize em CPU — o gargalo medido nos recibos do A/B (GPU a 20–56%).
+    Diferença deliberada: a augmentation passa a operar na resolução
+    do modelo (512) em vez da nativa; pro sintético é idêntico (o
+    gerador já nasce 512×512), pro SmartDoc é a troca que compra a
+    velocidade. Estouro do teto de RAM é erro alto, nunca silencioso.
     """
     import torch
     from torch.utils.data import Dataset
@@ -314,6 +448,31 @@ def build_dataset(
         pairs.extend(extra_pairs)
         sample_weights.extend([float(extra_sample_weight)] * len(extra_pairs))
     size = cfg["model"]["input"]["height"]
+    cache = None
+    if cache_mode == "resized":
+        est_bytes = len(pairs) * size * size * 4  # RGB uint8 + máscara uint8
+        cap_bytes = int(cache_cap_mb) * 1024 * 1024
+        if est_bytes > cap_bytes:
+            raise ValueError(
+                f"cache resized precisa de ~{est_bytes / 2**30:.1f} GiB para "
+                f"{len(pairs)} amostras, acima do teto de {cache_cap_mb} MiB; "
+                "suba training.cache_cap_mb ou desligue o cache."
+            )
+        cache = []
+        for img_path, mask_path, _ in pairs:
+            im = load_image_rgb(img_path)
+            mk = load_mask(mask_path)
+            im = cv2.resize(im, (size, size), interpolation=cv2.INTER_LINEAR)
+            mk = cv2.resize(
+                mk.astype(np.uint8), (size, size), interpolation=cv2.INTER_NEAREST
+            )
+            cache.append((im, mk))
+        print(
+            f"cache RAM ({split}): {len(cache)} amostras {size}x{size} "
+            f"≈ {est_bytes / 2**30:.1f} GiB"
+        )
+    elif cache_mode != "none":
+        raise ValueError(f"cache_mode desconhecido: {cache_mode!r}")
     aug = None
     if augment:
         try:
@@ -358,8 +517,12 @@ def build_dataset(
 
         def __getitem__(self, i):
             img_path, mask_path, _ = pairs[i]
-            image = load_image_rgb(img_path)
-            mask = load_mask(mask_path)
+            if cache is not None:
+                image = cache[i][0].copy()
+                mask = cache[i][1].astype(np.int64)
+            else:
+                image = load_image_rgb(img_path)
+                mask = load_mask(mask_path)
             if image.shape[:2] != mask.shape[:2]:
                 raise ValueError(
                     f"imagem/máscara com dimensões diferentes em {img_path}: "
@@ -496,6 +659,43 @@ def temporal_settings(cfg):
     }
 
 
+def hnbs_loss(logits, target, threshold=0.35, topk_fraction=0.005):
+    """Hard-Negative Background Suppression (HNBS), âncorado em Mao et al.,
+    Sensors 2026 (DOI 10.3390/s26165185, CGHN-Net).
+
+    Pressão extra SÓ nos pixels de FUNDO (GT classe 0) em que o modelo
+    insiste em ver primeiro plano: prob. de não-fundo >= ``threshold``,
+    e só os ``topk_fraction`` piores por imagem (pela CE do pixel). O
+    top-k é o que impede a supressão excessiva: no ablation do paper,
+    penalizar TODOS os pixels de fundo acima do limiar deu a melhor
+    precisão mas derrubou o recall para 0,8279. Sem candidato no lote,
+    devolve 0 ligado ao grafo (backward válido, gradiente zero).
+    """
+    import torch
+    import torch.nn.functional as F
+
+    prob = torch.softmax(logits, dim=1)
+    fg_prob = 1.0 - prob[:, 0]
+    ce_map = F.cross_entropy(
+        logits, target.clamp(min=0, max=NUM_CLASSES - 1), reduction="none"
+    )
+    terms = []
+    for i in range(target.shape[0]):
+        bg = target[i] == 0
+        n_bg = int(bg.sum())
+        if n_bg == 0:
+            continue
+        cand = bg & (fg_prob[i] >= threshold)
+        n_cand = int(cand.sum())
+        if n_cand == 0:
+            continue
+        k = max(1, min(n_cand, int(topk_fraction * n_bg)))
+        terms.append(torch.topk(ce_map[i][cand], k).values.mean())
+    if not terms:
+        return logits.sum() * 0.0
+    return torch.stack(terms).mean()
+
+
 def combined_loss(
     logits,
     target,
@@ -503,6 +703,9 @@ def combined_loss(
     ce_weight=0.5,
     dice_weight=0.5,
     sample_weights=None,
+    hnbs_weight=0.0,
+    hnbs_threshold=0.35,
+    hnbs_topk_fraction=0.005,
 ):
     """CE ponderada + Dice multiclasse; target=255 não supervisiona o pixel.
 
@@ -510,6 +713,9 @@ def combined_loss(
     calcula CE+Dice por imagem e faz a média ponderada das amostras válidas;
     é o caminho usado para reduzir a influência de pseudo-rótulos reais não
     revisados sem alterar os pixels sintéticos supervisionados.
+
+    ``hnbs_weight`` > 0 soma o termo HNBS (ver ``hnbs_loss``); com 0
+    (padrão histórico) o valor é idêntico ao de antes, termo a termo.
     """
     import torch
     import torch.nn.functional as F
@@ -550,16 +756,23 @@ def combined_loss(
     dice = dice / NUM_CLASSES
     if sample_weights is None:
         # A loss precisa ser escalar inclusive com acumulação de gradiente.
-        return ce_weight * ce + dice_weight * dice[sample_is_valid].mean()
-
-    per_sample = ce_weight * ce + dice_weight * dice
-    weights = torch.as_tensor(sample_weights, dtype=logits.dtype, device=logits.device)
-    if weights.shape != (target.shape[0],):
-        raise ValueError("sample_weights precisa ter um valor por imagem do batch")
-    if bool((weights <= 0).any()):
-        raise ValueError("sample_weights precisa ser estritamente positivo")
-    weights = weights * sample_is_valid
-    return (per_sample * weights).sum() / weights.sum().clamp(min=1e-12)
+        base = ce_weight * ce + dice_weight * dice[sample_is_valid].mean()
+    else:
+        per_sample = ce_weight * ce + dice_weight * dice
+        weights = torch.as_tensor(
+            sample_weights, dtype=logits.dtype, device=logits.device
+        )
+        if weights.shape != (target.shape[0],):
+            raise ValueError("sample_weights precisa ter um valor por imagem do batch")
+        if bool((weights <= 0).any()):
+            raise ValueError("sample_weights precisa ser estritamente positivo")
+        weights = weights * sample_is_valid
+        base = (per_sample * weights).sum() / weights.sum().clamp(min=1e-12)
+    if hnbs_weight > 0.0:
+        base = base + hnbs_weight * hnbs_loss(
+            logits, target, threshold=hnbs_threshold, topk_fraction=hnbs_topk_fraction
+        )
+    return base
 
 
 def masked_temporal_consistency_loss(logits_a, logits_b, change):
@@ -651,6 +864,25 @@ def _model_logits(model, images):
     """Accepta SegformerOutput ou Tensor (saída do DataParallel multi-GPU)."""
     output = model(pixel_values=images)
     return output if hasattr(output, "shape") else output.logits
+
+
+def _model_logits_and_presence(model, images):
+    """(logits, presence_logit|None) numa ÚNICA passada do modelo.
+
+    Sem cabeça de presença, devolve (logits, None) — caminho histórico.
+    Com a cabeça ligada mas a saída sem o logit (ex.: wrapper
+    DataParallel, que descarta saídas auxiliares), devolve None e quem
+    chama decide: no treino isso é erro alto, nunca degradação muda.
+    """
+    output = model(pixel_values=images)
+    if hasattr(output, "shape"):
+        return output, None
+    presence = None
+    try:
+        presence = output["presence_logit"]
+    except Exception:
+        presence = getattr(output, "presence_logit", None)
+    return output.logits, presence
 
 
 def _data_parallel(torch, model):
@@ -855,6 +1087,12 @@ def train_one_epoch(
     pair_fraction=0.0,
     consistency_weight=0.0,
     epoch_stats=None,
+    presence_weight=0.0,
+    hnbs_weight=0.0,
+    hnbs_threshold=0.35,
+    hnbs_topk_fraction=0.005,
+    ema=None,
+    ema_model=None,
 ):
     """Uma época. Com ``pair_loader`` + ``pair_fraction`` > 0, essa
     fração dos lotes vira lote de PAR (dois frames da mesma cena):
@@ -864,7 +1102,6 @@ def train_one_epoch(
     mesma ordem, mesma loss (provado por teste de identidade).
     ``epoch_stats``, quando passado, recebe {"pair_batches": n}.
     """
-    import itertools
     import random as _random
 
     import torch
@@ -872,13 +1109,18 @@ def train_one_epoch(
 
     model.train()
     total, n = 0.0, 0
+    presence_total, presence_n = 0.0, 0
     accumulation_steps = max(int(accumulation_steps), 1)
     num_batches = len(loader)
     pair_iter = None
     pair_rng = None
     pair_batches = 0
     if pair_loader is not None and pair_fraction > 0.0:
-        pair_iter = itertools.cycle(pair_loader)
+        # NUNCA um iterador que guarda os lotes que entrega: ~9 MB por
+        # par × 10.000 pares e a RAM do host morre no meio da época
+        # (rc 247, sem traceback — visto na noite t8, kernels A v3 e B v1,
+        # lote 16 e 32). Reitera o loader quando esgota.
+        pair_iter = iter(pair_loader)
         pair_rng = _random.Random(20261105)
     optimizer.zero_grad(set_to_none=True)
     for batch_index, batch in enumerate(loader):
@@ -886,7 +1128,13 @@ def train_one_epoch(
         change = None
         half = 0
         if use_pair:
-            p_img_a, p_mask_a, p_img_b, p_mask_b, p_change = next(pair_iter)
+            try:
+                p_img_a, p_mask_a, p_img_b, p_mask_b, p_change = next(pair_iter)
+            except StopIteration:
+                # Pares esgotados no meio da época: reitera do zero
+                # (ordem nova se o loader embaralha; sem cache acumulado).
+                pair_iter = iter(pair_loader)
+                p_img_a, p_mask_a, p_img_b, p_mask_b, p_change = next(pair_iter)
             images = torch.cat([p_img_a, p_img_b], dim=0)
             masks = torch.cat([p_mask_a, p_mask_b], dim=0)
             change = p_change.to(device)
@@ -906,14 +1154,35 @@ def train_one_epoch(
             dtype=amp_dtype,
             enabled=amp_dtype is not None,
         ):
-            logits = _model_logits(model, images)
+            if presence_weight > 0.0:
+                logits, presence_logit = _model_logits_and_presence(model, images)
+                if presence_logit is None:
+                    raise RuntimeError(
+                        "presence_weight > 0 mas o modelo não devolveu "
+                        "presence_logit (cabeça de presença desligada na "
+                        "config ou wrapper multi-GPU descartando a saída)."
+                    )
+            else:
+                logits = _model_logits(model, images)
+                presence_logit = None
             if logits.shape[-2:] != masks.shape[-2:]:
                 logits = F.interpolate(
                     logits, size=masks.shape[-2:], mode="bilinear", align_corners=False
                 )
             loss = combined_loss(
-                logits, masks, class_weights, sample_weights=sample_weights
+                logits,
+                masks,
+                class_weights,
+                sample_weights=sample_weights,
+                hnbs_weight=hnbs_weight,
+                hnbs_threshold=hnbs_threshold,
+                hnbs_topk_fraction=hnbs_topk_fraction,
             )
+            if presence_logit is not None:
+                p_loss = presence_loss(presence_logit, masks, sample_weights)
+                loss = loss + presence_weight * p_loss
+                presence_total += float(p_loss.detach().item())
+                presence_n += 1
             if use_pair and consistency_weight > 0.0:
                 loss = loss + consistency_weight * masked_temporal_consistency_loss(
                     logits[:half], logits[half:], change
@@ -941,12 +1210,16 @@ def train_one_epoch(
             optimizer.zero_grad(set_to_none=True)
             if scheduler is not None and did_step:
                 scheduler.step()
+            if ema is not None:
+                ema.update(ema_model if ema_model is not None else model)
         total += float(loss.detach().item())
         n += 1
     if n == 0:
         raise ValueError("época sem lotes de treino")
     if epoch_stats is not None:
         epoch_stats["pair_batches"] = pair_batches
+        if presence_n:
+            epoch_stats["presence_loss"] = presence_total / presence_n
     return total / n
 
 
@@ -1034,8 +1307,13 @@ def _make_onnx_dummy(model, size):
     return torch.randn(1, 3, size, size, device=device)
 
 
-def make_onnx_export_model(model, size):
-    """Wrap SegFormer so exported logits match the full input resolution."""
+def make_onnx_export_model(model, size, include_presence=False):
+    """Wrap SegFormer so exported logits match the full input resolution.
+
+    ``include_presence=True`` devolve (logits, presence) — o ONNX ganha
+    a segunda saída ``presence`` SEMPRE depois de ``logits``: bancada e
+    validação leem a saída [0], então o contrato antigo não muda.
+    """
     import torch
     import torch.nn.functional as F
 
@@ -1046,7 +1324,8 @@ def make_onnx_export_model(model, size):
             self.output_size = output_size
 
         def forward(self, image):
-            logits = self.model(pixel_values=image).logits
+            output = self.model(pixel_values=image)
+            logits = output.logits
             if logits.shape[-2:] != (self.output_size, self.output_size):
                 logits = F.interpolate(
                     logits,
@@ -1054,6 +1333,8 @@ def make_onnx_export_model(model, size):
                     mode="bilinear",
                     align_corners=False,
                 )
+            if include_presence:
+                return logits, output["presence_logit"]
             return logits
 
     return ExportModel(model, size).eval()
@@ -1065,19 +1346,24 @@ def export_onnx(model, out_path, cfg):
 
     model.eval()
     size = cfg["model"]["input"]["height"]
-    export_model = make_onnx_export_model(model, size)
+    with_presence = bool((cfg.get("presence") or {}).get("enabled"))
+    export_model = make_onnx_export_model(model, size, include_presence=with_presence)
     dummy = _make_onnx_dummy(export_model, size)
     # dynamo=False: exportador legado. O exportador dynamo padrão do torch
     # 2.11 exige onnxscript, que o ambiente do Kaggle não tem — sem isso,
     # o treino inteiro falhava na exportação, depois das épocas, e perdia
     # até o metrics.json. O exportador legado usa só o pacote onnx.
+    output_names = ["logits", "presence"] if with_presence else ["logits"]
+    dynamic_axes = {"image": [0], "logits": [0]}
+    if with_presence:
+        dynamic_axes["presence"] = [0]
     torch.onnx.export(
         export_model,
         (dummy,),
         f=out_path,
         input_names=["image"],
-        output_names=["logits"],
-        dynamic_axes={"image": [0], "logits": [0]},
+        output_names=output_names,
+        dynamic_axes=dynamic_axes,
         opset_version=cfg["export"]["opset_version"],
         do_constant_folding=True,
         dynamo=False,
@@ -1295,6 +1581,19 @@ def main(argv=None):
         help="Dimensiona o batch pela VRAM rodando o passo real de treino (só CUDA); "
         "equivale a batch_size: \"auto\" na config.",
     )
+    parser.add_argument(
+        "--compile",
+        dest="compile",
+        action="store_true",
+        default=None,
+        help="Liga torch.compile no modelo de treino (sobrescreve a config).",
+    )
+    parser.add_argument(
+        "--no-compile",
+        dest="compile",
+        action="store_false",
+        help="Desliga torch.compile (sobrescreve a config).",
+    )
     args = parser.parse_args(argv)
 
     cfg = load_config(args.config)
@@ -1361,6 +1660,7 @@ def main(argv=None):
             real_root = real_root / "train"
         real_pairs = pair_images_masks(real_root)
     synthetic_train_pairs = pair_images_masks(Path(args.data_dir) / "train")
+    cache_mode = str(tr.get("cache_mode", "none"))
     train_ds = build_dataset(
         args.data_dir,
         "train",
@@ -1369,6 +1669,8 @@ def main(argv=None):
         extra_pairs=real_pairs,
         extra_sample_weight=real_loss_weight,
         return_sample_weights=bool(real_pairs),
+        cache_mode=cache_mode,
+        cache_cap_mb=int(tr.get("cache_cap_mb", 24576)),
     )
     val_ds = build_dataset(args.data_dir, "val", cfg, augment=False)
     test_ds = build_dataset(args.data_dir, "test", cfg, augment=False)
@@ -1407,7 +1709,55 @@ def main(argv=None):
         )
     dl_kwargs = loader_kwargs(torch, device, tr)
     print(f"dataloader: {dl_kwargs} | batch_size: {batch_size}")
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, **dl_kwargs)
+    # --- Modelo C (t9): presença + HNBS + amostragem balanceada de reais.
+    # Tudo desligado por padrão: config sem os blocos = caminho histórico.
+    pres_cfg = cfg.get("presence") or {}
+    presence_weight = (
+        float(pres_cfg.get("loss_weight", 1.0)) if pres_cfg.get("enabled") else 0.0
+    )
+    hnbs_cfg = (cfg.get("loss") or {}).get("hnbs") or {}
+    hnbs_weight = float(hnbs_cfg.get("weight", 0.0))
+    hnbs_threshold = float(hnbs_cfg.get("threshold", 0.35))
+    hnbs_topk_fraction = float(hnbs_cfg.get("topk_fraction", 0.005))
+    train_sampler = None
+    bal_cfg = tr.get("balanced_real") or {}
+    if bal_cfg.get("enabled"):
+        if not real_pairs:
+            parser.error(
+                "training.balanced_real.enabled=true mas não há pares reais "
+                "(--real-train-dir); balancear o quê?"
+            )
+        # Ordem do dataset = pares sintéticos do split + pares reais
+        # anexados (build_dataset monta exatamente nessa ordem).
+        target_real = float(bal_cfg.get("target_real_fraction", 0.4))
+        if not 0.0 < target_real < 1.0:
+            parser.error("balanced_real.target_real_fraction precisa estar em (0, 1)")
+        n_syn, n_real = len(synthetic_train_pairs), len(real_pairs)
+        w_real = (target_real / (1.0 - target_real)) * (n_syn / n_real)
+        sampler_weights = [1.0] * n_syn + [w_real] * n_real
+        from torch.utils.data import WeightedRandomSampler
+
+        train_sampler = WeightedRandomSampler(
+            sampler_weights, num_samples=len(sampler_weights), replacement=True
+        )
+        print(
+            f"amostragem balanceada: alvo {target_real:.0%} real/lote | "
+            f"peso por amostra real {w_real:.2f} (sintética 1,0) | "
+            f"{n_syn} sintéticas + {n_real} reais"
+        )
+    if presence_weight > 0.0 or hnbs_weight > 0.0:
+        print(
+            f"modelo C: presence_weight {presence_weight} | hnbs_weight "
+            f"{hnbs_weight} (limiar {hnbs_threshold}, top {hnbs_topk_fraction:.1%})"
+        )
+    if train_sampler is not None:
+        train_loader = DataLoader(
+            train_ds, batch_size=batch_size, sampler=train_sampler, **dl_kwargs
+        )
+    else:
+        train_loader = DataLoader(
+            train_ds, batch_size=batch_size, shuffle=True, **dl_kwargs
+        )
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, **dl_kwargs)
     test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, **dl_kwargs)
     tset = temporal_settings(cfg)
@@ -1428,6 +1778,26 @@ def main(argv=None):
             f"{tset['pair_fraction']} | peso da consistência "
             f"{tset['consistency_weight']}"
         )
+    # --- Pacote de eficiência: torch.compile + EMA (gated, padrão off).
+    compile_enabled = (
+        bool(args.compile)
+        if args.compile is not None
+        else bool(tr.get("compile", False))
+    )
+    if compile_enabled:
+        if device == "cpu":
+            print(
+                "AVISO: torch.compile em CPU (prova local); o ganho é medido "
+                "no smoke da sessão GPU.",
+                file=sys.stderr,
+            )
+        model = torch.compile(model)
+        print("torch.compile: LIGADO (modo default)")
+    ema_cfg = tr.get("ema") or {}
+    ema = None
+    if ema_cfg.get("enabled"):
+        ema = WeightEMA(base_model, float(ema_cfg.get("decay", 0.999)))
+        print(f"EMA de pesos: LIGADA (decay {ema.decay}) — best/avaliação usam EMA")
     optimizer = torch.optim.AdamW(model.parameters(), lr=tr["learning_rate"], weight_decay=tr["weight_decay"])
     accumulation_steps = max(int(tr.get("gradient_accumulation_steps", 1)), 1)
     steps_per_epoch = math.ceil(len(train_loader) / accumulation_steps)
@@ -1458,10 +1828,18 @@ def main(argv=None):
             pair_fraction=tset["pair_fraction"],
             consistency_weight=tset["consistency_weight"],
             epoch_stats=epoch_stats,
+            presence_weight=presence_weight,
+            hnbs_weight=hnbs_weight,
+            hnbs_threshold=hnbs_threshold,
+            hnbs_topk_fraction=hnbs_topk_fraction,
+            ema=ema,
+            ema_model=base_model,
         )
         epoch_s = time.perf_counter() - epoch_started
         metrics = evaluate(model, val_loader, device)
         history_entry = {"epoch": epoch, "train_loss": loss, "val": metrics, "epoch_s": round(epoch_s, 1)}
+        if "presence_loss" in epoch_stats:
+            history_entry["presence_loss"] = round(epoch_stats["presence_loss"], 4)
         if tset["enabled"]:
             history_entry["pair_batches"] = epoch_stats.get("pair_batches", 0)
         history.append(history_entry)
@@ -1485,6 +1863,11 @@ def main(argv=None):
                     "pair_batches_epoch0": epoch_stats.get("pair_batches", 0),
                     "pairs_total": len(pair_loader.dataset),
                 }
+            receipt["efficiency"] = {
+                "cache_mode": cache_mode,
+                "compile": compile_enabled,
+                "ema_decay": ema.decay if ema is not None else None,
+            }
             receipt["projected_total_min"] = round(
                 epoch_s * epochs / 60, 1
             )
@@ -1495,15 +1878,27 @@ def main(argv=None):
             print(f"RECEIPT {json.dumps(receipt)}")
         print(f"época {epoch}: loss {loss:.4f}, val_mean_iou {metrics['mean_iou']:.4f}")
         torch.save(base_model.state_dict(), out_dir / "checkpoints" / "last.pt")
-        if metrics["mean_iou"] > best_iou:
-            best_iou = metrics["mean_iou"]
+        monitor = metrics
+        ema_backup = None
+        if ema is not None:
+            # Avalia e (se for o melhor) salva com os pesos-EMA aplicados;
+            # depois restaura os crus — o treino segue da trajetória real.
+            ema_backup = ema.apply(base_model)
+            ema_metrics = evaluate(model, val_loader, device)
+            history_entry["val_ema"] = ema_metrics
+            monitor = ema_metrics
+            print(f"época {epoch}: val_mean_iou EMA {ema_metrics['mean_iou']:.4f}")
+        if monitor["mean_iou"] > best_iou:
+            best_iou = monitor["mean_iou"]
             bad_epochs = 0
             torch.save(base_model.state_dict(), out_dir / "checkpoints" / "best.pt")
         else:
             bad_epochs += 1
-            if bad_epochs >= tr["early_stopping"]["patience_epochs"]:
-                print(f"early stopping na época {epoch} (val_mean_iou sem melhora há {bad_epochs} épocas).")
-                break
+        if ema_backup is not None:
+            ema.restore(base_model, ema_backup)
+        if bad_epochs >= tr["early_stopping"]["patience_epochs"]:
+            print(f"early stopping na época {epoch} (val_mean_iou sem melhora há {bad_epochs} épocas).")
+            break
 
     # Exportação ONNX a partir do melhor checkpoint.
     # Não-fatal: se a exportação falhar, as métricas e os demais artefatos

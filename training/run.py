@@ -108,6 +108,8 @@ def build_command(args: argparse.Namespace, backend: str) -> list[str]:
             cmd += ["--batch-size", str(args.batch_size)]
         if args.precision is not None:
             cmd += ["--precision", args.precision]
+        if getattr(args, "compile", None) is not None:
+            cmd.append("--compile" if args.compile else "--no-compile")
         if args.smoke:
             cmd += ["--smoke", "--smoke-dir", args.smoke_dir]
         return cmd
@@ -201,6 +203,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--precision", choices=("bf16", "fp16", "fp32"), default=None,
+    )
+    parser.add_argument(
+        "--compile", dest="compile", action="store_true", default=None,
+        help="Só rota CUDA/CPU: liga torch.compile no treino.",
+    )
+    parser.add_argument(
+        "--no-compile", dest="compile", action="store_false",
+        help="Só rota CUDA/CPU: desliga torch.compile.",
     )
     parser.add_argument("--smoke", action="store_true",
                         help="Executa a etapa curta/prova do adaptador selecionado.")
