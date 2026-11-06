@@ -275,7 +275,9 @@ pode confiar nele.
   `tests/test_replay_reregister.py`). Replay em passadas, sem ONNX
   nem threads, que dirige o laço inteiro e não só o acumulador:
   câmera simulada (quad verdadeiro da página × quad do detector),
-  o `_SheetTracker` real com relógio de cena, a lógica de geração
+  o `_SheetTracker` real com relógio de cena, a trabalhadora de
+  detecção espelhada (latência `--detect-ms`, padrão 36,7 ms do
+  Ryzen; um quadro em voo, fila latest-wins de 1), a lógica de geração
   de `draw/app.py` espelhada (drop/reabertura → `new_generation()`,
   mediana de cantos, congelamento sem mão, virada atrás da flag) e
   a trabalhadora espelhada (cadência, descanso total, registro na
@@ -374,10 +376,10 @@ conteúdo.
   esperado; números para a correção posterior:**
   - moveu, com passadas (sem_sinal, presente_parada,
     presente_mexendo): 15/15 reprovados. Nenhum `new_generation()`
-    e nenhum pixel perdido — mas **+3.568 a +8.074 px confirmados
-    novos fora da tolerância** sobre um canvas de ~12.500–12.900 px
+    e nenhum pixel perdido — mas **+3.460 a +8.127 px confirmados
+    novos fora da tolerância** sobre um canvas de ~12.600–12.900 px
     (translação 30 px ≈ +8.000; rotação ≈ +7.600; escala e
-    combinado ≈ +5.300; translação 180 px ≈ +3.600). A causa
+    combinado ≈ +5.300; translação 180 px ≈ +3.500). A causa
     medida: o registro na âncora (`_registration_matrix`) lê a
     geometria nova como tremor e re-projeta a página que andou de
     volta para a posição antiga da câmera — o canvas ganha uma
@@ -390,9 +392,12 @@ conteúdo.
     o próximo traço cairia fora do lugar.
   - drop e volta: 6 quadros sobrevivem (8/8). 30 e 150 quadros
     (≥ `_SHEET_LOST_*`): 16/16 com `drop` + reabertura = 2
-    `new_generation()`, canvas zerado e reconstruído com −738 a
-    −2.239 px a menos que antes — mover/perder a folha e trocar de
+    `new_generation()`, canvas zerado e reconstruído com −919 a
+    −2.527 px a menos que antes — mover/perder a folha e trocar de
     página seguem o mesmo evento.
+  - sensibilidade à latência da detecção: com 20 ms (um quadro),
+    36,7 ms e 100 ms os vereditos e as contagens acima não mudam
+    (15/15, 8/8 e 16/16); só os px mexem em até ~350.
 - **Buraco:** não há limiar de quedas aceitáveis; a baseline acima é
   sintética (falta a rodada com a página real do draw-lab) e o
   movimento é de quad sintético, não vídeo real de caderno movido.

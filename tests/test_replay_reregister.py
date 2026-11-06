@@ -158,3 +158,28 @@ def test_reduced_run_reports_contract_fields(monkeypatch):
         "control_static", "move_same_canvas", "drop_and_return",
         "sway_negative", "sway_negative_turn_event_enabled",
     }
+
+
+def test_detector_mirror_latency_and_latest_wins():
+    dt = rr.DT
+    fast = rr.ReplayDetector(0.02)
+    fast.submit("a", "paper", 0.0)
+    assert fast.poll(0.0, 0) is None
+    assert fast.poll(dt, 0)[1:] == ("a", "paper", 0.0)
+
+    # 100 ms em 30 FPS: a detecção do quadro 0 sai no quadro 3; os
+    # quadros 1 e 2 disputam a fila de tamanho 1 e só o 2 roda.
+    slow = rr.ReplayDetector(0.1)
+    results = []
+    seq = 0
+    for k in range(8):
+        now = k * dt
+        got = slow.poll(now, seq)
+        if got is not None:
+            seq = got[0]
+            results.append((k, got[1], got[3]))
+        slow.submit(k, "paper", now)
+    assert results[0] == (3, 0, 0.0)
+    assert results[1][1] == 2 and results[1][2] == 2 * dt
+    assert slow.replaced >= 1
+    assert slow.completed < slow.submitted

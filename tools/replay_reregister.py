@@ -13,8 +13,10 @@ orquestração inteira e não só o acumulador:
 - uma câmera simulada: a página (mapa de probabilidade na grade da
   página) está num quad VERDADEIRO na câmera; o detector devolve
   esse quad com ruído (ou o quad balançando, ou nada);
-- o `_SheetTracker` real, com relógio de cena e a latência de um
-  quadro da trabalhadora de detecção;
+- o `_SheetTracker` real, com relógio de cena e a trabalhadora de
+  detecção espelhada sem thread: latência configurável
+  (`--detect-ms`, padrão 36,7 ms medidos no Ryzen), um quadro em
+  voo e fila latest-wins de tamanho 1, como `_SheetDetectionWorker`;
 - a lógica de geração do laço do app, espelhada linha a linha: drop
   → `new_generation()`, reabertura → `new_generation()`, mediana de
   `_INK_CORNER_HISTORY` cantos, congelamento sem mão, evento de
@@ -52,6 +54,7 @@ erro da geometria da tinta contra a página no fim
 Uso:
 
   python tools/replay_reregister.py [--out resultado.json] [--strict]
+      [--detect-ms 36.7]
 """
 
 import argparse
@@ -89,6 +92,8 @@ FPS = 30
 DT = 1.0 / FPS
 CAMERA_W, CAMERA_H = 1280, 720
 DETECTOR_NOISE_PX = 1.0
+# Duração de uma detecção de folha no Ryzen (draw/sheet_track.py).
+DETECT_MS = 36.7
 SETTLE_FRAMES = 5 * FPS
 SWAY_FRAMES = 60 * FPS
 SWAY_AMPLITUDE_PX = 314.0
@@ -412,6 +417,58 @@ class ReplayWorker:
 # --------------------------------------------------------------------
 
 
+class ReplayDetector:
+    """`_SheetDetectionWorker` sem thread, em relógio de cena.
+
+    Uma detecção em voo por vez, que termina `latency` segundos
+    depois de começar; um quadro submetido com a trabalhadora
+    ocupada espera numa fila de tamanho 1 e é substituído pelo
+    próximo (latest-wins). poll() devolve só o resultado mais novo,
+    com o carimbo de captura do quadro detectado.
+    """
+
+    def __init__(self, latency):
+        self.latency = latency
+        self.inflight = None
+        self.pending = None
+        self.result = None
+        self.seq = 0
+        self.submitted = 0
+        self.completed = 0
+        self.replaced = 0
+
+    def _advance(self, now):
+        while self.inflight is not None and self.inflight[3] <= now + 1e-9:
+            corners, verdict, captured_at, done_at = self.inflight
+            self.inflight = None
+            self.seq += 1
+            self.completed += 1
+            self.result = (self.seq, corners, verdict, captured_at)
+            if self.pending is not None:
+                corners, verdict, captured_at = self.pending
+                self.pending = None
+                self.inflight = (
+                    corners, verdict, captured_at,
+                    max(done_at, captured_at) + self.latency,
+                )
+
+    def poll(self, now, after_seq):
+        self._advance(now)
+        if self.result is None or self.result[0] <= after_seq:
+            return None
+        return self.result
+
+    def submit(self, corners, verdict, now):
+        self._advance(now)
+        self.submitted += 1
+        if self.inflight is None:
+            self.inflight = (corners, verdict, now, now + self.latency)
+            return
+        if self.pending is not None:
+            self.replaced += 1
+        self.pending = (corners, verdict, now)
+
+
 class Frame:
     """O que a cena entrega num quadro."""
 
@@ -431,16 +488,20 @@ class ReplayApp:
     (exibição, gravação, telemetria) não toca o canvas confirmado.
     """
 
-    def __init__(self, hand_state, turn_event_enabled=False):
+    def __init__(self, hand_state, turn_event_enabled=False,
+                 detect_ms=None):
         self.hand_state = hand_state
         self.tracker = _SheetTracker()
+        self.detector = ReplayDetector(
+            (DETECT_MS if detect_ms is None else detect_ms) / 1000.0
+        )
+        self.last_det_seq = 0
         self.worker = ReplayWorker(turn_event_enabled)
         self.corner_history = deque(maxlen=_INK_CORNER_HISTORY)
         self.ink_session_open = False
         self.clean_generation = 0
         self.frame_number = 0
         self.frame_index = 0
-        self.det_inflight = None
         self.events = {"drop": 0, "reopen": 0, "turn": 0}
         self.last_warp_corners = None
 
@@ -457,9 +518,9 @@ class ReplayApp:
 
     def step(self, frame):
         now = self.frame_index * DT
-        if self.det_inflight is not None:
-            detected, verdict, captured_at = self.det_inflight
-            self.det_inflight = None
+        det_result = self.detector.poll(now, self.last_det_seq)
+        if det_result is not None:
+            self.last_det_seq, detected, verdict, captured_at = det_result
             ran_detection = True
         else:
             detected, verdict, captured_at = None, None, None
@@ -469,7 +530,7 @@ class ReplayApp:
                 None if frame.detected is None
                 else np.asarray(frame.detected, np.float32).copy()
             )
-            self.det_inflight = (corners, frame.verdict, now)
+            self.detector.submit(corners, frame.verdict, now)
         event = self.tracker.update(
             detected, verdict, ran_detection,
             captured_at if ran_detection else now,
@@ -693,6 +754,9 @@ class Episode:
         self.events_before = dict(app.events)
         self.passes_before = app.worker.passes_total
         self.turns_before = app.worker.coverage_turn_signals
+        self.det_before = (
+            app.detector.completed, app.detector.replaced
+        )
         self.generation_before = app.clean_generation
         self.frames = 0
         self.min_px = (
@@ -761,6 +825,10 @@ class Episode:
             "passes_during_perturbation": self.passes_during,
             "passes_total": passes,
             "frames_total": self.frames,
+            "detections_completed": (
+                app.detector.completed - self.det_before[0]
+            ),
+            "detections_replaced": app.detector.replaced - self.det_before[1],
             "vacuous": passes == 0,
             "ink_geometry_error_px": round(geometry_error, 2),
             "ink_geometry_follows_page": geometry_error <= GEOMETRY_TOL_PX,
@@ -935,6 +1003,8 @@ def run_all(drawing, settled, source):
             "camera_px": [CAMERA_W, CAMERA_H],
             "nominal_fps_for_tracker_clocks": FPS,
             "detector_noise_px": DETECTOR_NOISE_PX,
+            "detect_latency_ms": DETECT_MS,
+            "detection_worker": "latest-wins, fila 1, um quadro em voo",
             "boundary_tol_px": BOUNDARY_TOL_PX,
             "settle_frames": SETTLE_FRAMES,
             "page_grid": list(settled[0].shape),
@@ -1011,6 +1081,7 @@ def run_all(drawing, settled, source):
 
 
 def main():
+    global DETECT_MS
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default=None)
     parser.add_argument(
@@ -1018,10 +1089,15 @@ def main():
         help="forca a pagina sintetica mesmo com o draw-lab presente",
     )
     parser.add_argument(
+        "--detect-ms", type=float, default=DETECT_MS,
+        help="duracao simulada de uma deteccao de folha (ms)",
+    )
+    parser.add_argument(
         "--strict", action="store_true",
         help="sai com 1 se um portao (moveu/balanco padrao) reprovar",
     )
     args = parser.parse_args()
+    DETECT_MS = args.detect_ms
     if not args.synthetic and (RULER / "prob_cache.py").exists():
         drawing, settled = real_pages()
         source = "real"
