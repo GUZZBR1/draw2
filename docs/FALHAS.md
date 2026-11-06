@@ -456,7 +456,7 @@ conteúdo.
     (15/15, 8/8 e 16/16); só os px mexem em até ~350.
 - **Baseline histórica com página real (2026-11-06), lógica `main`
   em `d4690d5`, anterior à correção F-11 — MEDIDO
-  EM LABORATÓRIO, não promoção:** rodada informada pelo Lucas,
+  EM LABORATÓRIO, não promoção:** rodada informada pelo Santleme,
   `source: "real"`, artefato local
   `~/workspace/draw-lab/replay-ruler-2026-11-01/baseline_real_main_2026-11-06.json`.
   O JSON permanece no laboratório, não é versionado. Estes números
