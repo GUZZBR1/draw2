@@ -16,6 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -118,6 +119,7 @@ class _ScriptedPresence:
         return True, len(self.calls) > 1
 
 
+@pytest.mark.lento
 def test_hand_presence_worker_delivers_latest_result():
     presence = _ScriptedPresence()
     worker = app_module._HandPresenceWorker(presence).start()

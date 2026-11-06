@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -110,6 +111,7 @@ def _drive_until(worker, generation, predicate, timeout=5.0):
     raise AssertionError("a condição nunca chegou na exibição")
 
 
+@pytest.mark.lento
 def test_worker_display_shows_provisional_before_poll_confirms(
     monkeypatch,
 ):

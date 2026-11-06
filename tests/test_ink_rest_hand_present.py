@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -76,6 +77,7 @@ def _rig(monkeypatch):
     return fake, worker, generation
 
 
+@pytest.mark.lento
 def test_total_rest_with_hand_present_and_still(monkeypatch):
     fake, worker, generation = _rig(monkeypatch)
     try:
@@ -142,6 +144,7 @@ class _GrowingInk:
         return prob
 
 
+@pytest.mark.lento
 def test_active_drawing_never_rests_even_without_motion_reports(
         monkeypatch):
     monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.02)
@@ -171,6 +174,7 @@ def test_active_drawing_never_rests_even_without_motion_reports(
         worker.stop()
 
 
+@pytest.mark.lento
 def test_motion_reports_block_rest_with_frozen_ink(monkeypatch):
     fake, worker, generation = _rig(monkeypatch)
     try:

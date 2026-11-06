@@ -43,6 +43,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -163,6 +164,7 @@ class _QueueCapture:
         pass
 
 
+@pytest.mark.lento
 def test_latest_only_and_no_reprocess():
     capture = _PacedCapture(0.01)
     source = _LatestFrameCapture(capture).start()
@@ -189,6 +191,7 @@ def test_latest_only_and_no_reprocess():
     check("stop libera a captura", capture.released)
 
 
+@pytest.mark.lento
 def test_no_reprocess_without_new_frame():
     capture = _BurstCapture(3)
     source = _LatestFrameCapture(capture).start()
@@ -202,6 +205,7 @@ def test_no_reprocess_without_new_frame():
     source.stop()
 
 
+@pytest.mark.lento
 def test_failure_limit_marks_dead():
     capture = _FailingCapture()
     source = _LatestFrameCapture(capture).start()
@@ -221,6 +225,7 @@ def test_failure_limit_marks_dead():
     source.stop()
 
 
+@pytest.mark.lento
 def test_transient_failures_recover():
     capture = _FlakyCapture(failures=3, period_s=0.01)
     source = _LatestFrameCapture(capture).start()
@@ -235,6 +240,7 @@ def test_transient_failures_recover():
     source.stop()
 
 
+@pytest.mark.lento
 def test_png_writer_drains_on_close():
     writer = _PngWriter()
     done = []
@@ -495,6 +501,7 @@ def _text_pixels(frame):
     return int(np.count_nonzero(np.any(frame.astype(int) != background, axis=2)))
 
 
+@pytest.mark.lento
 def test_dead_source_notice_on_exception():
     capture = _RaisingCapture()
     spy, png_closed, finished, errors = _run_app_headless(capture)
@@ -513,6 +520,7 @@ def test_dead_source_notice_on_exception():
         )
 
 
+@pytest.mark.lento
 def test_dead_source_notice_on_failure_limit():
     capture = _FailingCapture()
     spy, png_closed, finished, errors = _run_app_headless(capture)
@@ -531,6 +539,7 @@ def test_dead_source_notice_on_failure_limit():
         )
 
 
+@pytest.mark.lento
 def test_dead_source_notice_after_frames():
     capture = _LiveThenDeadCapture(frames=5)
     spy, png_closed, finished, errors = _run_app_headless(capture)

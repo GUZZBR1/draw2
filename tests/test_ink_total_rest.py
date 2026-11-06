@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -94,6 +95,7 @@ def _wait_resting(worker, timeout=5.0):
     return False
 
 
+@pytest.mark.lento
 def test_total_rest_after_settle_without_hand(monkeypatch):
     monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.02)
     monkeypatch.setattr(ink_layers_module, "_IDLE_PROBE_SECONDS", 0.05)

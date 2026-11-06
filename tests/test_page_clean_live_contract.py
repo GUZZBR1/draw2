@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -50,6 +51,7 @@ class _FakeInk:
         return _mask(rects)
 
 
+@pytest.mark.lento
 def test_new_ink_reaches_published_canvas_within_3_passes(monkeypatch):
     monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.02)
     fake = _FakeInk()

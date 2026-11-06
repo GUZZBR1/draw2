@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -47,6 +48,7 @@ def _wait_result(worker, after_seq=0, timeout=5.0):
     raise AssertionError("a detecção nunca publicou resultado")
 
 
+@pytest.mark.lento
 def test_submit_never_blocks_and_latest_wins():
     detector = _BlockingDetector()
     worker = app_module._SheetDetectionWorker(detector).start()
@@ -89,6 +91,7 @@ def test_submit_never_blocks_and_latest_wins():
         worker.stop()
 
 
+@pytest.mark.lento
 def test_detector_error_is_kept_for_the_loop():
     def boom(_frame):
         raise RuntimeError("detector quebrou")

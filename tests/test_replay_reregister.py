@@ -16,6 +16,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
@@ -46,6 +47,7 @@ class _ProbIsWarp:
         return warped
 
 
+@pytest.mark.lento
 def test_worker_mirror_matches_real_worker(monkeypatch):
     monkeypatch.setattr(
         ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.005)
@@ -106,6 +108,7 @@ def _drive_real_identity(sequence, returned):
     return canvas, decision
 
 
+@pytest.mark.lento
 def test_worker_mirror_matches_real_identity_recovery(monkeypatch):
     monkeypatch.setattr(
         ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.005)

@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -37,6 +38,7 @@ class _BlockingInk:
         return np.zeros((H, W), dtype=np.uint8)
 
 
+@pytest.mark.lento
 def test_telemetry_counts_replaced_pending_and_stamps_stages(
         monkeypatch):
     monkeypatch.setattr(
@@ -95,6 +97,7 @@ def test_telemetry_counts_replaced_pending_and_stamps_stages(
         worker.stop()
 
 
+@pytest.mark.lento
 def test_telemetry_snapshot_is_a_copy(monkeypatch):
     monkeypatch.setattr(
         ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
