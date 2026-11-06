@@ -79,6 +79,13 @@ right gates.
   minimum n (default: 5 sessions and 25 holdout pages), the
   verdict is INCONCLUSIVE with the n values printed - the replay of ~48
   old files still has no statistical power.
+- `process.py` + `tools/selflearn/process_sessions.py`: the
+  translation step over the recorded sessions — integrity check
+  against the manifests, the sealed train x holdout split
+  persisted in `captures/pool/split.json` (a sealed session never
+  unseals; the fraction climbs the ladder until the holdout
+  reaches the gate minimum), independent-label drafts for the
+  holdout and the pool scoreboard against the gate minimums.
 - Latency telemetry (U0): `_PageCleanWorker` exposes
   `telemetry_snapshot()` (submits, latest-wins replacements,
   submit/start/end/publication timestamps per pass) without changing
