@@ -197,7 +197,7 @@ passou nas duas instâncias (bancada + mesa) até agora.
   ausência é outra doença (negativos reais + mecanismo de
   presença). O A também trouxe instabilidade na mesa dele
   (centróide saltando 156 px × ~3,7 px do incumbente).
-- **Modelo C (lançado 2026-11-06, treinando).** Cabeça de
+- **Modelo C (lançado 2026-11-06; execução não reconfirmada).** Cabeça de
   **presença** (segunda saída ONNX) + ênfase em negativos duros
   (HNBS), desenhado de pesquisa só-2026 (OPCNet). É o ataque direto
   à doença da ausência. Julgamento quando pousar: bancada completa,
@@ -283,14 +283,17 @@ história:
   ajeitar o papel, o app capturava a página no lugar novo **sem
   apagar a captura antiga**: o mesmo desenho duas vezes. É a
   violação direta da invariância de posição (§2). Em 2026-11-06 o
-  Julia implementou a identidade positiva no clone atual:
+  próprio Santleme implementou a identidade positiva no clone dele:
   o drop não mata mais a geração; na volta, a primeira máscara
   registrada decide por **recall ≥ 65%** da tinta confirmada se é a
   mesma página (canvas reutilizado pixel a pixel) ou página nova
-  (canvas limpo) — replay sintético verde. A implementação alternativa
-  do Santleme está arquivada na worktree da VM. A decisão é usar a
-  versão local de passada única como base; só reavaliar a alternativa
-  se o teste ao vivo revelar fragilidade.
+  (canvas limpo) — testes sintéticos verdes, conferidos pela Julia.
+  A alternativa da Julia, com herança julgada pelo voto e migração
+  de âncora, ficou arquivada na worktree da VM; a dele, de passada
+  única, é a base escolhida. Correção da autoria invertida na revisão
+  anterior. A baseline com página real de 2026-11-06 reprova essa
+  recuperação: `new_page` em 16/16 retornos médios/longos; níveis
+  de comparação, não falta de registro (ver `docs/FALHAS.md`).
 - **F-10 — apagar no papel não apaga no digital.** Por construção: a
   camada de tinta é monotônica dentro da geração. Segue aberta.
 - **O gargalo de verdade não é o modelo (auditoria de 2026-11-06).**
@@ -363,13 +366,20 @@ história:
   o MANIFEST da main também estava atrasado; os dois foram
   corrigidos e provados por download com sha idêntico ao do PC
   dele. A Release antiga fica como rollback.
-- **Modelo C treinando** no Kaggle (conta pascalcoimbra, T4).
-  Quando pousar: baixar, julgar na bancada (ausência e estabilidade
-  são as perguntas), e o veredito final é a mesa dele.
-- **F-01 resolvida ao vivo; F-11 local aguardando teste ao vivo e
-  push.** A implementação de passada única deste clone é a base; a
-  alternativa do Santleme está arquivada na worktree da VM e só volta
-  à avaliação se a mesa revelar fragilidade.
+- **Modelo C: lançamento registrado** no Kaggle (conta
+  pascalcoimbra, T4); estado atual do kernel não reconfirmado nesta
+  revisão. Não perpetuar “treinando” como estado observado. Quando
+  houver artefato, julgar ausência/estabilidade na bancada; o
+  veredito final é a mesa dele.
+- **F-01 mitigada ao vivo; F-07/F-09/F-11 ainda reprovadas na régua.**
+  A base de identidade em passada única é do Santleme, não da Julia;
+  a alternativa arquivada é dela. A página real confirmou duplicação
+  sem reset e `new_page` em todos os 16 retornos médios/longos. O
+  próximo experimento é o portão de tremor de `docs/FALHAS.md`, sem
+  alterar produção antes do veredito.
+- **Oclusão em frente separada:** patch relatado em outra worktree,
+  ainda não integrado nesta `main`; presença de mão na régua não
+  injeta oclusão nos pixels e não cura o recall F-11 sem mão.
 - **Holdout selado:** 5 sessões × 25 páginas em rascunho, 0
   revisadas — a revisão e as próximas sessões reais de desenho são
   o caminho curto para destravar decisões de modelo.

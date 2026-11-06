@@ -68,8 +68,10 @@ como se fosse reimpresso a cada rodada.
    chamava `new_generation()` e zerava o acumulador. Agora o app
    preserva uma referência e só reusa o canvas quando a primeira
    máscara registrada reencontra ≥65% da tinta confirmada; conteúdo
-   divergente começa limpo. A prova atual é sintética, ainda sem
-   replay real de movimento/oclusão.
+   divergente começa limpo. Porém, na baseline com página real de
+   2026-11-06, os 16/16 retornos que chegam à decisão caem em
+   `new_page`: a recuperação de identidade não dispara (F-09/F-11).
+   O erro de comparação está separado do registro abaixo.
 4. **Provisória → confirmada pinta o mesmo traço duas vezes.** A
    camada provisória aparece em cinza na primeira passada e a
    confirmada repinta em preto por cima quando o voto fecha
@@ -187,7 +189,9 @@ trechos somem, voltam atrasados ou aparecem duplicados/deslocados.
 metade do tempo.
 
 **Como se mede — SEM RÉGUA AINDA.** Nenhuma régua atual injeta
-oclusão. Régua que falta: replay de sequência real/sintética em que
+oclusão de pixels da mão: os quatro regimes de mão da régua de
+re-registro são sinais de presença/movimento, não uma mão no warp.
+Régua que falta: replay de sequência real/sintética em que
 uma mão (real, de vídeo; ou máscara recortada) cruza uma página já
 desenhada; medir (a) px confirmados antes × depois da oclusão
 (perda = qualquer queda), (b) atraso até tinta nova sob a mão
@@ -195,6 +199,17 @@ confirmar, (c) duplicação = crescimento de px confirmados sem tinta
 nova no GT. A infraestrutura de replay do app existe
 (`tools/replay_orchestration.py`); falta o corpus de oclusão e o
 gabarito.
+
+**Ataque de oclusão pendente (frente separada):** tratar evidência
+oculta como desconhecida, em vez de voto negativo, e transportar a
+visibilidade na mesma geometria da probabilidade. O patch foi
+reportado em outra worktree, mas não está integrado nesta `main`;
+testes relatados ali não são prova de integração aqui. Cobrar perda
+zero de confirmado, nenhuma cópia depois da desoclusão e atraso de
+tinta nova sob a mão em passadas, incluindo erro/ausência do sinal
+de mão. Isso não corrige o recall de F-11: o desencontro de níveis
+de comparação acontece também sem oclusão. O experimento de tremor
+abaixo não implementa nem presume esse patch.
 
 ## F-05 — Tinta fantasma
 
@@ -292,14 +307,22 @@ pode confiar nele.
   sintética determinística (`"source"` no JSON). Aproximação
   declarada: a passada re-warpa o mapa de probabilidade, o modelo
   não é re-rodado no quadro re-warpado.
-- **Buraco:** o portão de Δcanvas parado existe agora na régua de
-  re-registro (controle: 4/4 aprovados na baseline sintética, 2 por
-  vacuidade — trabalhadora em descanso, zero passadas), mas não há
-  limiar pré-registrado em `tools/judge.py` nem baseline com a
-  página real (o draw-lab não estava na máquina que escreveu a
-  régua: rodar `python tools/replay_reregister.py --out ...` na
-  máquina do laboratório registra os números reais). O modo hold
-  com balanço realista segue fora da bancada.
+- **Lacuna fechada — página real (2026-11-06):** `control_static`
+  e `sway_negative` na configuração padrão foram aprovados com a
+  página real do draw-lab. Fonte da rodada: ver baseline em F-09.
+  A distinção entre aprovação com passadas e por vacuidade continua
+  obrigatória. Ainda não há limiar pré-registrado em `tools/judge.py`;
+  o modo hold com balanço realista segue fora da bancada e falta
+  vídeo real de caderno movido, não a página real no replay.
+
+**Registro já ativo; o que falta é o portão.** Em
+`draw/ink_layers.py`, `_PageCleanWorker._work` recalcula
+`_registration_matrix(âncora, cantos)` em toda passada com ambos os
+quads e aplica o warp sempre que não-identidade, tolerância `1e-4`.
+A primeira passada fixa a âncora; sem cantos não há registro.
+Não se trata de adicionar registro: a falha medida é aplicá-lo
+também a movimento sustentado. O desenho do experimento está na
+seção de pré-registro abaixo; produção permanece inalterada.
 
 ## F-08 — Jitter/latência que impede desenhar
 
@@ -348,7 +371,8 @@ perda passam (tempo e quadros sem confirmação); salto de posição
 exige persistência antes de confirmar. Antes da mitigação F-11, a
 reabertura sempre zerava o canvas. Agora o app preserva a referência
 e pede a decisão por conteúdo na primeira máscara após o retorno;
-essa distinção ainda não foi validada em vídeo real. A troca de página
+na baseline com página real essa decisão falha em todos os retornos
+que chegam a ela; ainda falta vídeo real. A troca de página
 legítima e o movimento ainda compartilham o evento `drop`, dependendo
 da comparação de conteúdo. (O gatilho fino de virada por cobertura existe mas está
 **desligado por padrão** desde o hotfix de 2026-11-01: na mesa real
@@ -413,14 +437,63 @@ conteúdo.
     acima de 0,7 cobre só 57–62 % do canvas confirmado, que cresceu
     pela fronteira para o ombro sub-limiar (passadas acima de 0,3
     cobrem ~95 %). Na página sintética, o portão de identidade
-    compara grandezas diferentes; falta ver se o mapa do modelo real
-    reproduz isso. 6 quadros: 8/8 sobrevivem (sem drop).
+    compara grandezas diferentes; o mapa real reproduz o problema
+    (baseline abaixo). 6 quadros: 8/8 sobrevivem (sem drop).
   - sensibilidade à latência da detecção: com 20 ms (um quadro),
     36,7 ms e 100 ms os vereditos e as contagens acima não mudam
     (15/15, 8/8 e 16/16); só os px mexem em até ~350.
-- **Buraco:** não há limiar de quedas aceitáveis; a baseline acima é
-  sintética (falta a rodada com a página real do draw-lab) e o
-  movimento é de quad sintético, não vídeo real de caderno movido.
+- **Baseline com página real (2026-11-06), lógica `main` — MEDIDO
+  EM LABORATÓRIO, não promoção:** rodada informada pelo Lucas,
+  `source: "real"`, artefato local
+  `~/workspace/draw-lab/replay-ruler-2026-11-01/baseline_real_main_2026-11-06.json`.
+  O JSON permanece no laboratório, não é versionado. Estes números
+  são o registro textual daquela rodada, não uma nova execução
+  nesta máquina, seguindo a distinção de `tools/judge.py` entre
+  medição de laboratório e fato validado na mesa.
+  - `control_static`: **APROVADO**; `sway_negative` com a flag de
+    virada desligada (padrão real): **APROVADO**.
+  - `drop_and_return`: ausências média (30 quadros) e longa
+    (150 quadros), nos dois modos de ausência e em todos os regimes
+    de mão, dão **`new_page` em 16/16 retornos**, somados.
+    Ausência curta (6 quadros) não chega à decisão: o tracker
+    segura. Confirma F-09/F-11: a recuperação por identidade nunca
+    dispara nos retornos avaliados desta página real.
+  - `move_same_canvas`: **REPROVADO**, zero gerações criadas, mas
+    **+1.911 a +9.383 px confirmados novos fora da tolerância**
+    com mão presente ou sem sinal; pior caso: mão parada no
+    movimento combinado (**+9.383 px**). O registro lê a geometria
+    nova como tremor e re-projeta a página que andou à posição
+    antiga da câmera. A homografia que melhor alinha o confirmado
+    continua sendo a identidade: o original fica e a cópia soma,
+    **duplicação dentro da geração**, não reset.
+  - `sway_negative` com evento de virada ligado **reprova**:
+    **9 gerações no perfil biestável**. Não confundir esse teste
+    de sensibilidade com a configuração real: a flag está
+    desligada por padrão desde o hotfix de 2026-11-01; no padrão
+    passa. A página real corrige, portanto, o negativo sintético
+    que não expunha essa sensibilidade.
+
+**Separação de causas — recall de identidade não é registro.** O
+recall **0,58–0,61** de `drop_and_return`, abaixo do corte 0,65,
+vem do nível de comparação: uma passada `>0,7` cobre só **57–62%**
+do confirmado, que cresceu pelo halo da fronteira; `>0,3` cobre
+**~95%**. Isso ocorre sem movimento, não demonstra desalinhamento
+da homografia e não será curado por máscara de mão. Referência de
+separação por conteúdo na página real:
+
+| Comparação com o confirmado | Mesma página | Página diferente |
+|---|---|---|
+| Passada @0,5 | 0,86–0,88 | 0,10 |
+| Núcleo erodido @0,7 | 0,84 | 0,08 |
+
+Esses níveis são diagnósticos para um experimento de identidade
+separado, não autorização para baixar o corte em produção nem
+recalibrar F-11 junto com o portão de tremor.
+
+- **Lacuna fechada:** falta da rodada com a página real do draw-lab.
+  **Buracos restantes:** não há limiar de quedas aceitáveis; o
+  movimento ainda é de quad sintético sobre mapa real, não vídeo
+  real de caderno movido, e a identidade segue reprovada.
 
 ## F-10 — Apagar no papel não apaga no digital
 
@@ -475,7 +548,8 @@ usa recall mínimo de 65% da tinta confirmada.
 
 - `tools/replay_reregister.py`, cenário `drop_and_return` (ver F-09):
   a recuperação de identidade decide `new_page` em 16/16 retornos da
-  mesma página na baseline sintética (recall 0,58–0,61 < 0,65).
+  mesma página tanto na baseline sintética quanto na de página
+  real (recall 0,58–0,61 < 0,65; níveis de comparação, não registro).
 - `tools/replay_reregister.py`, cenário `sway_negative` (ver F-07):
   página parada, o ajuste do detector balança até 314 px de canto
   por 60 s de cena — perfil suave (senoides de 2–5 s por canto) e
@@ -483,7 +557,7 @@ usa recall mínimo de 65% da tinta confirmada.
   aberto, permanência de 1–4 s). Portão: `false_page_turns = 0` na
   configuração padrão; com `DRAW_PAGE_TURN_EVENT=1` o resultado é
   reportado à parte, junto com `coverage_turn_signals`.
-- Baseline sintética (2026-11-06): 8/8 sem página nova nas duas
+- Baseline sintética histórica (2026-11-06): 8/8 sem página nova nas duas
   configurações da flag, zero sinal de cobertura. O biestável leva a
   geometria da tinta a 314 px da página e o registro na âncora
   absorve; o suave nem chega à tinta (o candidato de salto do
@@ -491,12 +565,165 @@ usa recall mínimo de 65% da tinta confirmada.
   vacuidade (ausente e presente_parada: zero passadas). Ressalva: o
   disparo falso de 2026-11-01 foi medido antes do registro e com o
   modelo rodando no quadro re-warpado; aqui o mapa é re-warpado.
+- Baseline com página real (mesma data): balanço **aprovado no
+  padrão**, mas evento de virada ligado cria **9 gerações no
+  biestável**. O resultado real substitui a leitura de que a flag
+  ligada seria segura; ela continua desligada por padrão.
 - **Buraco:** continua faltando o corpus de transições reais (troca
   real de folha × balanço/movimento sem troca, os dois em vídeo
   real), com portão duplo: toda troca detectada em ≤ N s **e** zero
   troca falsa por hora de balanço. O teste negativo tem que incluir
   balanço realista (314 px de canto medidos), não borracha em warp
   estático — a lição do hotfix está registrada no código.
+
+## Pré-registro — portão de tremor sobre a homografia (F-07/F-09)
+
+**Estado: experimento desenhado, ainda sem veredito.** Primeiro
+implementar uma variante isolada na régua, depois executar no
+laboratório; **não modificar `draw/ink_layers.py` neste passo**.
+A hipótese é registrar apenas no regime de tremor; movimento
+confirmado re-ancora a geometria **sem tocar o canvas confirmado**.
+Não mudar identidade, descanso, fronteira, modelo ou flag de virada
+no mesmo A/B: assim uma melhora não pode ser atribuída a outro fix.
+
+### Sinal e limite de identificação
+
+- Usar a trajetória dos quatro cantos que efetivamente chegam à
+  passada, depois do tracker e da mediana do app. Projetar esses
+  pontos pela homografia da âncora numa grade fixa; medir amplitudes
+  e deslocamentos em pixels dessa grade, não pela norma dos
+  coeficientes da homografia (dependente de escala).
+- Numa janela de K passadas, por canto, medir caminho total L,
+  deslocamento líquido D, razão D/L (zero quando L=0), excursão
+  desde a âncora e reversões de direção. Tremor: pequena excursão,
+  reversão/retorno e baixo D/L. Movimento sustentado: deslocamento
+  líquido persistente, alto D/L e sem retorno; incluir deriva lenta
+  acumulada, mesmo quando cada passo é subpixel. Usar o máximo
+  entre cantos, não a média vetorial que anularia uma rotação ou
+  esconderia a mão puxando um só canto.
+- **Homografia sozinha não identifica a causa física.** Uma deriva
+  monotônica pode ser o caderno andando ou viés do detector com a
+  página parada. O caso de mão parada sobre um canto, documentado
+  em `draw/ink_layers.py` (20.137 px congelados contra **71.548 px**
+  sob viés sustentado, antes do registro), é um controle adversário
+  obrigatório: re-ancorar todo viés monotônico pode recriar F-01.
+  Os valores dessa régua anterior não são novos limites de aceite.
+- Desambiguar na régua comparando **antes de votar** a evidência
+  sem registro e a registrada com uma referência de tinta estável
+  anterior à perturbação. Comparar núcleo e suporte com a mesma
+  tolerância de fronteira, nos dois sentidos (recall e contenção),
+  sem usar o confirmado já contaminado pela cópia. Se só o registro
+  reencontra a referência, é evidência de erro geométrico; se o mapa
+  sem registro reencontra e o registrado desloca, favorece movimento
+  físico/re-ancoragem. Não reutilizar o recall F-11 @0,7 contra halo
+  como se fosse teste de alinhamento. Sem tinta suficiente, ou se
+  ambos os candidatos empatam/falham, marcar ambíguo; não inventar
+  identidade ou declarar movimento resolvido só pela trajetória.
+
+### Variante causal e parâmetros a congelar antes da rodada
+
+1. **Tremor/estável:** manter a âncora e o registro atual quando a
+   janela caracteriza oscilação reversível ou quando a comparação
+   de conteúdo favorece apenas o registro (viés do detector).
+2. **Suspeita:** ao sair do envelope, reter evidências em buffer
+   limitado, sem alimentar o voto com mapas de referencial incerto.
+   A classificação usa somente passado/presente; sem olhar quadros
+   futuros e sem bloquear por tempo ilimitado para fingir invariância.
+3. **Movimento confirmado:** persistência direcional mais conteúdo
+   favorecendo o mapa sem registro autoriza atualizar a âncora aos
+   cantos atuais. Não chamar `new_generation()`, limpar/re-warpar o
+   confirmado ou mudar sua contagem/hash. Descartar apenas evidência
+   transitória de referencial incompatível; as próximas passadas
+   voltam a votar na mesma grade canônica. Se o conteúdo exigir uma
+   transformação residual, esta tem de ser estimada e validada na
+   régua, nunca presumida igual à identidade.
+4. **Ambíguo:** conservar confirmado, registrar abstenção e aguardar
+   no máximo a janela limite. Ao esgotá-la sem resolver, a célula é
+   inconclusiva/reprovada por disponibilidade, não aprovada porque
+   não votou. Queda/retorno continua pelo caminho `main` inalterado;
+   descartar buffer/estado temporal na troca legítima de geração.
+
+Grade inicial **proposta**, não calibrada: envelope de 1/2/4 px na
+grade da página; K=3/6/12 passadas; D/L mínimo de 0,8/0,95 para
+persistência, exigindo saída do envelope. Para comparar conteúdo,
+margem mínima de 0,05 tanto em recall quanto em contenção entre
+candidatos. Referência = núcleo erodido do confirmado antes da
+perturbação, fixo até a decisão; suporte candidato = probabilidade
+`>0,5`. Recall mede referência coberta pelo suporte dilatado;
+contenção mede suporte coberto pela referência dilatada, ambos com
+`_INK_FRONTIER_RADIUS`. Exigir ≥256 px em cada suporte, ou abster.
+Se houver preferência pelo mapa sem registro mas ainda não houver
+persistência, reter em suspeita, não votar com registro só por estar
+dentro do envelope. Para voltar de suspeita a tremor, exigir duas
+janelas consecutivas com D/L ≤0,35 e retorno ao envelope da âncora,
+sem preferência de conteúdo pelo mapa sem registro. Após re-ancorar,
+reiniciar a trajetória na nova âncora, não o canvas. Tempo máximo de
+suspeita = 12 passadas. Registrar esses parâmetros no pré-registro
+local **antes de executar**; mudança exige nova rodada declarada.
+Nenhuma combinação dessa grade é vencedora por antecipação.
+Separar sequências de calibração e confirmação antes
+da varredura; congelar um candidato e executá-lo nas sequências
+reservadas, sem retocar cortes após vê-las. Sem confirmação reservada,
+reportar exploratório, não prova para produção.
+
+### Protocolo no laboratório (medições ficam lá)
+
+Usar `tools/replay_reregister.py` como infraestrutura e preservar o
+espelho de `main` como braço A. A variante do portão é o braço B,
+somente na régua. Entrada obrigatória: cache
+`~/workspace/draw-lab/replay-ruler-2026-11-01/prob_cache.py` e warps
+`~/workspace/draw-lab/real-negatives-2026-10-31/proc/warps` (f01–f30).
+**Não aceitar fallback sintético como rodada real.** Guardar scripts,
+hashes de código/modelo/entradas, parâmetros, mapas e JSON no lab;
+somente protocolo e vereditos textuais viajam para o repo. Baselines
+rodam ali sob demanda. A referência é a baseline real `main` de F-09;
+se a revisão ou entrada mudar, repetir A antes de comparar B.
+
+Executar A/B com as mesmas entradas, ruído, latência e quatro regimes
+de mão, separados por célula, nunca só uma média:
+
+- `control_static`, cinco movimentos de `move_same_canvas`,
+  `drop_and_return` de 6/30/150 quadros nos dois modos e
+  `sway_negative` suave/biestável até 314 px. Flag de virada
+  desligada como configuração decisória; ligada apenas diagnóstico.
+- Tremor reversível de ±1 px, deriva lenta de 3 px e viés sustentado
+  de um canto com **página verdadeira parada**; repetir trajetórias
+  com **página verdadeira movendo**. Incluir rampas lentas, movimento
+  abrupto, rotação/escala, parada fora da âncora e ida-e-volta longa:
+  não classificar o trecho inicial com conhecimento do retorno futuro.
+  O balanço de 314 px é negativo obrigatório mesmo não cabendo no
+  envelope de tremor pequeno.
+- Após reassentar, inserir traço novo conhecido e verificar posição
+  e confirmação. Repetir com passadas efetivas: `ausente` em descanso
+  não prova re-ancoragem. Preservar a execução padrão para registrar
+  vacuidade e usar um braço diagnóstico acordado para cobrar geometria.
+- A régua re-warpa probabilidades, não reexecuta ONNX sob uma mão:
+  não chamar esses regimes de corpus de oclusão nem de vídeo real.
+
+Por passada registrar cantos, homografia proposta/aplicada, estado do
+portão, D/L/reversões, decisão de conteúdo, re-ancoragens, buffer,
+abstenções, passadas votadas/retidas, hash/contagem do confirmado,
+px novos fora da tolerância, perdas, gerações e erro de geometria.
+Contar px espúrios **durante todo o movimento**, não só no fim: uma
+cópia transitória não pode desaparecer da avaliação por alinhamento
+ECC posterior.
+
+### Critérios de sucesso e saída
+
+| Caso | Exigência para o portão |
+|---|---|
+| `move_same_canvas` | Eliminar os **+1.911 a +9.383 px**: `new_confirmed_px_outside_tol = 0`, nenhuma perda, canvas idêntico segundo a tolerância vigente e `generations_created = 0`; sem crescimento espúrio nas passadas intermediárias. |
+| Re-ancoragem | Hash do confirmado inalterado no evento; próximo traço no lugar (`ink_geometry_error_px ≤ 5`, limite já usado na régua), confirmado em até 12 passadas após ficar visível. Não vale preservar canvas congelando a captura. |
+| `drop_and_return` | Manter o comportamento de A: 6 quadros sem decisão; 30/150 com `new_page` em 16/16, mesmos eventos/recall dentro da precisão reportada. Isso é **não-regressão de uma falha conhecida**, não aprovação F-11. |
+| `sway_negative` e `control_static` | Continuar aprovados no padrão, sem geração espúria; manter explícitas as células sem passadas. A flag ligada continua diagnóstico separado. |
+| Tremor, deriva e viés com página parada | Nenhuma cópia fora da tolerância nem perda contra a referência assentada; não trocar o ganho no movimento pela volta do mecanismo dos 71.548 px. |
+| Disponibilidade | Abstenção limitada a 12 passadas; toda aprovação de movimento exige passadas após a perturbação e prova do traço novo. Empate/ausência de suporte não passa por vacuidade. |
+
+Resultado: **REPROVADO** se violar um portão, **INCONCLUSIVO** se
+faltarem dados/células/identificação, ou **APTO A PROPOR MUDANÇA EM
+PRODUÇÃO** se passar na confirmação reservada. Nenhum desses estados
+promove modelo ou altera o app. A mudança em produção só vem em passo
+posterior, depois do veredito da régua e das provas restantes na mesa.
 
 ## O buraco de medição, resumido
 
@@ -506,20 +733,22 @@ Com régua e limiar hoje: **F-02, F-05, F-06** (tinta, via
 descanso + replay de laboratório fora da bancada + régua de
 re-registro do laço, sem portão pré-registrado em `tools/judge.py`),
 **F-08** (componentes medidos, sem orçamento de ponta a ponta),
-**F-11** (replay sintético de identidade e balanço de 314 px na
-régua de re-registro, sem vídeo real) e **F-09** (quedas contadas
+**F-11** (replay de identidade e balanço de 314 px com página real,
+sem vídeo real) e **F-09** (quedas contadas
 sem limiar). Sem régua dedicada: **F-03, F-04 e F-10** — falhas de
 cena/acumulador, não de modelo isolado.
 
 O "moveu = mesmo canvas" de F-07/F-09 deixou de ser buraco de
 medição e virou falha medida: `tools/replay_reregister.py` reprova o
-laço atual (baseline sintética de 2026-11-06: 15/15 movimentos com
-passadas somam 3,5–8,1 mil px de cópia deslocada sem nenhum
-`new_generation()`; a folha perdida por ≥ 1 s zera o canvas 16/16,
-antes e depois da recuperação de identidade, que decide `new_page`
-com recall 0,58–0,61; o balanço de 314 px não dispara página nova).
-O que falta medir aí é a mesma régua sobre a página real do draw-lab
-e sobre vídeo real de caderno movido.
+laço atual. A baseline **com página real**, lógica `main`, de
+2026-11-06 confirma a sintética: movimento com mão presente ou sem
+sinal soma **1,9–9,4 mil px** de cópia deslocada sem nenhum
+`new_generation()`; após 30/150 quadros de ausência, a identidade
+decide `new_page` em **16/16**, por comparação de níveis, não por
+registro. Controle e balanço passam no padrão; o evento de virada
+ligado cria 9 gerações no biestável. **A lacuna da página real está
+fechada**. Falta vídeo real de caderno movido e provar o portão de
+tremor pré-registrado acima; o ataque de oclusão é outra frente.
 O padrão é o achado: a bancada julga bem o modelo de tinta; o que
 não tem juiz é o comportamento do sistema com a mão na cena, com a
 página trocando e com o tempo passando — que é onde moram as queixas
