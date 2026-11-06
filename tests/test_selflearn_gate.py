@@ -107,3 +107,106 @@ def test_cli_worst_group_tolerance_flag_reaches_the_gate(tmp_path):
         capture_output=True, text=True, timeout=60)
     assert tolerant.returncode == 0
     assert "PROMOTE" in tolerant.stdout
+
+
+# --- Regra de parada (ordem de adocao 2026-11-06) ---
+
+from draw.selflearn.gate import (  # noqa: E402
+    evaluate_rounds, format_stop_decision, session_bootstrap_delta)
+
+import pytest  # noqa: E402
+
+
+def _scores(base, deltas):
+    return {f"s{i}": base + d for i, d in enumerate(deltas)}
+
+
+def _round(label, candidate, baseline=None):
+    entry = {"round": label, "candidate_by_session": candidate}
+    if baseline is not None:
+        entry["baseline_by_session"] = baseline
+    return entry
+
+
+_BASE = _scores(0.80, [0.0, 0.01, -0.01, 0.0, 0.02, -0.02, 0.0, 0.01])
+_GAIN = _scores(0.86, [0.0, 0.01, -0.01, 0.0, 0.02, -0.02, 0.0, 0.01])
+_FLAT = _scores(0.80, [0.01, -0.02, 0.0, 0.02, -0.01, 0.0, 0.01, -0.01])
+
+
+def test_bootstrap_delta_of_identical_scores_is_zero():
+    delta, low, high = session_bootstrap_delta(_BASE, _BASE)
+    assert delta == 0.0 and low == 0.0 and high == 0.0
+
+
+def test_bootstrap_rejects_unpaired_sessions():
+    with pytest.raises(ValueError):
+        session_bootstrap_delta({"a": 1.0}, {"b": 1.0})
+
+
+def test_bootstrap_is_deterministic():
+    first = session_bootstrap_delta(_GAIN, _BASE)
+    second = session_bootstrap_delta(_GAIN, _BASE)
+    assert first == second
+    assert first[0] > 0 and first[1] > 0
+
+
+def test_two_no_gain_rounds_stop_the_loop():
+    result = evaluate_rounds([
+        _round(1, _FLAT, baseline=_BASE),
+        _round(2, _FLAT),
+    ])
+    assert result["should_stop"] is True
+    assert result["consecutive_no_gain"] == 2
+    assert [r["outcome"] for r in result["per_round"]] == [
+        "NO_GAIN", "NO_GAIN"]
+
+
+def test_gain_resets_the_counter_and_moves_the_champion():
+    result = evaluate_rounds([
+        _round(1, _FLAT, baseline=_BASE),
+        _round(2, _GAIN),
+        _round(3, _GAIN),
+        _round(4, _GAIN),
+    ])
+    assert result["should_stop"] is True
+    assert result["consecutive_no_gain"] == 2
+    assert result["champion_round"] == 2
+    assert [r["outcome"] for r in result["per_round"]] == [
+        "NO_GAIN", "GAIN", "NO_GAIN", "NO_GAIN"]
+
+
+def test_inconclusive_round_neither_gains_nor_counts():
+    small = _scores(0.99, [0.0, 0.0, 0.0])
+    result = evaluate_rounds([
+        _round(1, _FLAT, baseline=_BASE),
+        _round(2, small),
+        _round(3, _FLAT),
+    ])
+    assert result["should_stop"] is True
+    assert [r["outcome"] for r in result["per_round"]] == [
+        "NO_GAIN", INCONCLUSIVE, "NO_GAIN"]
+
+
+def test_holdout_change_mid_sequence_raises():
+    other = _scores(0.90, [0.0] * 8)
+    other = {f"x{i}": v for i, v in enumerate(other.values())}
+    with pytest.raises(ValueError):
+        evaluate_rounds([
+            _round(1, _GAIN, baseline=_BASE),
+            _round(2, other),
+        ])
+
+
+def test_first_round_without_baseline_raises():
+    with pytest.raises(ValueError):
+        evaluate_rounds([_round(1, _GAIN)])
+
+
+def test_stop_decision_text_stamps_preregistration():
+    result = evaluate_rounds([
+        _round(1, _FLAT, baseline=_BASE),
+        _round(2, _FLAT),
+    ])
+    text = format_stop_decision(result)
+    assert "parada: SIM" in text
+    assert "bootstrap por sessao" in text
