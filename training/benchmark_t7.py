@@ -193,7 +193,8 @@ def _run_trial(torch, T, model, source_state, cfg, device, batch_size,
             data_wait_s * 1000 / measured_steps, 2),
         **stats,
     }
-    del iterator, loader, optimizer, dataset
+    # optimizer fica vivo: o train_step devolvido o usa no profiling.
+    del iterator, loader, dataset
     return result, train_step
 
 
