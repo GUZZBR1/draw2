@@ -85,6 +85,57 @@ def test_worker_mirror_matches_real_worker(monkeypatch):
     assert np.array_equal(mirror.published[1] > 0, real_canvas > 0)
 
 
+def _drive_real_identity(sequence, returned):
+    real = app_module._PageCleanWorker(_ProbIsWarp()).start()
+    try:
+        generation = real.new_generation()
+        for i, (prob, corners) in enumerate(sequence + [returned]):
+            if i == len(sequence):
+                generation = real.new_generation(preserve_identity=True)
+            before = real.stats()["passes_total"]
+            real.submit(prob, generation, corners)
+            deadline = time.monotonic() + 5.0
+            while real.stats()["passes_total"] <= before:
+                assert time.monotonic() < deadline, "passada nao rodou"
+                time.sleep(0.001)
+        _version, canvas = real.poll(generation, 0)
+        decision = real.telemetry_snapshot()["page_identity_events"][-1][
+            "decision"]
+    finally:
+        real.stop()
+    return canvas, decision
+
+
+def test_worker_mirror_matches_real_identity_recovery(monkeypatch):
+    monkeypatch.setattr(
+        ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.005)
+    monkeypatch.setattr(ink_layers_module, "_IDLE_PROBE_SECONDS", 0.005)
+    drawing, settled = rr.synthetic_pages(SHAPE, stages=3, seed=4)
+    base = rr.base_quad(SHAPE)
+    sequence = [
+        (stage[k % len(stage)], base.copy())
+        for stage in drawing + [settled] for k in range(4)
+    ]
+    moved = base + np.float32([6.0, -4.0])
+    same = (rr.render_pass(settled[0], base, moved), moved)
+    other = (np.flipud(settled[0]).copy(), base.copy())
+    for returned, expected in ((same, "same_page"), (other, "new_page")):
+        real_canvas, decision = _drive_real_identity(sequence, returned)
+        assert decision == expected
+
+        mirror = rr.ReplayWorker()
+        generation = mirror.new_generation()
+        now = 0.0
+        for i, (prob, corners) in enumerate(sequence + [returned]):
+            if i == len(sequence):
+                generation = mirror.new_generation(preserve_identity=True)
+            mirror.submit((prob, corners, corners), generation)
+            now += 10.0
+            assert mirror.tick(now) is not None
+        assert mirror.identity_events[-1]["decision"] == expected
+        assert np.array_equal(mirror.published[1] > 0, real_canvas > 0)
+
+
 def test_render_pass_is_identity_when_warp_matches_page():
     _drawing, settled = rr.synthetic_pages(SHAPE, stages=2, seed=1)
     quad = rr.base_quad(SHAPE)

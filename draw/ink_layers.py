@@ -225,6 +225,13 @@ _INK_FRONTIER_KERNEL = np.ones(
 _REGISTRATION_IDENTITY_TOL = 1e-4
 
 
+# Ao retomar apos um drop do tracker, a primeira mascara e registrada
+# na grade antiga e precisa reencontrar a maior parte da tinta existente.
+# Evidencia nova pode acrescentar tracos, mas uma pagina diferente nao
+# deve herdar o canvas anterior.
+_PAGE_IDENTITY_MIN_RECALL = 0.65
+
+
 def _corners_page_matrix(corners, width, height):
     """Homografia camera->pagina de um quad, na grade do mapa.
 
@@ -477,6 +484,9 @@ class _PageCleanWorker:
         # chamadores que nao informam cantos (ferramentas, testes
         # antigos) seguem com a evidencia na propria geometria.
         self._anchor_corners = None
+        self._identity_reference = None
+        self._identity_reference_corners = None
+        self._identity_recovery_requested = False
         self._accumulator = _LayeredInkAccumulator(
             threshold=getattr(page_clean, "threshold", 0.7)
         )
@@ -512,6 +522,7 @@ class _PageCleanWorker:
         self._telemetry_passes = 0
         self._telemetry_publishes = 0
         self._telemetry_records = deque(maxlen=256)
+        self._identity_events = deque(maxlen=128)
         # Evento de virada (desligado por padrao): pendente
         # (geracao, canvas confirmado anterior).
         self._turn_event = None
@@ -520,9 +531,27 @@ class _PageCleanWorker:
         self._thread.start()
         return self
 
-    def new_generation(self):
-        """Invalida pendente/publicado e devolve a nova geracao."""
+    def new_generation(self, preserve_identity=False):
+        """Abre geracao; opcionalmente identifica a pagina anterior.
+
+        preserve_identity guarda uma copia do canvas confirmado para
+        que a primeira passada possa decidir, por conteudo registrado,
+        se uma folha que voltou e a mesma pagina em outra pose.
+        """
         with self._condition:
+            self._identity_recovery_requested = bool(preserve_identity)
+            if preserve_identity:
+                reference = self._accumulator._confirmed
+                self._identity_reference = (
+                    None if reference is None else reference.copy()
+                )
+                self._identity_reference_corners = (
+                    None if self._anchor_corners is None
+                    else self._anchor_corners.copy()
+                )
+            else:
+                self._identity_reference = None
+                self._identity_reference_corners = None
             self._generation += 1
             self._still_passes = 0
             self._generation_passes = 0
@@ -648,8 +677,9 @@ class _PageCleanWorker:
         fim da passada que decide a publicacao). Na reconciliacao
         com a orquestracao em camadas, passes conta cada passada
         do modelo e publishes conta so as passadas que publicam
-        canvas confirmado novo no poll(). Nenhum campo muda
-        comportamento.
+        canvas confirmado novo no poll(). Eventos de identidade de
+        pagina ficam numa lista separada para sobreviverem ao buffer
+        curto de passadas. Nenhum campo muda comportamento.
         """
         with self._condition:
             return {
@@ -658,6 +688,9 @@ class _PageCleanWorker:
                 "passes": self._telemetry_passes,
                 "publishes": self._telemetry_publishes,
                 "records": [dict(r) for r in self._telemetry_records],
+                "page_identity_events": [
+                    dict(event) for event in self._identity_events
+                ],
             }
 
     def poll(self, generation, after_version):
@@ -770,6 +803,10 @@ class _PageCleanWorker:
             # congelava no ultimo quadro e nada era impresso. O erro
             # fica guardado, e o laco principal o reporta.
             pass_started = time.monotonic()
+            identity_decision = None
+            identity_recall = None
+            identity_reference_px = None
+            identity_geometry_registered = False
             try:
                 ink_prob = getattr(self._page_clean, "ink_prob", None)
                 if ink_prob is not None:
@@ -793,10 +830,66 @@ class _PageCleanWorker:
                 first_pass = generation != self._worker_generation
                 if first_pass:
                     self._worker_generation = generation
-                    self._accumulator.reset()
                     self._generation_passes = 0
                     self._quiet_passes = 0
-                    self._anchor_corners = corners
+                    identity_reference = self._identity_reference
+                    identity_corners = self._identity_reference_corners
+                    identity_recovery_requested = (
+                        self._identity_recovery_requested
+                    )
+                    keep_page = False
+                    if identity_reference is not None:
+                        candidate = prob
+                        if identity_corners is not None and corners is not None:
+                            identity_geometry_registered = True
+                            matrix = _registration_matrix(
+                                identity_corners, corners, prob.shape
+                            )
+                            if not _registration_is_identity(matrix):
+                                candidate = cv2.warpPerspective(
+                                    prob, matrix,
+                                    (prob.shape[1], prob.shape[0]),
+                                    flags=cv2.INTER_LINEAR,
+                                    borderValue=0.0,
+                                )
+                        prior = identity_reference > 0
+                        prior_px = int(np.count_nonzero(prior))
+                        identity_reference_px = prior_px
+                        if prior_px == 0:
+                            keep_page = not np.any(
+                                candidate > self._accumulator.threshold
+                            )
+                            identity_recall = 1.0 if keep_page else 0.0
+                        else:
+                            seen = candidate > self._accumulator.threshold
+                            identity_recall = (
+                                np.count_nonzero(prior & seen) / prior_px
+                            )
+                            keep_page = (
+                                identity_recall >= _PAGE_IDENTITY_MIN_RECALL
+                            )
+                    if identity_recovery_requested:
+                        identity_decision = (
+                            "same_page" if keep_page else "new_page"
+                        )
+                        self._identity_events.append({
+                            "generation": generation,
+                            "decision": identity_decision,
+                            "recall": identity_recall,
+                            "reference_px": identity_reference_px,
+                            "geometry_registered": (
+                                identity_geometry_registered
+                            ),
+                            "threshold": _PAGE_IDENTITY_MIN_RECALL,
+                        })
+                    if not keep_page:
+                        self._accumulator.reset()
+                        self._anchor_corners = corners
+                    # Keep the old anchor when identity matched: all future
+                    # observations remain registered into the same canvas.
+                    self._identity_reference = None
+                    self._identity_reference_corners = None
+                    self._identity_recovery_requested = False
                 if (
                     self._anchor_corners is not None
                     and corners is not None
@@ -886,6 +979,12 @@ class _PageCleanWorker:
                 self._telemetry_records.append({
                     "generation": generation,
                     "version": self._version,
+                    "page_identity_decision": identity_decision,
+                    "page_identity_recall": identity_recall,
+                    "page_identity_reference_px": identity_reference_px,
+                    "page_identity_geometry_registered": (
+                        identity_geometry_registered
+                    ),
                     "submitted_at": submitted_at,
                     "pass_started_at": pass_started_at,
                     "pass_ended_at": pass_ended_at,

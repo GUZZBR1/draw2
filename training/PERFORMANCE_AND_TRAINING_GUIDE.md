@@ -1,6 +1,6 @@
 # Draw training: performance and quality guide
 
-Last reviewed: 2026-11-05
+Last reviewed: 2026-11-06
 
 This guide is about useful model quality per accelerator-hour. Filling VRAM or
 keeping a TPU busy is not itself a training objective. We accept a speed change
@@ -45,18 +45,23 @@ The Kaggle account currently has these relevant assets:
 
 | Dataset | Contents/status | Training decision |
 | --- | --- | --- |
-| `guzzbr/draw-real-seg-pilot-v1` | 719 real frames with pseudo masks; manifest explicitly says unverified, not ground truth; no independent holdout | Exploratory only; do not claim real-world validation |
-| `guzzbr/draw-segformer-expert-pilot-v1` | 19 reviewed masks from one session; no approved holdout | Useful for a small fine-tuning/probe experiment, not a defensible full benchmark |
-| `guzzbr/draw-real-capture-pool-v1` | 5,086 frames, 297 pseudo masks, 4,789 unlabeled; manifest says `training_approved_count: 0` | Not a training set until labels and split approval are added |
-| `guzzbr/draw-ink-synth-v1` | Evaluation images, no paired training masks | Not a supervised segmentation training set |
+| `guzzbr/draw-ink-pairs-v1` | 16,000 synthetic before/after pairs (14,000 train, 2,000 eval); structural mask checks pass, but median IoU of the predicted class-2 region against rendered darkening is 0.454 | Strong controlled training source; synthetic eval only, not a real-world quality claim |
+| `guzzbr/draw-segformer-expert-pilot-v1` | 19 reviewed masks from one session per the repo record; no approved holdout | Useful for a short fine-tune/probe, not a defensible full benchmark |
+| `guzzbr/draw-ink-real-v1` | 67 real image/mask pairs; labels are derived from the existing accumulator heuristic, with the hand ignored | Weak supervision/proposal source until independently corrected; not independent ground truth |
+| `guzzbr/draw-real-seg-pilot-v1` | 719 frames, 707 unverified pseudo labels and 12 all-unknown, all in train across two sessions; 297 exact source frames overlap the capture pool | Exploratory only; keep overlap grouped and do not treat thumbnail triage as pixel-accurate labels |
+| `guzzbr/draw-real-capture-pool-v1` | 5,086 frames across eight sessions; 4,789 unlabeled, 286 pseudo-supervised, 11 all-unknown; all `review_only`, zero human ground truth and zero training-approved. All 297 pseudo-mask proposals are from one session previously used for training | Candidate/review pool only; no independent holdout. Select whole new sessions for reviewed evaluation |
+| `guzzbr/draw-ink-synth-v1` | Evaluation images without paired training masks | Evaluation/diagnostic source only |
 
-The Kaggle kernel inspected above has no dataset sources. Do not launch an
-overnight run until a dataset with paired masks and fixed train/validation/test
-splits is attached. In particular, the 19-frame expert pilot has no holdout;
-using its training loss as a quality claim would overfit the evidence. The
-highest-value next data task is to approve a new capture session as a real
-holdout and review masks for the training sessions. Keep source sessions
-disjoint across splits.
+The private Kaggle inventory and review calibration are documented in
+[`docs/REVISAO_DADOS_KAGGLE_2026-11-06.md`](../docs/REVISAO_DADOS_KAGGLE_2026-11-06.md).
+The 16-frame contact sheet samples only the one session with pseudo-mask
+proposals and is a reviewer-calibration batch, not a holdout. The 19-frame
+expert pilot is also one session; its training loss cannot support a quality
+claim. The next data gate is to create an independently reviewed set from
+whole capture sessions that are excluded from all training and pseudo-label
+development. Continue short controlled fine-tunes on paired/synthetic data;
+do not run a long model sweep or promote a candidate on synthetic metrics
+alone.
 
 ## Recommended benchmark ladder
 

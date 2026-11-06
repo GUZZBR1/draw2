@@ -1,10 +1,14 @@
 """Régua de re-registro: mover o caderno = mesmo canvas? (F-07/F-09/F-11)
 
 Mede, sem corrigir nada, se o laço do app distingue "a folha andou"
-de "a folha trocou". Hoje os dois são o mesmo evento: `drop` do
-`_SheetTracker` e a reabertura da sessão chamam `new_generation()` em
-`draw/app.py`, e o gatilho de cobertura (`_INK_TURN_*`) está desligado
-por padrão desde o hotfix de 2026-11-01.
+de "a folha trocou". Até 87f52e4 os dois eram o mesmo evento: `drop`
+do `_SheetTracker` e a reabertura chamavam `new_generation()` em
+`draw/app.py` (`--app-logic legacy`). Na main (`--app-logic main`,
+padrão) o drop só deixa a identidade pendente e a reabertura chama
+`new_generation(preserve_identity=True)`: a primeira passada mantém o
+canvas se o recall da tinta registrada for ≥
+`_PAGE_IDENTITY_MIN_RECALL`. O gatilho de cobertura (`_INK_TURN_*`)
+está desligado por padrão desde o hotfix de 2026-11-01.
 
 O replay roda em contagem de passadas, sem ONNX e sem threads, no
 mesmo padrão de `tools/replay_orchestration.py`, mas dirige a
@@ -18,7 +22,8 @@ orquestração inteira e não só o acumulador:
   (`--detect-ms`, padrão 36,7 ms medidos no Ryzen), um quadro em
   voo e fila latest-wins de tamanho 1, como `_SheetDetectionWorker`;
 - a lógica de geração do laço do app, espelhada linha a linha: drop
-  → `new_generation()`, reabertura → `new_generation()`, mediana de
+  (identidade pendente, ou `new_generation()` em legacy), reabertura
+  → `new_generation(preserve_identity=...)`, mediana de
   `_INK_CORNER_HISTORY` cantos, congelamento sem mão, evento de
   virada atrás da flag;
 - a trabalhadora de tinta espelhada sem thread: cadência,
@@ -40,7 +45,8 @@ Cenários:
    homografia estimada, ECC), zero `new_generation()`, zero pixel
    confirmado novo fora da tolerância de fronteira.
 2. drop_and_return — a folha some por N quadros e volta na mesma
-   pose. Só reporta (sem veto): o canvas sobrevive ou a geração zera.
+   pose. Só reporta (sem veto): o canvas confirmado no fim é o de
+   antes (a menos de re-warp) ou foi reconstruído do zero.
 3. sway_negative — página parada, o ajuste do detector balança até
    ~314 px de canto. Portão: zero página nova (configuração padrão);
    a flag DRAW_PAGE_TURN_EVENT=1 é reportada à parte.
@@ -94,6 +100,11 @@ CAMERA_W, CAMERA_H = 1280, 720
 DETECTOR_NOISE_PX = 1.0
 # Duração de uma detecção de folha no Ryzen (draw/sheet_track.py).
 DETECT_MS = 36.7
+# Lógica do laço espelhada: "main" é a recuperação de identidade
+# (87f52e4: drop guarda a geração, a reabertura decide pela tinta);
+# "legacy" é a anterior (drop → new_generation()).
+APP_LOGICS = ("main", "legacy")
+APP_LOGIC = "main"
 SETTLE_FRAMES = 5 * FPS
 SWAY_FRAMES = 60 * FPS
 SWAY_AMPLITUDE_PX = 314.0
@@ -302,8 +313,25 @@ class ReplayWorker:
         self.hand_motion_at = None
         self.passes_total = 0
         self.coverage_turn_signals = 0
+        self.publish_seq = 0
+        self.identity_reference = None
+        self.identity_reference_corners = None
+        self.identity_recovery_requested = False
+        self.identity_events = []
 
-    def new_generation(self):
+    def new_generation(self, preserve_identity=False):
+        self.identity_recovery_requested = bool(preserve_identity)
+        if preserve_identity:
+            reference = self.acc._confirmed
+            self.identity_reference = (
+                None if reference is None else reference.copy()
+            )
+            self.identity_reference_corners = (
+                None if self.anchor is None else self.anchor.copy()
+            )
+        else:
+            self.identity_reference = None
+            self.identity_reference_corners = None
         self.generation += 1
         self.still_passes = 0
         self.generation_passes = 0
@@ -371,10 +399,11 @@ class ReplayWorker:
         first_pass = generation != self.worker_generation
         if first_pass:
             self.worker_generation = generation
-            self.acc.reset()
             self.generation_passes = 0
             self.quiet_passes = 0
-            self.anchor = corners
+            if not self._identity_keeps_page(prob, corners, generation):
+                self.acc.reset()
+                self.anchor = corners
         if self.anchor is not None and corners is not None:
             matrix = _ink._registration_matrix(self.anchor, corners, prob.shape)
             if not _ink._registration_is_identity(matrix):
@@ -403,7 +432,46 @@ class ReplayWorker:
                 self.turn_event = (generation, result["confirmed"])
         if first_pass or result["confirmed_changed"]:
             self.published = (generation, result["confirmed"])
+            self.publish_seq += 1
         return result
+
+    def _identity_keeps_page(self, prob, corners, generation):
+        """Decisão de identidade da primeira passada (ink_layers)."""
+        reference = self.identity_reference
+        reference_corners = self.identity_reference_corners
+        requested = self.identity_recovery_requested
+        self.identity_reference = None
+        self.identity_reference_corners = None
+        self.identity_recovery_requested = False
+        keep_page = False
+        recall = None
+        if reference is not None:
+            candidate = prob
+            if reference_corners is not None and corners is not None:
+                matrix = _ink._registration_matrix(
+                    reference_corners, corners, prob.shape
+                )
+                if not _ink._registration_is_identity(matrix):
+                    candidate = cv2.warpPerspective(
+                        prob, matrix, (prob.shape[1], prob.shape[0]),
+                        flags=cv2.INTER_LINEAR, borderValue=0.0,
+                    )
+            prior = reference > 0
+            prior_px = int(np.count_nonzero(prior))
+            seen = candidate > self.acc.threshold
+            if prior_px == 0:
+                keep_page = not np.any(seen)
+                recall = 1.0 if keep_page else 0.0
+            else:
+                recall = np.count_nonzero(prior & seen) / prior_px
+                keep_page = recall >= _ink._PAGE_IDENTITY_MIN_RECALL
+        if requested:
+            self.identity_events.append({
+                "generation": generation,
+                "decision": "same_page" if keep_page else "new_page",
+                "recall": None if recall is None else round(float(recall), 4),
+            })
+        return keep_page
 
     def take_turn_event(self, generation):
         if self.turn_event is None or self.turn_event[0] != generation:
@@ -489,8 +557,14 @@ class ReplayApp:
     """
 
     def __init__(self, hand_state, turn_event_enabled=False,
-                 detect_ms=None):
+                 detect_ms=None, app_logic=None):
         self.hand_state = hand_state
+        self.app_logic = APP_LOGIC if app_logic is None else app_logic
+        if self.app_logic not in APP_LOGICS:
+            raise ValueError(f"app_logic desconhecida: {self.app_logic}")
+        self.recovery_pending = False
+        self.mask_cleared = False
+        self.mask_cleared_at_seq = 0
         self.tracker = _SheetTracker()
         self.detector = ReplayDetector(
             (DETECT_MS if detect_ms is None else detect_ms) / 1000.0
@@ -505,15 +579,25 @@ class ReplayApp:
         self.events = {"drop": 0, "reopen": 0, "turn": 0}
         self.last_warp_corners = None
 
-    def _new_generation(self, reason):
+    def _new_generation(self, reason, preserve_identity=False):
         self.events[reason] += 1
-        self.clean_generation = self.worker.new_generation()
+        self.clean_generation = self.worker.new_generation(
+            preserve_identity=preserve_identity
+        )
 
     def canvas(self):
-        """O canvas dos consumidores (clean_mask do app)."""
+        """O canvas dos consumidores (clean_mask do app).
+
+        O drop zera clean_mask no app nas duas lógicas; ele só volta
+        quando a trabalhadora publica de novo.
+        """
         published = self.worker.published
         if published is None or published[0] != self.clean_generation:
             return None
+        if self.mask_cleared:
+            if self.worker.publish_seq == self.mask_cleared_at_seq:
+                return None
+            self.mask_cleared = False
         return published[1]
 
     def step(self, frame):
@@ -537,7 +621,15 @@ class ReplayApp:
         )
         if event == "drop":
             self.ink_session_open = False
-            self._new_generation("drop")
+            self.mask_cleared = True
+            self.mask_cleared_at_seq = self.worker.publish_seq
+            if self.app_logic == "legacy":
+                self._new_generation("drop")
+            else:
+                # 87f52e4: a queda não prova página nova; a primeira
+                # passada da reabertura decide pela tinta.
+                self.events["drop"] += 1
+                self.recovery_pending = True
         self.frame_number += 1
         hand_present = None
         if self.hand_state is not None:
@@ -547,7 +639,10 @@ class ReplayApp:
             hand_present = self.worker.hand_state
         if ran_detection and self.tracker.corners is not None:
             if not self.ink_session_open:
-                self._new_generation("reopen")
+                self._new_generation(
+                    "reopen", preserve_identity=self.recovery_pending
+                )
+                self.recovery_pending = False
                 self.corner_history.clear()
                 self.ink_session_open = True
             if hand_present is not False or not self.corner_history:
@@ -754,6 +849,7 @@ class Episode:
         self.events_before = dict(app.events)
         self.passes_before = app.worker.passes_total
         self.turns_before = app.worker.coverage_turn_signals
+        self.identity_before = len(app.worker.identity_events)
         self.det_before = (
             app.detector.completed, app.detector.replaced
         )
@@ -810,10 +906,16 @@ class Episode:
         geometry_error = float(np.max(np.linalg.norm(
             app.last_warp_corners - true_after, axis=1
         )))
+        identity = app.worker.identity_events[self.identity_before:]
+        same_page = sum(1 for e in identity if e["decision"] == "same_page")
         return {
             **comparison,
             "generations_created": generations,
-            "false_page_turns": events["reopen"] + events["turn"],
+            # Reabertura que a identidade reconheceu como a mesma
+            # página não é virada: a geração sobe, o canvas fica.
+            "false_page_turns": events["reopen"] - same_page + events["turn"],
+            "identity_decisions": [e["decision"] for e in identity],
+            "identity_recalls": [e["recall"] for e in identity],
             "drops": events["drop"],
             "reopens": events["reopen"],
             "coverage_turns_applied": events["turn"],
@@ -905,9 +1007,12 @@ def run_drop(base, settled, hand_config, lost_frames, mode):
     ep.mark()
     _settle(ep, settled, quad, rng, hand_config)
     out = ep.report(quad, quad)
-    out["canvas_survived"] = (
-        out["generations_created"] == 0 and not out["canvas_zeroed"]
-    )
+    # Sobreviver = o acumulador não foi zerado: nenhuma reabertura
+    # como página nova (legacy sempre zera; main zera quando a
+    # identidade decide new_page). canvas_zeroed diz se o consumidor
+    # ficou sem canvas durante a perda (o drop zera clean_mask nas
+    # duas lógicas); canvas_identical_after_move compara o fim.
+    out["canvas_survived"] = out["false_page_turns"] == 0
     return out
 
 
@@ -1004,6 +1109,7 @@ def run_all(drawing, settled, source):
             "nominal_fps_for_tracker_clocks": FPS,
             "detector_noise_px": DETECTOR_NOISE_PX,
             "detect_latency_ms": DETECT_MS,
+            "app_logic": APP_LOGIC,
             "detection_worker": "latest-wins, fila 1, um quadro em voo",
             "boundary_tol_px": BOUNDARY_TOL_PX,
             "settle_frames": SETTLE_FRAMES,
@@ -1070,6 +1176,12 @@ def run_all(drawing, settled, source):
             "generation_reset": sum(
                 1 for r in drops if r["generations_created"] > 0
             ),
+            "identity_same_page": sum(
+                r["identity_decisions"].count("same_page") for r in drops
+            ),
+            "identity_new_page": sum(
+                r["identity_decisions"].count("new_page") for r in drops
+            ),
             "verdict": "SO_REPORTE",
         },
         "sway_negative": _gate(runs("sway_negative", "_default")),
@@ -1081,7 +1193,7 @@ def run_all(drawing, settled, source):
 
 
 def main():
-    global DETECT_MS
+    global DETECT_MS, APP_LOGIC
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default=None)
     parser.add_argument(
@@ -1093,11 +1205,16 @@ def main():
         help="duracao simulada de uma deteccao de folha (ms)",
     )
     parser.add_argument(
+        "--app-logic", choices=APP_LOGICS, default=APP_LOGIC,
+        help="main = recuperacao de identidade; legacy = drop zera",
+    )
+    parser.add_argument(
         "--strict", action="store_true",
         help="sai com 1 se um portao (moveu/balanco padrao) reprovar",
     )
     args = parser.parse_args()
     DETECT_MS = args.detect_ms
+    APP_LOGIC = args.app_logic
     if not args.synthetic and (RULER / "prob_cache.py").exists():
         drawing, settled = real_pages()
         source = "real"

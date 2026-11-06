@@ -283,14 +283,14 @@ história:
   ajeitar o papel, o app capturava a página no lugar novo **sem
   apagar a captura antiga**: o mesmo desenho duas vezes. É a
   violação direta da invariância de posição (§2). Em 2026-11-06 o
-  próprio Santleme implementou a identidade positiva no clone dele:
+  Julia implementou a identidade positiva no clone atual:
   o drop não mata mais a geração; na volta, a primeira máscara
   registrada decide por **recall ≥ 65%** da tinta confirmada se é a
   mesma página (canvas reutilizado pixel a pixel) ou página nova
-  (canvas limpo) — testes dele verdes, conferidos pela Julia na
-  máquina dele. (A Julia construiu em paralelo uma versão própria,
-  maior, com herança julgada pelo voto e migração de âncora; ficou
-  arquivada — a dele, mais simples e já na máquina dele, é a base.)
+  (canvas limpo) — replay sintético verde. A implementação alternativa
+  do Santleme está arquivada na worktree da VM. A decisão é usar a
+  versão local de passada única como base; só reavaliar a alternativa
+  se o teste ao vivo revelar fragilidade.
 - **F-10 — apagar no papel não apaga no digital.** Por construção: a
   camada de tinta é monotônica dentro da geração. Segue aberta.
 - **O gargalo de verdade não é o modelo (auditoria de 2026-11-06).**
@@ -366,9 +366,10 @@ história:
 - **Modelo C treinando** no Kaggle (conta pascalcoimbra, T4).
   Quando pousar: baixar, julgar na bancada (ausência e estabilidade
   são as perguntas), e o veredito final é a mesa dele.
-- **F-01 resolvida ao vivo; F-11 consertada por ele, aguardando
-  subir** (o clone dele está um commit atrás da main e com o
-  MANIFEST local redundante para descartar no pull).
+- **F-01 resolvida ao vivo; F-11 local aguardando teste ao vivo e
+  push.** A implementação de passada única deste clone é a base; a
+  alternativa do Santleme está arquivada na worktree da VM e só volta
+  à avaliação se a mesa revelar fragilidade.
 - **Holdout selado:** 5 sessões × 25 páginas em rascunho, 0
   revisadas — a revisão e as próximas sessões reais de desenho são
   o caminho curto para destravar decisões de modelo.

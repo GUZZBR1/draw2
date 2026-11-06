@@ -63,12 +63,13 @@ como se fosse reimpresso a cada rodada.
    e a sonda de 1 Hz segue alimentando o voto para sempre — a
    exposição 1 continua viva nessa configuração, só contida pela
    porta de fronteira.
-3. **Reset de geração republica a página inteira.** Quando a folha
-   cai e volta (ver F-09), o app chama `new_generation()`
-   (`draw/app.py`: evento `drop` do tracker e reabertura de sessão) e
-   o acumulador recomeça do zero: toda a tinta da página é
-   redetectada, reconfirmada e republicada — na tela, a página
-   inteira é "impressa de novo".
+3. **Reentrada de folha podia republicar a página inteira.** Antes da
+   recuperação de identidade F-11, um `drop` seguido de reabertura
+   chamava `new_generation()` e zerava o acumulador. Agora o app
+   preserva uma referência e só reusa o canvas quando a primeira
+   máscara registrada reencontra ≥65% da tinta confirmada; conteúdo
+   divergente começa limpo. A prova atual é sintética, ainda sem
+   replay real de movimento/oclusão.
 4. **Provisória → confirmada pinta o mesmo traço duas vezes.** A
    camada provisória aparece em cinza na primeira passada e a
    confirmada repinta em preto por cima quando o voto fecha
@@ -344,11 +345,12 @@ F-01, causa 3).
 **Causa provável:** o tracker (`draw/sheet_track.py`,
 `_SheetTracker.update`) descarta a folha quando os critérios de
 perda passam (tempo e quadros sem confirmação); salto de posição
-exige persistência antes de confirmar. No app, `drop` e reabertura
-chamam `new_generation()` e zeram o canvas exibido
-(`draw/app.py`). A troca de página legítima usa o mesmo caminho —
-mover o caderno e trocar a folha são, hoje, o mesmo evento para o
-canvas. (O gatilho fino de virada por cobertura existe mas está
+exige persistência antes de confirmar. Antes da mitigação F-11, a
+reabertura sempre zerava o canvas. Agora o app preserva a referência
+e pede a decisão por conteúdo na primeira máscara após o retorno;
+essa distinção ainda não foi validada em vídeo real. A troca de página
+legítima e o movimento ainda compartilham o evento `drop`, dependendo
+da comparação de conteúdo. (O gatilho fino de virada por cobertura existe mas está
 **desligado por padrão** desde o hotfix de 2026-11-01: na mesa real
 ele disparava a cada 2–5 s com o balanço de geometria do caderno
 aberto — cantos oscilando até 314 px — zerando o canvas sem parar.)
@@ -357,7 +359,7 @@ aberto — cantos oscilando até 314 px — zerando o canvas sem parar.)
 desenha; pela invariância dele (F-07), mover não pode custar o
 conteúdo.
 
-**Como se mede — régua existe, sem limiar:**
+**Como se mede — régua parcial, sem limiar para quedas:**
 
 - Bancada `judge_sheet.py`: conta **quedas e recuperações** por clip
   SmartDoc e na sequência da mesa, e presença na sequência — tudo
@@ -371,11 +373,21 @@ conteúdo.
   `generations_created = 0` e `new_confirmed_px_outside_tol = 0`.
   Cenário `drop_and_return`: a folha some por 6/30/150 quadros
   (detector falha com a folha à vista, ou a folha sai do quadro) e
-  volta na mesma pose — só reporte, sem veto.
+  volta na mesma pose — só reporte, sem veto. `--app-logic main`
+  (padrão) espelha a recuperação de identidade de 87f52e4 (drop
+  deixa a identidade pendente; a reabertura chama
+  `new_generation(preserve_identity=True)` e a primeira passada
+  mantém o canvas se o recall ≥ `_PAGE_IDENTITY_MIN_RECALL`);
+  `--app-logic legacy` espelha o laço anterior (drop →
+  `new_generation()`).
+- Replay sintético de "moveu = mesmo canvas" também em
+  `tests/test_ink_registration.py`; exige canvas confirmado idêntico
+  pixel a pixel após re-registro.
 - **Baseline (página sintética, 2026-11-06) — REPROVADO, como
   esperado; números para a correção posterior:**
   - moveu, com passadas (sem_sinal, presente_parada,
-    presente_mexendo): 15/15 reprovados. Nenhum `new_generation()`
+    presente_mexendo): 15/15 reprovados, igual nas duas lógicas (o
+    movimento não passa por drop). Nenhum `new_generation()`
     e nenhum pixel perdido — mas **+3.460 a +8.127 px confirmados
     novos fora da tolerância** sobre um canvas de ~12.600–12.900 px
     (translação 30 px ≈ +8.000; rotação ≈ +7.600; escala e
@@ -390,11 +402,19 @@ conteúdo.
     passadas), e a mediana de cantos congela sem mão: a geometria
     da tinta fica 32–185 px longe da página (`ink_geometry_error_px`);
     o próximo traço cairia fora do lugar.
-  - drop e volta: 6 quadros sobrevivem (8/8). 30 e 150 quadros
-    (≥ `_SHEET_LOST_*`): 16/16 com `drop` + reabertura = 2
-    `new_generation()`, canvas zerado e reconstruído com −919 a
-    −2.527 px a menos que antes — mover/perder a folha e trocar de
-    página seguem o mesmo evento.
+  - drop e volta, antes de 87f52e4 (`legacy`): 6 quadros sobrevivem
+    (8/8). 30 e 150 quadros (≥ `_SHEET_LOST_*`): 16/16 com `drop` +
+    reabertura = 2 `new_generation()`, canvas zerado e reconstruído
+    com −919 a −2.527 px a menos que antes.
+  - drop e volta, com a recuperação de identidade (`main`): **o mesmo
+    16/16 zerado**, agora com 1 `new_generation()` e decisão
+    `new_page` em 16/16 — a mesma página, na mesma pose, dá recall
+    0,58–0,61, abaixo de 0,65. Medido sem movimento: uma passada
+    acima de 0,7 cobre só 57–62 % do canvas confirmado, que cresceu
+    pela fronteira para o ombro sub-limiar (passadas acima de 0,3
+    cobrem ~95 %). Na página sintética, o portão de identidade
+    compara grandezas diferentes; falta ver se o mapa do modelo real
+    reproduz isso. 6 quadros: 8/8 sobrevivem (sem drop).
   - sensibilidade à latência da detecção: com 20 ms (um quadro),
     36,7 ms e 100 ms os vereditos e as contagens acima não mudam
     (15/15, 8/8 e 16/16); só os px mexem em até ~350.
@@ -444,8 +464,18 @@ geometria realista.
 perder a atual destrói uma. É F-09/F-01 vistos pelo eixo da
 identidade da página.
 
-**Como se mede — régua parcial (só a metade negativa, sintética):**
+**Como se mede — régua parcial.** `tests/test_ink_registration.py`
+reproduz os dois casos de identidade por conteúdo: página movida,
+mesmo canvas confirmado pixel a pixel; conteúdo divergente, canvas
+novo sem herdar os traços anteriores. `tests/test_app_session_state.py`
+leva queda/retorno da mesma cena pelo laço do app e compara o canvas
+entre gerações. A telemetria por sessão registra a decisão, o recall
+e os pixels de referência da primeira máscara após a recuperação. O app
+usa recall mínimo de 65% da tinta confirmada.
 
+- `tools/replay_reregister.py`, cenário `drop_and_return` (ver F-09):
+  a recuperação de identidade decide `new_page` em 16/16 retornos da
+  mesma página na baseline sintética (recall 0,58–0,61 < 0,65).
 - `tools/replay_reregister.py`, cenário `sway_negative` (ver F-07):
   página parada, o ajuste do detector balança até 314 px de canto
   por 60 s de cena — perfil suave (senoides de 2–5 s por canto) e
@@ -461,10 +491,12 @@ identidade da página.
   vacuidade (ausente e presente_parada: zero passadas). Ressalva: o
   disparo falso de 2026-11-01 foi medido antes do registro e com o
   modelo rodando no quadro re-warpado; aqui o mapa é re-warpado.
-- **Buraco:** a metade positiva (troca real detectada em ≤ N s) e o
-  corpus em vídeo real (troca de folha × balanço/movimento sem
-  troca) seguem faltando; o teste negativo real continua sendo
-  balanço de 314 px medido, não borracha em warp estático.
+- **Buraco:** continua faltando o corpus de transições reais (troca
+  real de folha × balanço/movimento sem troca, os dois em vídeo
+  real), com portão duplo: toda troca detectada em ≤ N s **e** zero
+  troca falsa por hora de balanço. O teste negativo tem que incluir
+  balanço realista (314 px de canto medidos), não borracha em warp
+  estático — a lição do hotfix está registrada no código.
 
 ## O buraco de medição, resumido
 
@@ -473,19 +505,21 @@ Com régua e limiar hoje: **F-02, F-05, F-06** (tinta, via
 (`judge_sheet.py`). Parciais: **F-01/F-07** (testes de unidade do
 descanso + replay de laboratório fora da bancada + régua de
 re-registro do laço, sem portão pré-registrado em `tools/judge.py`),
-**F-11** (só a metade negativa: balanço de 314 px na régua de
-re-registro) e **F-08** (componentes medidos, sem orçamento de ponta
-a ponta). Sem régua nenhuma: **F-03, F-04, F-10** — todas de
-**cena/orquestração**, nenhuma de modelo isolado.
+**F-08** (componentes medidos, sem orçamento de ponta a ponta),
+**F-11** (replay sintético de identidade e balanço de 314 px na
+régua de re-registro, sem vídeo real) e **F-09** (quedas contadas
+sem limiar). Sem régua dedicada: **F-03, F-04 e F-10** — falhas de
+cena/acumulador, não de modelo isolado.
 
 O "moveu = mesmo canvas" de F-07/F-09 deixou de ser buraco de
 medição e virou falha medida: `tools/replay_reregister.py` reprova o
 laço atual (baseline sintética de 2026-11-06: 15/15 movimentos com
-passadas somam 3,6–8,1 mil px de cópia deslocada sem nenhum
-`new_generation()`; a folha perdida por ≥ 1 s zera a geração 16/16;
-o balanço de 314 px não dispara página nova). O que falta medir aí é
-a mesma régua sobre a página real do draw-lab e sobre vídeo real de
-caderno movido.
+passadas somam 3,5–8,1 mil px de cópia deslocada sem nenhum
+`new_generation()`; a folha perdida por ≥ 1 s zera o canvas 16/16,
+antes e depois da recuperação de identidade, que decide `new_page`
+com recall 0,58–0,61; o balanço de 314 px não dispara página nova).
+O que falta medir aí é a mesma régua sobre a página real do draw-lab
+e sobre vídeo real de caderno movido.
 O padrão é o achado: a bancada julga bem o modelo de tinta; o que
 não tem juiz é o comportamento do sistema com a mão na cena, com a
 página trocando e com o tempo passando — que é onde moram as queixas

@@ -688,13 +688,15 @@ def run(
     # None enquanto nenhuma folha foi lida nesta sessao.
     clean_mask = None
     # Geracao da tinta assincrona: acompanha a geracao da
-    # trabalhadora; folha nova ou folha que sai sobe a geracao e a
-    # versao de exibicao volta a zero. (A versao aplicada do poll()
+    # trabalhadora; folha nova sobe a geracao. Ao cair do tracker,
+    # a identidade fica pendente ate a folha voltar e o conteudo
+    # decidir se e re-registro ou pagina nova. (A versao aplicada do poll()
     # saiu na orquestracao em camadas: o laco le o canvas pelo
     # poll_display(), e a clean_applied_version ficou morta.)
     clean_generation = 0
     clean_display_version = 0
     clean_provisional_mask = None
+    clean_recovery_pending = False
     # Buffers donos dos canvas renderizados no laco. O acumulado
     # mora em canvas_buffer de um frame de deteccao ao outro, e
     # view_canvas_buffer serve aos canvas transitorios de exibicao.
@@ -799,9 +801,11 @@ def run(
                     freeze_pending = False
                     clean_mask = None
                     if ink_worker is not None:
-                        clean_generation = ink_worker.new_generation()
-                        clean_display_version = 0
-                        clean_provisional_mask = None
+                        # A queda do tracker nao prova que a pagina
+                        # mudou. Guarda a geracao ate a folha voltar;
+                        # a primeira mascara decide pela tinta se e
+                        # re-registro ou pagina nova.
+                        clean_recovery_pending = True
 
                 frame_number += 1
                 # Presenca e o estado do rastreador: warp_sheet com
@@ -902,7 +906,10 @@ def run(
                         # depois de a folha voltar.
                         accumulated_canvas = None
                         if ink_worker is not None:
-                            clean_generation = ink_worker.new_generation()
+                            clean_generation = ink_worker.new_generation(
+                                preserve_identity=clean_recovery_pending
+                            )
+                            clean_recovery_pending = False
                             clean_display_version = 0
                             clean_provisional_mask = None
                         if session_ink is not None:

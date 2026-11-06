@@ -23,6 +23,8 @@ O contrato novo:
 4. Sem cantos (chamadores antigos), nada muda: a evidencia
    entra na propria geometria, como antes do registro.
 5. Cantos malformados sao ignorados, nunca derrubam a thread.
+6. No replay de recuperacao, mover a mesma pagina reusa o canvas
+   confirmado pixel a pixel; conteudo divergente abre canvas limpo.
 """
 
 import sys
@@ -202,6 +204,100 @@ def test_new_ink_confirms_fast_under_wandering_geometry(
         )
         # E o bloco assentado nao engordou com a viagem.
         assert np.count_nonzero(got[1][BLOCK_A]) == 100
+    finally:
+        worker.stop()
+
+
+def test_moved_page_recovery_reuses_identical_canvas(monkeypatch):
+    """Drop/reaparecimento com geometria nova e so re-registro."""
+    monkeypatch.setattr(
+        ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(
+        ink_layers_module, "_IDLE_PROBE_SECONDS", 0.02)
+    ink = _WanderingInk()
+    worker = app_module._PageCleanWorker(ink).start()
+    try:
+        generation = worker.new_generation()
+        _drive(worker, generation, ink, WANDER)
+        original = worker.poll(generation, 0)
+        assert original is not None
+        canvas_before = original[1].copy()
+        assert np.count_nonzero(canvas_before) == 100
+
+        # A folha desaparece do tracker e volta deslocada. A nova
+        # geração do app pede ao worker para provar identidade pelo
+        # conteúdo já confirmado, registrado na grade antiga.
+        generation = worker.new_generation(preserve_identity=True)
+        ink.offset = (2, -1)
+        _drive(worker, generation, ink, [(2, -1)])
+        recovered = worker.poll(generation, 0)
+        assert recovered is not None
+        assert np.array_equal(recovered[1], canvas_before), (
+            "mover a mesma página deve reusar o canvas sem acumular "
+            "uma cópia deslocada"
+        )
+        identity = next(
+            record for record in worker.telemetry_snapshot()["records"]
+            if record["generation"] == generation
+            and record["page_identity_decision"] is not None
+        )
+        assert identity["page_identity_decision"] == "same_page"
+        assert identity["page_identity_recall"] == 1.0
+        assert identity["page_identity_reference_px"] == 100
+        assert identity["page_identity_geometry_registered"]
+        events = worker.telemetry_snapshot()["page_identity_events"]
+        assert events[-1]["decision"] == "same_page"
+        assert events[-1]["threshold"] == 0.65
+    finally:
+        worker.stop()
+
+
+def test_changed_page_content_starts_a_clean_canvas(monkeypatch):
+    """Conteudo sem identidade com o anterior nao herda os tracos."""
+    monkeypatch.setattr(
+        ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(
+        ink_layers_module, "_IDLE_PROBE_SECONDS", 0.02)
+
+    class _NextPageInk(_WanderingInk):
+        next_page = False
+
+        def ink_prob(self, _warped):
+            self.calls += 1
+            if self.next_page:
+                result = np.zeros((H, W), dtype=np.float32)
+                result[BLOCK_B] = 0.95
+                return result
+            return _content()
+
+    ink = _NextPageInk()
+    worker = app_module._PageCleanWorker(ink).start()
+    try:
+        generation = worker.new_generation()
+        _drive(worker, generation, ink, [(0, 0), (0, 0)])
+        original = worker.poll(generation, 0)
+        assert original is not None
+        assert np.count_nonzero(original[1][BLOCK_A]) == 100
+
+        generation = worker.new_generation(preserve_identity=True)
+        ink.next_page = True
+        _drive(worker, generation, ink, [(0, 0)])
+        shown = worker.poll_display(generation, 0)
+        assert shown is not None
+        _version, confirmed, provisional = shown
+        assert np.count_nonzero(confirmed[BLOCK_A]) == 0
+        assert np.count_nonzero(provisional[BLOCK_A]) == 0
+        assert np.count_nonzero(provisional[BLOCK_B]) == 100
+        identity = next(
+            record for record in worker.telemetry_snapshot()["records"]
+            if record["generation"] == generation
+            and record["page_identity_decision"] is not None
+        )
+        assert identity["page_identity_decision"] == "new_page"
+        assert identity["page_identity_recall"] == 0.0
+        assert identity["page_identity_reference_px"] == 100
+        events = worker.telemetry_snapshot()["page_identity_events"]
+        assert events[-1]["decision"] == "new_page"
     finally:
         worker.stop()
 
