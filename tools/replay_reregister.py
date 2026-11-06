@@ -1314,7 +1314,10 @@ def main():
     summary = results["summary"]
     failed = any(
         summary[key]["verdict"] == "REPROVADO"
-        for key in ("control_static", "move_same_canvas", "sway_negative")
+        for key in (
+            "control_static", "move_same_canvas", "drop_and_return_same_page",
+            "drop_and_turn", "sway_negative",
+        )
     )
     return 1 if (args.strict and failed) else 0
 

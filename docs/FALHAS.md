@@ -486,10 +486,14 @@ usa recall mínimo de 65% da tinta confirmada.
   _INK_FRONTIER_RADIUS + 1`) e exige contenção dual — o recall da
   tinta antiga reencontrada **e** a tinta da passada caindo sobre o
   canvas anterior, ambos ≥ `_PAGE_IDENTITY_MIN_RECALL`/`_MIN_CONTAINMENT`
-  = 0,65. Medição que calibrou (2026-11-06, 4 mãos × 3 estágios):
-  mesma página recall/containment 0,876–0,925 / 1,0; página
-  diferente 0,218–0,240 / 0,231–0,251 — margem enorme nos dois
-  sentidos.
+  = 0,65 no recall e 0,5 na contenção. A contenção fica abaixo do
+  recall porque tinta nova desenhada durante o drop é legítima:
+  medição que calibrou (2026-11-06, 4 mãos × 3 estágios): mesma
+  página recall/containment 0,876–0,925 / 1,0; página diferente
+  0,218–0,240 / 0,231–0,251; mesma página com +75% de tinta nova
+  cai para containment 0,65 — com 0,5 aceita ~1,8x de crescimento
+  e mantém margem de 2x contra página diferente. Sem esse teto, a
+  guarda rejeitaria a mesma página e perderia o canvas.
 - `tools/replay_reregister.py`, cenário `drop_and_turn` (guarda da
   correção): a página de conteúdo distinto que volta após o drop
   decide `new_page` em 8/8 drops reais (recall dilatado ~0,025), sem

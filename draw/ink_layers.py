@@ -232,10 +232,13 @@ _REGISTRATION_IDENTITY_TOL = 1e-4
 _PAGE_IDENTITY_MIN_RECALL = 0.65
 # Guarda dual da identidade: alem do recall da tinta antiga, a
 # tinta da passada tem de cair sobre o canvas anterior (mesma
-# tolerancia dilatada). Medido na regua de re-registro
-# (2026-11-06): mesma pagina >= 0,87 / 1,0; pagina diferente
-# <= 0,25 / 0,26 na grade sintetica.
-_PAGE_IDENTITY_MIN_CONTAINMENT = 0.65
+# tolerancia dilatada). O limiar e menor que o do recall porque a
+# tinta nova desenhada durante o drop e legitima: medido na regua
+# (2026-11-06), mesma pagina com +75% de tinta nova da
+# containment 0,65 e perderia o canvas; com 0,5 aceita ~1,8x de
+# crescimento. Pagina diferente mede 0,23-0,25 (sintetica), margem
+# de 2x contra falso positivo.
+_PAGE_IDENTITY_MIN_CONTAINMENT = 0.5
 # O canvas confirmado inclui o halo da fronteira, que uma passada
 # sozinha nunca cobre no limiar do voto: a comparacao dilata os
 # dois lados pela mesma tolerancia do comparador da regua.
