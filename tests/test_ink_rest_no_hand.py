@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -52,6 +53,7 @@ def _feed(worker, generation, seconds):
         time.sleep(0.005)
 
 
+@pytest.mark.lento
 def test_rest_without_hand_signal(monkeypatch):
     monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.02)
     monkeypatch.setattr(ink_layers_module, "_IDLE_PROBE_SECONDS", 0.30)

@@ -5,6 +5,7 @@
 # causa de imports de credencial e de arquivos de laboratório.
 testpaths = ["tests", "tools/runner/tests"]
 norecursedirs = [".venv", ".git", "captures", "models"]
+markers = ["lento: testes com threads/tempo real, serializar"]
 # O skip dos testes que precisam de arquivo preparado à mão é
 # intencional e vem com o motivo; não precisa virar aviso.
 filterwarnings = [

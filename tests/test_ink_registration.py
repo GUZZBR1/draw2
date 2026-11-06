@@ -32,6 +32,7 @@ import time
 from pathlib import Path
 
 import cv2
+import pytest
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -146,6 +147,7 @@ def test_registration_matrix_undoes_geometry_shift():
     assert np.max(np.abs(registered[inner] - pattern[inner])) < 1e-4
 
 
+@pytest.mark.lento
 def test_settled_ink_not_reprinted_under_wandering_geometry(
     monkeypatch,
 ):
@@ -170,6 +172,7 @@ def test_settled_ink_not_reprinted_under_wandering_geometry(
         worker.stop()
 
 
+@pytest.mark.lento
 def test_new_ink_confirms_fast_under_wandering_geometry(
     monkeypatch,
 ):
@@ -208,6 +211,7 @@ def test_new_ink_confirms_fast_under_wandering_geometry(
         worker.stop()
 
 
+@pytest.mark.lento
 def test_moved_page_recovery_reuses_identical_canvas(monkeypatch):
     """Drop/reaparecimento com geometria nova e so re-registro."""
     monkeypatch.setattr(
@@ -252,6 +256,7 @@ def test_moved_page_recovery_reuses_identical_canvas(monkeypatch):
         worker.stop()
 
 
+@pytest.mark.lento
 def test_changed_page_content_starts_a_clean_canvas(monkeypatch):
     """Conteudo sem identidade com o anterior nao herda os tracos."""
     monkeypatch.setattr(
@@ -302,6 +307,7 @@ def test_changed_page_content_starts_a_clean_canvas(monkeypatch):
         worker.stop()
 
 
+@pytest.mark.lento
 def test_without_corners_evidence_stays_unregistered(monkeypatch):
     """Sem cantos, o comportamento antigo segue: a geometria
     que anda re-projeta e a confirmada cresce — o registro e
@@ -327,6 +333,7 @@ def test_without_corners_evidence_stays_unregistered(monkeypatch):
         worker.stop()
 
 
+@pytest.mark.lento
 def test_malformed_corners_are_ignored(monkeypatch):
     monkeypatch.setattr(
         ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)

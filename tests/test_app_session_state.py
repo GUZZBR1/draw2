@@ -18,6 +18,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -179,6 +180,7 @@ def _patched_generation_counter(monkeypatch, generations, preserve_flags=None):
     monkeypatch.setattr(app_module._PageCleanWorker, "new_generation", counted)
 
 
+@pytest.mark.lento
 def test_new_sheet_does_not_inherit_the_previous_canvas(monkeypatch):
     """A tinta da folha anterior não pode reaparecer na folha nova.
 
@@ -221,6 +223,7 @@ def test_new_sheet_does_not_inherit_the_previous_canvas(monkeypatch):
     )
 
 
+@pytest.mark.lento
 def test_same_page_recovery_preserves_canvas_through_app_loop(monkeypatch):
     """Uma queda breve e retorno da mesma página não abre canvas duplicado."""
     generations = [0]
@@ -267,6 +270,7 @@ def test_same_page_recovery_preserves_canvas_through_app_loop(monkeypatch):
     )
 
 
+@pytest.mark.lento
 def test_page_clean_failure_is_reported_instead_of_freezing(monkeypatch):
     """Exceção na trabalhadora de tinta não pode morrer calada."""
     generations = [0]
@@ -286,6 +290,7 @@ def test_page_clean_failure_is_reported_instead_of_freezing(monkeypatch):
     )
 
 
+@pytest.mark.lento
 def test_epilogue_runs_when_the_loop_raises(monkeypatch):
     """Exceção no laço não pode vazar a câmera aberta."""
     plan = ["sheet"] * 30

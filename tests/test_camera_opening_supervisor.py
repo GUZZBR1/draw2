@@ -9,6 +9,7 @@ sempre (para nas tentativas maximas) e leitura quebrada (sem reabrir).
 """
 
 import numpy as np
+import pytest
 
 from draw import app as app_module
 from draw import capture as capture_module
@@ -92,6 +93,7 @@ def test_probe_exposure_settles_on_bright_frames():
     assert mean is not None and mean < app_module._EXPOSURE_SETTLED_MEAN
 
 
+@pytest.mark.lento
 def test_probe_exposure_reports_blown_mean():
     cap = _FakeCapture(value=150)
     mean = app_module._probe_exposure(cap, seconds=0.05)

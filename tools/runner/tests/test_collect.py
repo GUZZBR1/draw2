@@ -13,6 +13,8 @@ import os
 import sys
 import threading
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from tools.runner.collect import collect, sha256_of
@@ -51,6 +53,7 @@ class FlakyHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+@pytest.mark.lento
 def test_resume_recovers_full_file(tmp_path):
     server = http.server.HTTPServer(("127.0.0.1", 0), FlakyHandler)
     port = server.server_address[1]

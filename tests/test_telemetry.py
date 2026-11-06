@@ -14,6 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from draw.telemetry import SessionTelemetry  # noqa: E402
+import pytest
 
 
 def _read_records(path):
@@ -24,6 +25,7 @@ def _read_records(path):
     ]
 
 
+@pytest.mark.lento
 def test_records_carry_snapshot_fields_and_counter_deltas(tmp_path):
     path = tmp_path / "telemetry.jsonl"
     telemetry = SessionTelemetry(path, interval=0.05).start()
@@ -62,6 +64,7 @@ def test_records_carry_snapshot_fields_and_counter_deltas(tmp_path):
     assert second["retracted_px_total_delta"] == 0
 
 
+@pytest.mark.lento
 def test_writer_rotates_past_the_size_cap(tmp_path):
     path = tmp_path / "telemetry.jsonl"
     telemetry = SessionTelemetry(path, interval=0.02, max_bytes=300).start()
