@@ -37,7 +37,7 @@ Convenções:
 | F-08 | Jitter/latência que impede desenhar | orquestração/folha | maior | parcial — ver F-08 |
 | F-09 | Folha perdida com o caderno movido (e a tinta vai junto) | folha/orquestração | maior | sim, sem limiar |
 | F-10 | Apagar no papel não apaga no digital | acumulador | maior | sem régua ainda |
-| F-11 | Página nova lida como a mesma (ou vice-versa) | orquestração | maior | sem régua ainda |
+| F-11 | Página nova lida como a mesma (ou vice-versa) | orquestração | maior | parcial — ver F-11 |
 
 ## F-01 — Tinta repassada/reimpressa em camadas
 
@@ -270,15 +270,33 @@ pode confiar nele.
 - Régua de replay do laboratório, modo hold (a que mediu +9.999 px):
   página assentada, N passadas, Δpx confirmados deve ser 0 após a
   quietude.
-- **Buraco:** não há régua de invariância **do app inteiro** na
-  bancada (ela julga modelo, não laço), nem limiar pré-registrado em
-  `tools/judge.py` para Δcanvas em página parada. Régua que falta:
-  promover o modo hold a régua nomeada — sequência de replay com
-  página assentada (inclui balanço de geometria realista, não só
-  jitter de ±1–3 px: a prova mansinha demais foi o que deixou o
-  gatilho de virada falso passar em 2026-11-01) com portão
-  Δconfirmados = 0 e Δcanvas exibido = 0 após quietude, nas três
-  configurações de sinal de mão (presente, ausente, sem sinal).
+- **Régua de re-registro (2026-11-06), a segunda metade da de
+  hold:** `tools/replay_reregister.py` (guarda em
+  `tests/test_replay_reregister.py`). Replay em passadas, sem ONNX
+  nem threads, que dirige o laço inteiro e não só o acumulador:
+  câmera simulada (quad verdadeiro da página × quad do detector),
+  o `_SheetTracker` real com relógio de cena, a lógica de geração
+  de `draw/app.py` espelhada (drop/reabertura → `new_generation()`,
+  mediana de cantos, congelamento sem mão, virada atrás da flag) e
+  a trabalhadora espelhada (cadência, descanso total, registro na
+  âncora, `_LayeredInkAccumulator`) — o teste cobra que o espelho
+  da trabalhadora confirma pixel a pixel o mesmo canvas que a
+  `_PageCleanWorker` real. Quatro configurações de sinal de mão:
+  sem_sinal (None), ausente (False), presente_parada e
+  presente_mexendo (True). Controle parado (portão: nada muda) e
+  três cenários — os de F-09 e F-11 abaixo. Página: a sessão real
+  f01–f30 do cache quando o draw-lab existe; senão, página
+  sintética determinística (`"source"` no JSON). Aproximação
+  declarada: a passada re-warpa o mapa de probabilidade, o modelo
+  não é re-rodado no quadro re-warpado.
+- **Buraco:** o portão de Δcanvas parado existe agora na régua de
+  re-registro (controle: 4/4 aprovados na baseline sintética, 2 por
+  vacuidade — trabalhadora em descanso, zero passadas), mas não há
+  limiar pré-registrado em `tools/judge.py` nem baseline com a
+  página real (o draw-lab não estava na máquina que escreveu a
+  régua: rodar `python tools/replay_reregister.py --out ...` na
+  máquina do laboratório registra os números reais). O modo hold
+  com balanço realista segue fora da bancada.
 
 ## F-08 — Jitter/latência que impede desenhar
 
@@ -342,10 +360,42 @@ conteúdo.
 - Bancada `judge_sheet.py`: conta **quedas e recuperações** por clip
   SmartDoc e na sequência da mesa, e presença na sequência — tudo
   reportado sem veto no `JULGAMENTO.md`.
-- **Buraco:** não há limiar de quedas aceitáveis nem régua de
-  "moveu = mesmo canvas": falta o replay de re-registro (mover a
-  folha com o desenho assentado e exigir canvas confirmado idêntico
-  ao fim, a menos de re-warp) — é a segunda metade da régua de F-07.
+- **Régua de re-registro (2026-11-06):** `tools/replay_reregister.py`
+  (ver F-07). Cenário `move_same_canvas`: desenho assentado, o
+  caderno anda (translação 30 px e 180 px, rotação 12°, escala
+  0,85, combinado) e assenta. Portão: `canvas_identical_after_move`
+  (canvas confirmado depois × antes, alinhados pela homografia
+  estimada por ECC, tolerância de fronteira = `_INK_FRONTIER_RADIUS`),
+  `generations_created = 0` e `new_confirmed_px_outside_tol = 0`.
+  Cenário `drop_and_return`: a folha some por 6/30/150 quadros
+  (detector falha com a folha à vista, ou a folha sai do quadro) e
+  volta na mesma pose — só reporte, sem veto.
+- **Baseline (página sintética, 2026-11-06) — REPROVADO, como
+  esperado; números para a correção posterior:**
+  - moveu, com passadas (sem_sinal, presente_parada,
+    presente_mexendo): 15/15 reprovados. Nenhum `new_generation()`
+    e nenhum pixel perdido — mas **+3.568 a +8.074 px confirmados
+    novos fora da tolerância** sobre um canvas de ~12.500–12.900 px
+    (translação 30 px ≈ +8.000; rotação ≈ +7.600; escala e
+    combinado ≈ +5.300; translação 180 px ≈ +3.600). A causa
+    medida: o registro na âncora (`_registration_matrix`) lê a
+    geometria nova como tremor e re-projeta a página que andou de
+    volta para a posição antiga da câmera — o canvas ganha uma
+    segunda cópia deslocada da tinta assentada (a homografia que
+    melhor alinha é a identidade: o original fica e a cópia soma).
+  - moveu, ausente: 5/5 "aprovados" **por vacuidade** — a
+    trabalhadora está em descanso total e nada a acorda (zero
+    passadas), e a mediana de cantos congela sem mão: a geometria
+    da tinta fica 32–185 px longe da página (`ink_geometry_error_px`);
+    o próximo traço cairia fora do lugar.
+  - drop e volta: 6 quadros sobrevivem (8/8). 30 e 150 quadros
+    (≥ `_SHEET_LOST_*`): 16/16 com `drop` + reabertura = 2
+    `new_generation()`, canvas zerado e reconstruído com −738 a
+    −2.239 px a menos que antes — mover/perder a folha e trocar de
+    página seguem o mesmo evento.
+- **Buraco:** não há limiar de quedas aceitáveis; a baseline acima é
+  sintética (falta a rodada com a página real do draw-lab) e o
+  movimento é de quad sintético, não vídeo real de caderno movido.
 
 ## F-10 — Apagar no papel não apaga no digital
 
@@ -389,22 +439,48 @@ geometria realista.
 perder a atual destrói uma. É F-09/F-01 vistos pelo eixo da
 identidade da página.
 
-**Como se mede — SEM RÉGUA AINDA.** Régua que falta: corpus de
-transições (troca real de folha × balanço/movimento sem troca, os
-dois em vídeo real), com portão duplo: toda troca detectada em
-≤ N s **e** zero troca falsa por hora de balanço. O teste negativo
-tem que ser balanço realista (314 px de canto medidos), não borracha
-em warp estático — a lição do hotfix está registrada no código.
+**Como se mede — régua parcial (só a metade negativa, sintética):**
+
+- `tools/replay_reregister.py`, cenário `sway_negative` (ver F-07):
+  página parada, o ajuste do detector balança até 314 px de canto
+  por 60 s de cena — perfil suave (senoides de 2–5 s por canto) e
+  biestável (um lado do quad salta para a outra página do caderno
+  aberto, permanência de 1–4 s). Portão: `false_page_turns = 0` na
+  configuração padrão; com `DRAW_PAGE_TURN_EVENT=1` o resultado é
+  reportado à parte, junto com `coverage_turn_signals`.
+- Baseline sintética (2026-11-06): 8/8 sem página nova nas duas
+  configurações da flag, zero sinal de cobertura. O biestável leva a
+  geometria da tinta a 314 px da página e o registro na âncora
+  absorve; o suave nem chega à tinta (o candidato de salto do
+  rastreador nunca persiste, excursão < 1 px). 4 dos 8 passam por
+  vacuidade (ausente e presente_parada: zero passadas). Ressalva: o
+  disparo falso de 2026-11-01 foi medido antes do registro e com o
+  modelo rodando no quadro re-warpado; aqui o mapa é re-warpado.
+- **Buraco:** a metade positiva (troca real detectada em ≤ N s) e o
+  corpus em vídeo real (troca de folha × balanço/movimento sem
+  troca) seguem faltando; o teste negativo real continua sendo
+  balanço de 314 px medido, não borracha em warp estático.
 
 ## O buraco de medição, resumido
 
 Com régua e limiar hoje: **F-02, F-05, F-06** (tinta, via
 `tools/judge.py` + `judge_ink.py`) e **F-09** sem limiar
 (`judge_sheet.py`). Parciais: **F-01/F-07** (testes de unidade do
-descanso + replay de laboratório fora da bancada, sem portão
-pré-registrado de app) e **F-08** (componentes medidos, sem
-orçamento de ponta a ponta). Sem régua nenhuma: **F-03, F-04, F-10,
-F-11** — todas de **cena/orquestração**, nenhuma de modelo isolado.
+descanso + replay de laboratório fora da bancada + régua de
+re-registro do laço, sem portão pré-registrado em `tools/judge.py`),
+**F-11** (só a metade negativa: balanço de 314 px na régua de
+re-registro) e **F-08** (componentes medidos, sem orçamento de ponta
+a ponta). Sem régua nenhuma: **F-03, F-04, F-10** — todas de
+**cena/orquestração**, nenhuma de modelo isolado.
+
+O "moveu = mesmo canvas" de F-07/F-09 deixou de ser buraco de
+medição e virou falha medida: `tools/replay_reregister.py` reprova o
+laço atual (baseline sintética de 2026-11-06: 15/15 movimentos com
+passadas somam 3,6–8,1 mil px de cópia deslocada sem nenhum
+`new_generation()`; a folha perdida por ≥ 1 s zera a geração 16/16;
+o balanço de 314 px não dispara página nova). O que falta medir aí é
+a mesma régua sobre a página real do draw-lab e sobre vídeo real de
+caderno movido.
 O padrão é o achado: a bancada julga bem o modelo de tinta; o que
 não tem juiz é o comportamento do sistema com a mão na cena, com a
 página trocando e com o tempo passando — que é onde moram as queixas
