@@ -230,6 +230,19 @@ _REGISTRATION_IDENTITY_TOL = 1e-4
 # Evidencia nova pode acrescentar tracos, mas uma pagina diferente nao
 # deve herdar o canvas anterior.
 _PAGE_IDENTITY_MIN_RECALL = 0.65
+# Guarda dual da identidade: alem do recall da tinta antiga, a
+# tinta da passada tem de cair sobre o canvas anterior (mesma
+# tolerancia dilatada). O limiar e menor que o do recall porque a
+# tinta nova desenhada durante o drop e legitima: medido na regua
+# (2026-11-06), mesma pagina com +75% de tinta nova da
+# containment 0,65 e perderia o canvas; com 0,5 aceita ~1,8x de
+# crescimento. Pagina diferente mede 0,23-0,25 (sintetica), margem
+# de 2x contra falso positivo.
+_PAGE_IDENTITY_MIN_CONTAINMENT = 0.5
+# O canvas confirmado inclui o halo da fronteira, que uma passada
+# sozinha nunca cobre no limiar do voto: a comparacao dilata os
+# dois lados pela mesma tolerancia do comparador da regua.
+_IDENTITY_DILATION_KERNEL = 2 * _INK_FRONTIER_RADIUS + 1
 
 
 def _corners_page_matrix(corners, width, height):
@@ -805,6 +818,7 @@ class _PageCleanWorker:
             pass_started = time.monotonic()
             identity_decision = None
             identity_recall = None
+            identity_containment = None
             identity_reference_px = None
             identity_geometry_registered = False
             try:
@@ -862,11 +876,31 @@ class _PageCleanWorker:
                             identity_recall = 1.0 if keep_page else 0.0
                         else:
                             seen = candidate > self._accumulator.threshold
+                            kernel = np.ones(
+                                (_IDENTITY_DILATION_KERNEL,) * 2, np.uint8
+                            )
+                            seen_d = cv2.dilate(
+                                seen.astype(np.uint8), kernel
+                            ) > 0
+                            prior_d = cv2.dilate(
+                                prior.astype(np.uint8), kernel
+                            ) > 0
                             identity_recall = (
-                                np.count_nonzero(prior & seen) / prior_px
+                                np.count_nonzero(prior & seen_d) / prior_px
+                            )
+                            seen_px = int(np.count_nonzero(seen))
+                            identity_containment = (
+                                0.0
+                                if seen_px == 0
+                                else (
+                                    np.count_nonzero(seen & prior_d)
+                                    / seen_px
+                                )
                             )
                             keep_page = (
                                 identity_recall >= _PAGE_IDENTITY_MIN_RECALL
+                                and identity_containment
+                                >= _PAGE_IDENTITY_MIN_CONTAINMENT
                             )
                     if identity_recovery_requested:
                         identity_decision = (
@@ -876,11 +910,15 @@ class _PageCleanWorker:
                             "generation": generation,
                             "decision": identity_decision,
                             "recall": identity_recall,
+                            "containment": identity_containment,
                             "reference_px": identity_reference_px,
                             "geometry_registered": (
                                 identity_geometry_registered
                             ),
                             "threshold": _PAGE_IDENTITY_MIN_RECALL,
+                            "containment_threshold": (
+                                _PAGE_IDENTITY_MIN_CONTAINMENT
+                            ),
                         })
                     if not keep_page:
                         self._accumulator.reset()
@@ -981,6 +1019,7 @@ class _PageCleanWorker:
                     "version": self._version,
                     "page_identity_decision": identity_decision,
                     "page_identity_recall": identity_recall,
+                    "page_identity_containment": identity_containment,
                     "page_identity_reference_px": identity_reference_px,
                     "page_identity_geometry_registered": (
                         identity_geometry_registered

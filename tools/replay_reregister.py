@@ -120,6 +120,10 @@ HAND_CONFIGS = {
 }
 GEOMETRY_TOL_PX = 5.0
 BOUNDARY_TOL_PX = _ink._INK_FRONTIER_RADIUS
+# Crescimento residual de confirmacao apos a recuperacao de
+# identidade: medido 1-13 px em ~12,6 mil na baseline sintetica
+# (2026-11-06); a duplicacao pre-correcao era 3,5-8,1 mil px.
+RECOVERY_GROWTH_TOL_PX = 25
 
 MOVES = {
     # Abaixo de _SHEET_NEAR_LIMIT_PX: caminho de mistura do rastreador.
@@ -445,6 +449,7 @@ class ReplayWorker:
         self.identity_recovery_requested = False
         keep_page = False
         recall = None
+        containment = None
         if reference is not None:
             candidate = prob
             if reference_corners is not None and corners is not None:
@@ -462,14 +467,37 @@ class ReplayWorker:
             if prior_px == 0:
                 keep_page = not np.any(seen)
                 recall = 1.0 if keep_page else 0.0
+                containment = 1.0 if keep_page else 0.0
             else:
-                recall = np.count_nonzero(prior & seen) / prior_px
-                keep_page = recall >= _ink._PAGE_IDENTITY_MIN_RECALL
+                kernel = np.ones(
+                    (_ink._IDENTITY_DILATION_KERNEL,) * 2, np.uint8
+                )
+                seen_d = cv2.dilate(
+                    seen.astype(np.uint8), kernel
+                ) > 0
+                prior_d = cv2.dilate(
+                    prior.astype(np.uint8), kernel
+                ) > 0
+                recall = np.count_nonzero(prior & seen_d) / prior_px
+                seen_px = int(np.count_nonzero(seen))
+                containment = (
+                    0.0
+                    if seen_px == 0
+                    else np.count_nonzero(seen & prior_d) / seen_px
+                )
+                keep_page = (
+                    recall >= _ink._PAGE_IDENTITY_MIN_RECALL
+                    and containment >= _ink._PAGE_IDENTITY_MIN_CONTAINMENT
+                )
         if requested:
             self.identity_events.append({
                 "generation": generation,
                 "decision": "same_page" if keep_page else "new_page",
                 "recall": None if recall is None else round(float(recall), 4),
+                "containment": (
+                    None if containment is None
+                    else round(float(containment), 4)
+                ),
             })
         return keep_page
 
@@ -916,6 +944,9 @@ class Episode:
             "false_page_turns": events["reopen"] - same_page + events["turn"],
             "identity_decisions": [e["decision"] for e in identity],
             "identity_recalls": [e["recall"] for e in identity],
+            "identity_containments": [
+                e.get("containment") for e in identity
+            ],
             "drops": events["drop"],
             "reopens": events["reopen"],
             "coverage_turns_applied": events["turn"],
@@ -994,9 +1025,20 @@ def run_move(base, settled, hand_config, spec):
     return out
 
 
-def run_drop(base, settled, hand_config, lost_frames, mode):
+def run_drop(base, settled, hand_config, lost_frames, mode,
+             return_pages=None):
+    """Folha perdida por N quadros e de volta.
+
+    return_pages=None: a MESMA página volta (F-09). Com outra
+    página: a identidade tem de decidir new_page e o canvas não
+    pode ser herdado (F-11, guarda da correção do recall).
+    """
+    returned = settled if return_pages is None else return_pages
     app, quad = copy.deepcopy(base)
-    rng = _rng("drop", mode, str(lost_frames), str(hand_config))
+    rng = _rng(
+        "drop", mode, str(lost_frames), str(hand_config),
+        "turn" if return_pages is not None else "same",
+    )
     ep = Episode(app)
     for i in range(lost_frames):
         page = settled[i % 3] if mode == "detector_miss" else None
@@ -1005,14 +1047,29 @@ def run_drop(base, settled, hand_config, lost_frames, mode):
             hand=_hand(hand_config, False),
         ))
     ep.mark()
-    _settle(ep, settled, quad, rng, hand_config)
+    _settle(ep, returned, quad, rng, hand_config)
     out = ep.report(quad, quad)
+    out["return_kind"] = "turn" if return_pages is not None else "same"
     # Sobreviver = o acumulador não foi zerado: nenhuma reabertura
     # como página nova (legacy sempre zera; main zera quando a
     # identidade decide new_page). canvas_zeroed diz se o consumidor
     # ficou sem canvas durante a perda (o drop zera clean_mask nas
     # duas lógicas); canvas_identical_after_move compara o fim.
     out["canvas_survived"] = out["false_page_turns"] == 0
+    if return_pages is None:
+        out["passes_gate"] = (
+            out["canvas_survived"]
+            and out["lost_confirmed_px_outside_tol"] == 0
+            and out["new_confirmed_px_outside_tol"]
+            <= RECOVERY_GROWTH_TOL_PX
+        )
+    else:
+        # Sem drop nao ha identidade a decidir: o cenario e trivial.
+        out["passes_gate"] = out["drops"] == 0 or (
+            out["identity_decisions"] == ["new_page"]
+            and not out["canvas_survived"]
+            and out["generations_created"] >= 1
+        )
     return out
 
 
@@ -1125,12 +1182,32 @@ def run_all(drawing, settled, source):
         "drop_and_return": {
             f"{mode}_{name}": {} for mode in DROP_MODES for name in DROP_FRAMES
         },
+        "drop_and_turn": {
+            f"{mode}_{name}": {} for mode in DROP_MODES for name in DROP_FRAMES
+        },
         "sway_negative": {
             f"{profile}_{flag}": {}
             for profile in SWAY_PROFILES
             for flag in ("default", "turn_event_enabled")
         },
     }
+    # Página de troca (conteúdo diferente, mesma grade): na fonte
+    # sintética, um seed independente; na real, o espelho vertical
+    # da assentada como proxy de conteúdo distinto (declarado).
+    if source == "real":
+        settled_turn = [np.flipud(page).copy() for page in settled]
+    else:
+        _turn_drawing, settled_turn = synthetic_pages(
+            shape=settled[0].shape, stages=2, seed=101
+        )
+    results["inputs"] += (
+        "; pagina de troca: "
+        + (
+            "espelho vertical da assentada (proxy de conteudo "
+            "distinto; a sessao real f01-f30 e uma pagina so)"
+            if source == "real" else "seed sintetico independente (101)"
+        )
+    )
     for hand_name, hand_config in HAND_CONFIGS.items():
         bases = {}
         for flag in (False, True):
@@ -1153,6 +1230,12 @@ def run_all(drawing, settled, source):
                 results["drop_and_return"][f"{mode}_{name}"][hand_name] = (
                     run_drop(bases[False], settled, hand_config, frames, mode)
                 )
+                results["drop_and_turn"][f"{mode}_{name}"][hand_name] = (
+                    run_drop(
+                        bases[False], settled, hand_config, frames, mode,
+                        return_pages=settled_turn,
+                    )
+                )
         for profile in SWAY_PROFILES:
             for flag, label in ((False, "default"), (True, "turn_event_enabled")):
                 results["sway_negative"][f"{profile}_{label}"][hand_name] = (
@@ -1170,6 +1253,8 @@ def run_all(drawing, settled, source):
     results["summary"] = {
         "control_static": _gate(list(results["control_static"].values())),
         "move_same_canvas": _gate(runs("move_same_canvas")),
+        "drop_and_return_same_page": _gate(runs("drop_and_return")),
+        "drop_and_turn": _gate(runs("drop_and_turn")),
         "drop_and_return": {
             "runs": len(drops),
             "canvas_survived": sum(1 for r in drops if r["canvas_survived"]),
@@ -1229,7 +1314,10 @@ def main():
     summary = results["summary"]
     failed = any(
         summary[key]["verdict"] == "REPROVADO"
-        for key in ("control_static", "move_same_canvas", "sway_negative")
+        for key in (
+            "control_static", "move_same_canvas", "drop_and_return_same_page",
+            "drop_and_turn", "sway_negative",
+        )
     )
     return 1 if (args.strict and failed) else 0
 

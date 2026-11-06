@@ -406,15 +406,20 @@ conteúdo.
     (8/8). 30 e 150 quadros (≥ `_SHEET_LOST_*`): 16/16 com `drop` +
     reabertura = 2 `new_generation()`, canvas zerado e reconstruído
     com −919 a −2.527 px a menos que antes.
-  - drop e volta, com a recuperação de identidade (`main`): **o mesmo
-    16/16 zerado**, agora com 1 `new_generation()` e decisão
-    `new_page` em 16/16 — a mesma página, na mesma pose, dá recall
-    0,58–0,61, abaixo de 0,65. Medido sem movimento: uma passada
-    acima de 0,7 cobre só 57–62 % do canvas confirmado, que cresceu
-    pela fronteira para o ombro sub-limiar (passadas acima de 0,3
-    cobrem ~95 %). Na página sintética, o portão de identidade
-    compara grandezas diferentes; falta ver se o mapa do modelo real
-    reproduz isso. 6 quadros: 8/8 sobrevivem (sem drop).
+  - drop e volta, com a recuperação de identidade (`main`): antes da
+    correção de identidade (2026-11-06), o mesmo 16/16 zerado, com 1
+    `new_generation()` e decisão `new_page` em 16/16 — a mesma
+    página, na mesma pose, dava recall 0,58–0,61, abaixo de 0,65.
+    Depois da correção (comparação dilatada pela tolerância de
+    fronteira + contenção dual, ver F-11): **24/24 sobrevivem** com
+    folga — decisão `same_page` nos 16 drops (recall dilatado
+    0,86–0,87), canvas sem perda, crescimento residual de 1–13 px
+    fora da tolerância (teto do portão: 25 px). 6 quadros: 8/8
+    sobrevivem (sem drop).
+  - troca real de página no retorno (`drop_and_turn`, página de
+    conteúdo distinto): 8/8 drops decidem `new_page` (recall
+    dilatado ~0,025, contenção ~0,025) e o canvas não é herdado; os
+    6 quadros curtos passam por vacuidade (sem drop).
   - sensibilidade à latência da detecção: com 20 ms (um quadro),
     36,7 ms e 100 ms os vereditos e as contagens acima não mudam
     (15/15, 8/8 e 16/16); só os px mexem em até ~350.
@@ -474,8 +479,25 @@ e os pixels de referência da primeira máscara após a recuperação. O app
 usa recall mínimo de 65% da tinta confirmada.
 
 - `tools/replay_reregister.py`, cenário `drop_and_return` (ver F-09):
-  a recuperação de identidade decide `new_page` em 16/16 retornos da
-  mesma página na baseline sintética (recall 0,58–0,61 < 0,65).
+  **resolvido na régua sintética** — a recuperação decide `same_page`
+  nos 16 drops e o canvas sobrevive 24/24 (ver F-09 para os números).
+  A correção: a comparação de identidade dilata os dois lados pela
+  tolerância de fronteira (`_IDENTITY_DILATION_KERNEL = 2 ×
+  _INK_FRONTIER_RADIUS + 1`) e exige contenção dual — o recall da
+  tinta antiga reencontrada **e** a tinta da passada caindo sobre o
+  canvas anterior, ambos ≥ `_PAGE_IDENTITY_MIN_RECALL`/`_MIN_CONTAINMENT`
+  = 0,65 no recall e 0,5 na contenção. A contenção fica abaixo do
+  recall porque tinta nova desenhada durante o drop é legítima:
+  medição que calibrou (2026-11-06, 4 mãos × 3 estágios): mesma
+  página recall/containment 0,876–0,925 / 1,0; página diferente
+  0,218–0,240 / 0,231–0,251; mesma página com +75% de tinta nova
+  cai para containment 0,65 — com 0,5 aceita ~1,8x de crescimento
+  e mantém margem de 2x contra página diferente. Sem esse teto, a
+  guarda rejeitaria a mesma página e perderia o canvas.
+- `tools/replay_reregister.py`, cenário `drop_and_turn` (guarda da
+  correção): a página de conteúdo distinto que volta após o drop
+  decide `new_page` em 8/8 drops reais (recall dilatado ~0,025), sem
+  herdar o canvas — a dilatação não abriu falso positivo.
 - `tools/replay_reregister.py`, cenário `sway_negative` (ver F-07):
   página parada, o ajuste do detector balança até 314 px de canto
   por 60 s de cena — perfil suave (senoides de 2–5 s por canto) e
@@ -504,7 +526,8 @@ Com régua e limiar hoje: **F-02, F-05, F-06** (tinta, via
 `tools/judge.py` + `judge_ink.py`) e **F-09** sem limiar
 (`judge_sheet.py`). Parciais: **F-01/F-07** (testes de unidade do
 descanso + replay de laboratório fora da bancada + régua de
-re-registro do laço, sem portão pré-registrado em `tools/judge.py`),
+re-registro do laço, sem portão pré-registrado em `tools/judge.py`;
+F-11 com portão na régua de re-registro, mas ainda sem vídeo real),
 **F-08** (componentes medidos, sem orçamento de ponta a ponta),
 **F-11** (replay sintético de identidade e balanço de 314 px na
 régua de re-registro, sem vídeo real) e **F-09** (quedas contadas
@@ -515,9 +538,13 @@ O "moveu = mesmo canvas" de F-07/F-09 deixou de ser buraco de
 medição e virou falha medida: `tools/replay_reregister.py` reprova o
 laço atual (baseline sintética de 2026-11-06: 15/15 movimentos com
 passadas somam 3,5–8,1 mil px de cópia deslocada sem nenhum
-`new_generation()`; a folha perdida por ≥ 1 s zera o canvas 16/16,
-antes e depois da recuperação de identidade, que decide `new_page`
-com recall 0,58–0,61; o balanço de 314 px não dispara página nova).
+`new_generation()`. A folha perdida por ≥ 1 s **antes** da correção
+de identidade zerava o canvas 16/16 (decisão `new_page` com recall
+0,58–0,61); **depois** da correção (recall/containment dilatados pela
+tolerância de fronteira, 2026-11-06) a mesma página decide `same_page`
+e o canvas sobrevive 24/24, enquanto a troca real de página decide
+`new_page` 8/8 sem herdar canvas. O balanço de 314 px não dispara
+página nova).
 O que falta medir aí é a mesma régua sobre a página real do draw-lab
 e sobre vídeo real de caderno movido.
 O padrão é o achado: a bancada julga bem o modelo de tinta; o que
