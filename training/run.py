@@ -98,6 +98,8 @@ def build_command(args: argparse.Namespace, backend: str) -> list[str]:
             cmd += ["--real-train-dir", args.real_train_dir]
         if args.allow_unverified_real_train:
             cmd.append("--allow-unverified-real-train")
+        if args.real_loss_weight is not None:
+            cmd += ["--real-loss-weight", str(args.real_loss_weight)]
         if args.epochs is not None:
             cmd += ["--epochs", str(args.epochs)]
         if args.batch_size == "auto":
@@ -173,6 +175,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--data-dir", default="dataset/synthetic")
     parser.add_argument("--real-train-dir", default=None)
     parser.add_argument("--allow-unverified-real-train", action="store_true")
+    parser.add_argument("--real-loss-weight", type=float, default=None,
+                        help="Peso por amostra do pacote --real-train-dir "
+                             "na loss (0, 1]. Ausente = o da config "
+                             "(loss.unverified_real_sample_weight). Use 1.0 "
+                             "para pacotes com ground truth verificado "
+                             "(ex.: SmartDoc convertido de quads oficiais).")
     parser.add_argument("--out-dir", default="out")
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--budget-min", type=float, default=None,

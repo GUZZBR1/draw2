@@ -61,6 +61,29 @@ para k≥1, ``_change.png`` = 255 onde o rótulo visível mudou vs o
 frame anterior ou é ignore em algum dos dois). Sem as flags, NADA
 muda: nenhuma sequência é gerada e o manifesto não ganha as chaves.
 
+Dieta de fundos/escala (OPT-IN, frente dieta 2026-11-05 — o modelo
+aprendia o atalho "campo liso de baixa frequência = papel" porque o
+fundo de treino era sempre σ≈10 + linhas e a folha quase sempre
+ocupava 45–70% do frame):
+
+* ``--bg-smooth-fraction``: fração das cenas com fundo LISO de campo
+  suave (gradiente + vinheta + campo de baixa frequência, textura
+  fina sorteada de ~0 a texturizado) — cobre mesas claras e
+  uniformes quase sem textura, mais lisas que qualquer fundo
+  histórico (a mesa do SmartDoc bg05 mede σ local ~0,5–1,6).
+* ``--bg-dir`` + ``--bg-real-fraction``: fração das cenas com foto
+  real de mesa/superfície como fundo (split por fonte, como o resto).
+* ``--sheet-scale loguniform``: área da folha amostrada uniforme em
+  escala log entre 5% e 70% do frame (o padrão histórico concentra
+  45–70%; folha pequena deixa de ser raridade de ~4%).
+* ``--no-paper-fraction``: fração das cenas SEM folha (só mesa —
+  inclusive mesa lisa clara —, mão sem folha, objeto branco), pra
+  presença aprender a dizer "não tem papel". Substitui o ciclo
+  histórico de negativos quando > 0.
+
+Sem nenhuma dessas flags, NADA muda: mesmas cenas byte a byte, e o
+manifesto não ganha a chave ``diet`` nem ``background_photos``.
+
 Mais ``<out>/manifest.json`` com seed, splits por fonte e, por cena,
 tipo, fontes, placement da mão, placeholder e fração de papel.
 
@@ -123,6 +146,23 @@ BACKGROUND_SOURCES = [
     "table_blue",
     "table_brown",
 ]
+# Fundos LISOS de campo suave (opt-in, --bg-smooth-fraction). NÃO
+# entram em BACKGROUND_SOURCES: a pool histórica fica intacta (split
+# e cenas padrão byte-idênticos); com a fração ligada, a variante é
+# sorteada por cena e renderizada na hora (cada render é único — não
+# há fonte memorizável pra vazar entre splits). Paleta puxa pra
+# claro: é a mesa clara e uniforme que faltava na dieta. BGR.
+SMOOTH_BACKGROUND_BASES = {
+    "table_smooth_white": (232, 236, 238),
+    "table_smooth_light": (203, 205, 202),
+    "table_smooth_warm": (178, 192, 208),
+    "table_smooth_cool": (172, 164, 148),
+    "table_smooth_gray": (148, 149, 150),
+    "table_smooth_dark": (58, 56, 54),
+}
+# Tipos de cena SEM folha (presença negativa). Com
+# --no-paper-fraction > 0, a fração sorteia uniformemente entre eles.
+NO_PAPER_TYPES = ["empty_table", "hand_no_sheet", "white_object"]
 # Papéis base: estilo x variante de textura. O split divide ESTES ids,
 # nunca imagens já geradas.
 PAPER_SOURCES = [f"{style}_{i}" for style in PAPER_STYLES for i in range(4)]
@@ -507,6 +547,101 @@ def _background(rng: np.random.Generator, source: str) -> np.ndarray:
     return np.clip(img, 0, 255).astype(np.uint8)
 
 
+def _fit_background_photo(img: np.ndarray) -> np.ndarray:
+    """Recorte central quadrado + resize pra SIZE x SIZE (array novo)."""
+    h, w = img.shape[:2]
+    side = min(h, w)
+    y0, x0 = (h - side) // 2, (w - side) // 2
+    return cv2.resize(
+        img[y0 : y0 + side, x0 : x0 + side], (SIZE, SIZE),
+        interpolation=cv2.INTER_AREA,
+    )
+
+
+def load_background_photos(
+    bg_dir: str | Path | None,
+) -> list[tuple[str, np.ndarray]]:
+    """Fotos reais de fundo (mesa/superfície), por id de fonte.
+
+    O split é por id de fonte (``split_sources``), como mãos e papéis.
+    Diretório inexistente ou foto ilegível levantam ``ValueError`` —
+    com ``--bg-dir`` dado, cair em silêncio pro fundo procedural
+    esconderia um insumo quebrado (mesma regra do ``load_hands``).
+    """
+    if not bg_dir:
+        return []
+    root = Path(bg_dir)
+    if not root.is_dir():
+        raise ValueError(f"diretório de fundos não existe: {root}")
+    out: list[tuple[str, np.ndarray]] = []
+    for path in sorted(root.rglob("*.png")) + sorted(root.rglob("*.jpg")):
+        img = cv2.imread(str(path))
+        if img is None:
+            raise ValueError(f"foto de fundo ilegível: {path}")
+        out.append((path.stem, _fit_background_photo(img)))
+    return out
+
+
+def _sample_smooth_sigma(rng: np.random.Generator) -> float:
+    """σ de textura fina de um fundo liso, sorteado por cena.
+
+    Mistura calibrada pela medição de 2026-11-05: 35% ultra-liso
+    (0–0,8: o regime do bg05, σ local 0,5–1,6, que a dieta histórica
+    NUNCA alcança), 30% baixo (0,8–3), 25% médio (3–8, o regime da
+    mesa real do Lucas, p25 ~5–6,7) e 10% texturizado (8–16, onde o
+    fundo histórico mora). O σ local FINAL ainda soma campo de baixa
+    frequência e ruído de augment — ver ``generate_dataset``.
+    """
+    u = float(rng.random())
+    if u < 0.35:
+        return float(rng.uniform(0.0, 0.8))
+    if u < 0.65:
+        return float(rng.uniform(0.8, 3.0))
+    if u < 0.90:
+        return float(rng.uniform(3.0, 8.0))
+    return float(rng.uniform(8.0, 16.0))
+
+
+def _smooth_background(
+    rng: np.random.Generator, base_bgr: tuple[int, int, int], sigma_tex: float
+) -> np.ndarray:
+    """Mesa lisa de campo suave: baixa frequência realista + textura σ.
+
+    O campo (grade 6x6 interpolada cúbica + gradiente direcional +
+    vinheta) varia DEVAGAR: contribui sombreamento convincente sem
+    criar textura local — é ele que separa "liso de verdade" de
+    "chapado sintético". A textura local é só o ruído fino de
+    ``sigma_tex`` (e, raramente, veios fracos). Sem linhas fixas:
+    linha periódica era metade do atalho antigo.
+    """
+    base = np.array(base_bgr, dtype=np.float32)
+    img = np.ones((SIZE, SIZE, 3), dtype=np.float32) * base
+    # Campo de baixa frequência: grade grossa -> cúbica.
+    grid = rng.normal(0.0, 1.0, size=(6, 6)).astype(np.float32)
+    field = cv2.resize(grid, (SIZE, SIZE), interpolation=cv2.INTER_CUBIC)
+    img += (field * 9.0)[..., None]
+    # Gradiente direcional (luz de janela).
+    axis = np.arange(SIZE, dtype=np.float32)
+    ang = float(rng.uniform(0.0, 2.0 * math.pi))
+    coord = (axis[None, :] * math.cos(ang) + axis[:, None] * math.sin(ang)) / SIZE
+    img += ((coord - 0.7071) * float(rng.uniform(4.0, 14.0)))[..., None]
+    # Vinheta suave.
+    cx = SIZE / 2.0 + float(rng.uniform(-90.0, 90.0))
+    cy = SIZE / 2.0 + float(rng.uniform(-90.0, 90.0))
+    dist = np.sqrt((axis[None, :] - cx) ** 2 + (axis[:, None] - cy) ** 2) / SIZE
+    fall = np.clip(dist - 0.45, 0.0, None)
+    img -= (fall * float(rng.uniform(0.0, 12.0)))[..., None]
+    # Textura fina: é ela que fixa o σ local da cena.
+    if sigma_tex > 0.0:
+        img += rng.normal(0.0, sigma_tex, size=(SIZE, SIZE, 1)).astype(np.float32)
+    # Veios raros e fracos (nem toda mesa lisa é fórmica).
+    if float(rng.random()) < 0.22:
+        step = int(rng.integers(20, 30))
+        for y in range(0, SIZE, step):
+            img[y : y + 2, :] += float(rng.normal(0, 3))
+    return np.clip(img, 0, 255).astype(np.uint8)
+
+
 def _sample_normal_quad(rng: np.random.Generator, w: int, h: int) -> np.ndarray:
     """Quad da folha no placement normal: grande, rotacionada/deslocada.
 
@@ -516,6 +651,31 @@ def _sample_normal_quad(rng: np.random.Generator, w: int, h: int) -> np.ndarray:
     cx, cy = SIZE // 2 + int(rng.integers(-40, 41)), SIZE // 2 + int(rng.integers(-40, 41))
     scale = float(rng.uniform(0.85, 1.05))
     pw, ph = int(w * scale * SIZE / 560), int(h * scale * SIZE / 560)
+    ang = math.radians(float(rng.uniform(-18, 18)))
+    ca, sa = math.cos(ang), math.sin(ang)
+    corners = np.array(
+        [[-pw // 2, -ph // 2], [pw // 2, -ph // 2], [pw // 2, ph // 2], [-pw // 2, ph // 2]],
+        dtype=np.float32,
+    )
+    rot = np.array([[ca, -sa], [sa, ca]], dtype=np.float32)
+    return (corners @ rot.T + np.array([cx, cy], dtype=np.float32)).astype(np.float32)
+
+
+def _sample_loguniform_quad(rng: np.random.Generator, w: int, h: int) -> np.ndarray:
+    """Quad da folha com ÁREA uniforme em escala log (opt-in).
+
+    Amostra a fração de área em [5%, 70%] uniforme no log — metade
+    das cenas cai abaixo de ~19% de área. É a correção da escala
+    medida em 2026-11-05: o placement histórico concentra 45–70% e a
+    folha do bg05 (13,6% do frame) era OOD de escala. Centro, rotação
+    e aspecto seguem as faixas do placement normal.
+    """
+    frac = float(np.exp(rng.uniform(math.log(0.05), math.log(0.70))))
+    area = frac * SIZE * SIZE
+    aspect = w / h
+    pw = int(min(560, max(30, round(math.sqrt(area * aspect)))))
+    ph = int(min(560, max(30, round(math.sqrt(area / aspect)))))
+    cx, cy = SIZE // 2 + int(rng.integers(-40, 41)), SIZE // 2 + int(rng.integers(-40, 41))
     ang = math.radians(float(rng.uniform(-18, 18)))
     ca, sa = math.cos(ang), math.sin(ang)
     corners = np.array(
@@ -578,6 +738,8 @@ def _warp_to_scene(
         dst = np.array(
             [[-320, -260], [-40, -280], [-20, 120], [-340, 100]], dtype=np.float32
         )
+    elif placement == "loguniform":
+        dst = _sample_loguniform_quad(rng, w, h)
     else:
         dst = _sample_normal_quad(rng, w, h)
     rgb_w, paper_mask, ink_w, paper_cov, ink_cov = _warp_paper(paper, ink, dst)
@@ -665,8 +827,17 @@ def _paste_coverage(
     np.maximum(region, hand_cov[sy0 : hh - ey0, sx0 : hw - ex0], out=region)
 
 
-def _augment_rgb(rng: np.random.Generator, rgb: np.ndarray) -> np.ndarray:
-    """Augmentations fotométricas: não tocam nas máscaras."""
+def _augment_rgb(
+    rng: np.random.Generator, rgb: np.ndarray, noise_sigma: float = 5.0
+) -> np.ndarray:
+    """Augmentations fotométricas: não tocam nas máscaras.
+
+    ``noise_sigma`` é o σ do ruído de sensor final. O default (5,0) é
+    o comportamento histórico, sorteio a sorteio. Cenas de fundo liso
+    pedem σ menor: com 5,0, NENHUMA cena final ficaria mais lisa que
+    σ≈5 — e é justamente abaixo disso que mora a mesa real que o
+    modelo nunca viu (bg05: σ local ~0,5–1,6).
+    """
     img = rgb.astype(np.float32)
     # Gradiente de iluminação.
     if float(rng.random()) < 0.7:
@@ -687,7 +858,7 @@ def _augment_rgb(rng: np.random.Generator, rgb: np.ndarray) -> np.ndarray:
     img = np.clip(img, 0, 255).astype(np.uint8)
     if float(rng.random()) < 0.3:
         img = cv2.GaussianBlur(img, (3, 3), 0)
-    noise = rng.normal(0, 5, size=img.shape).astype(np.float32)
+    noise = rng.normal(0, noise_sigma, size=img.shape).astype(np.float32)
     return np.clip(img.astype(np.float32) + noise, 0, 255).astype(np.uint8)
 
 
@@ -739,6 +910,11 @@ def compose_scene(
     second_hand: HandSource | None = None,
     background_source: str = "table_wood",
     hand_placement: str | None = None,
+    background_img: np.ndarray | None = None,
+    background_kind: str = "procedural",
+    background_sigma: float | None = None,
+    sheet_scale: str = "legacy",
+    augment_noise_sigma: float | None = None,
 ) -> dict:
     """Compõe UMA cena. Devolve rgb, mask, ink_full e info.
 
@@ -746,9 +922,22 @@ def compose_scene(
     tiny_sheet | sheet_out. hand_placement: None (sorteado) ou um dos
     off_sheet | entering | edge | corner | center | over_stroke |
     covering_much | partial_out.
+
+    Opt-ins da dieta (defaults = comportamento histórico):
+    ``background_img`` já renderizado (foto real ou fundo liso) entra
+    no lugar do fundo procedural e é registrado em
+    ``info["background_kind"]``; ``sheet_scale="loguniform"`` troca o
+    placement normal pelo de área log-uniforme;
+    ``augment_noise_sigma`` substitui o σ 5,0 do augment (cenas
+    lisas: sem isso o σ final nunca desce do piso histórico).
     """
     rng = _scene_rng(seed, split, index)
-    rgb = _background(rng, background_source)
+    if background_img is not None:
+        # Fundo já renderizado (foto real ou liso): _fit devolve
+        # array novo, pra colagem nunca mutar a fonte compartilhada.
+        rgb = _fit_background_photo(background_img)
+    else:
+        rgb = _background(rng, background_source)
     mask = np.zeros((SIZE, SIZE), dtype=np.uint8)
     ink_full = np.zeros((SIZE, SIZE), dtype=np.uint8)
     paper_cov = ink_cov = None
@@ -766,9 +955,16 @@ def compose_scene(
         "ignore_fraction": 0.0,
         "ignore_causes": {},
     }
+    if background_kind != "procedural":
+        info["background_kind"] = background_kind
+    if background_sigma is not None:
+        info["bg_smooth_sigma"] = float(background_sigma)
 
     def finish(rgb_in: np.ndarray) -> dict:
-        out_rgb = _augment_rgb(rng, rgb_in)
+        if augment_noise_sigma is not None:
+            out_rgb = _augment_rgb(rng, rgb_in, noise_sigma=augment_noise_sigma)
+        else:
+            out_rgb = _augment_rgb(rng, rgb_in)
         final_mask, causes = _ambiguity_ignore(mask, paper_cov, ink_cov, hand_cov)
         info["ignore_causes"] = causes
         info["ignore_fraction"] = float((final_mask == IGNORE).mean())
@@ -791,7 +987,9 @@ def compose_scene(
     paper_quad = None
     if scene_type not in ("hand_no_sheet",):
         placement = "tiny_sheet" if scene_type == "tiny_sheet" else (
-            "sheet_out" if scene_type == "sheet_out" else "normal"
+            "sheet_out" if scene_type == "sheet_out" else (
+                "loguniform" if sheet_scale == "loguniform" else "normal"
+            )
         )
         paper, ink, _, _ = _paper_canvas(rng, paper_style)
         rgb_w, paper_mask, ink_w, paper_quad, paper_cov, ink_cov = _warp_to_scene(
@@ -992,19 +1190,57 @@ def generate_dataset(
     two_hands: bool = False,
     temporal_counts: dict[str, int] | None = None,
     temporal_frames: int = 6,
+    bg_dir: str | Path | None = None,
+    bg_real_fraction: float = 0.0,
+    bg_smooth_fraction: float = 0.0,
+    sheet_scale: str = "legacy",
+    no_paper_fraction: float = 0.0,
 ) -> dict:
-    """Gera o dataset completo com split por fonte + manifest.json."""
+    """Gera o dataset completo com split por fonte + manifest.json.
+
+    Opt-ins da dieta (defaults = comportamento histórico):
+    ``bg_dir`` + ``bg_real_fraction`` — fração das cenas com foto
+    real de fundo (split por fonte, como o resto);
+    ``bg_smooth_fraction`` — fração com fundo liso de campo suave;
+    ``sheet_scale="loguniform"`` — área da folha 5–70% uniforme no
+    log; ``no_paper_fraction`` — fração de cenas SEM folha,
+    substituindo o ciclo histórico de negativos.
+    """
+    for name, frac in (
+        ("bg_real_fraction", bg_real_fraction),
+        ("bg_smooth_fraction", bg_smooth_fraction),
+        ("no_paper_fraction", no_paper_fraction),
+    ):
+        if not 0.0 <= frac <= 1.0:
+            raise ValueError(f"{name} precisa estar em [0, 1]: {frac}")
+    if bg_real_fraction + bg_smooth_fraction > 1.0:
+        raise ValueError("bg_real_fraction + bg_smooth_fraction > 1")
+    if sheet_scale not in ("legacy", "loguniform"):
+        raise ValueError(f"sheet_scale desconhecido: {sheet_scale!r}")
     counts = counts or {"train": 20, "val": 3, "test": 3}
     out = Path(out_dir)
     hands = load_hands(hands_dir)
     if not hands:
         hands = synthetic_hand_sources()
+    photos = load_background_photos(bg_dir)
+    if bg_real_fraction > 0 and not photos:
+        raise ValueError(
+            "bg_real_fraction > 0 sem fotos: passe --bg-dir com fotos "
+            "de fundo (fração sem pool seria um no-op silencioso)"
+        )
+    photo_splits = (
+        split_sources([pid for pid, _ in photos], seed + 3)
+        if photos else {"train": [], "val": [], "test": []}
+    )
+    photo_by_id = dict(photos)
     hand_splits, hand_base_splits = split_hand_sources(hands, seed)
     splits = {
         "hands": hand_splits,
         "papers": split_sources(PAPER_SOURCES, seed + 1),
         "backgrounds": split_sources(BACKGROUND_SOURCES, seed + 2),
     }
+    if photos:
+        splits["background_photos"] = photo_splits
     hand_by_id = {h.source_id: h for h in hands}
     manifest: dict = {
         "seed": seed,
@@ -1024,6 +1260,29 @@ def generate_dataset(
             "Per-scene counts in ignore_causes."
         ),
     }
+    if (
+        bg_dir or bg_real_fraction > 0 or bg_smooth_fraction > 0
+        or sheet_scale != "legacy" or no_paper_fraction > 0
+    ):
+        manifest["diet"] = {
+            "bg_real_fraction": bg_real_fraction,
+            "bg_smooth_fraction": bg_smooth_fraction,
+            "background_photo_count": len(photos),
+            "sheet_scale": sheet_scale,
+            "sheet_area_range": (
+                [0.05, 0.70] if sheet_scale == "loguniform" else None
+            ),
+            "no_paper_fraction": no_paper_fraction,
+            "smooth_background_bases": sorted(SMOOTH_BACKGROUND_BASES),
+            "notes": (
+                "Diet opt-ins (frente dieta 2026-11-05): smooth = "
+                "low-frequency-field table with per-scene texture "
+                "sigma (bg_smooth_sigma per scene) and reduced "
+                "augment sensor noise; loguniform = sheet area "
+                "uniform in log between 5% and 70% of the frame; "
+                "no_paper > 0 replaces the legacy negative cycle."
+            ),
+        }
     if temporal_counts:
         manifest["temporal"] = {
             "frames_per_sequence": temporal_frames,
@@ -1058,8 +1317,47 @@ def generate_dataset(
             paper_src = paper_pool[int(rng.integers(len(paper_pool)))]
             paper_style = paper_src.rsplit("_", 1)[0]
             bg = bg_pool[int(rng.integers(len(bg_pool)))]
-            # A cada 5 cenas, um negativo (rodando os tipos).
-            if i % 5 == 4:
+            # Dieta de fundo (opt-in): um sorteio decide a família —
+            # foto real, liso de campo suave ou procedural (histórico).
+            # Sem nenhuma fração ligada, nenhum sorteio novo acontece
+            # e a cena é a de sempre, byte a byte.
+            background_img = None
+            background_kind = "procedural"
+            background_sigma = None
+            augment_noise = None
+            if photo_splits[split] or bg_smooth_fraction > 0:
+                u = float(rng.random())
+                if photo_splits[split] and u < bg_real_fraction:
+                    photo_id = photo_splits[split][
+                        int(rng.integers(len(photo_splits[split])))]
+                    background_img = photo_by_id[photo_id]
+                    background_kind = "real_photo"
+                    bg = f"photo:{photo_id}"
+                elif bg_smooth_fraction > 0 and u < (
+                    bg_real_fraction + bg_smooth_fraction
+                ):
+                    variant = str(rng.choice(sorted(SMOOTH_BACKGROUND_BASES)))
+                    background_sigma = _sample_smooth_sigma(rng)
+                    background_img = _smooth_background(
+                        rng, SMOOTH_BACKGROUND_BASES[variant], background_sigma
+                    )
+                    background_kind = "smooth"
+                    # O augment histórico injeta ruído σ=5 em TODA
+                    # cena: sem reduzir aqui, o fundo liso morreria
+                    # no piso de σ≈5 e o regime do bg05 (σ~1) nunca
+                    # apareceria na imagem final de treino.
+                    augment_noise = float(min(1.5, 0.3 + 0.2 * background_sigma))
+                    bg = f"smooth:{variant}"
+            # Tipo da cena: com --no-paper-fraction, a fração manda
+            # (sem-folha sorteado entre os tipos); sem ela, o ciclo
+            # histórico de 1 negativo a cada 5 cenas.
+            if no_paper_fraction > 0:
+                if float(rng.random()) < no_paper_fraction:
+                    scene_type = NO_PAPER_TYPES[
+                        int(rng.integers(len(NO_PAPER_TYPES)))]
+                else:
+                    scene_type = "normal"
+            elif i % 5 == 4:
                 scene_type = negative_cycle[(i // 5) % len(negative_cycle)]
             else:
                 scene_type = "normal"
@@ -1070,6 +1368,11 @@ def generate_dataset(
             scene = compose_scene(
                 seed, split, i, scene_type, paper_style,
                 hand_by_id.get(hand_id), second, bg,
+                background_img=background_img,
+                background_kind=background_kind,
+                background_sigma=background_sigma,
+                sheet_scale=sheet_scale,
+                augment_noise_sigma=augment_noise,
             )
             scene_id = f"scene_{split}_{i:04d}"
             cv2.imwrite(str(split_dir / f"{scene_id}.png"), scene["rgb"])
@@ -1139,6 +1442,18 @@ def main() -> int:
                         help="Sequências temporais no val (0 = desligado, padrão)")
     parser.add_argument("--temporal-frames", type=int, default=6,
                         help="Frames por sequência temporal")
+    parser.add_argument("--bg-dir", default=None,
+                        help="Diretório com fotos reais de fundo (mesa/superfície)")
+    parser.add_argument("--bg-real-fraction", type=float, default=0.0,
+                        help="Fração das cenas com fundo de foto real (0 a 1; default 0)")
+    parser.add_argument("--bg-smooth-fraction", type=float, default=0.0,
+                        help="Fração das cenas com fundo liso de campo suave (0 a 1; default 0)")
+    parser.add_argument("--sheet-scale", choices=["legacy", "loguniform"], default="legacy",
+                        help="Escala da folha: legacy (concentra 45-70) ou "
+                             "loguniform (área 5-70, uniforme no log)")
+    parser.add_argument("--no-paper-fraction", type=float, default=0.0,
+                        help="Fração das cenas SEM folha (0 a 1; default 0 = "
+                             "ciclo histórico de negativos)")
     args = parser.parse_args()
     temporal_counts = None
     if args.temporal_train > 0 or args.temporal_val > 0:
@@ -1148,6 +1463,9 @@ def main() -> int:
         {"train": args.train, "val": args.val, "test": args.test},
         args.hands_dir, args.two_hands,
         temporal_counts, args.temporal_frames,
+        bg_dir=args.bg_dir, bg_real_fraction=args.bg_real_fraction,
+        bg_smooth_fraction=args.bg_smooth_fraction,
+        sheet_scale=args.sheet_scale, no_paper_fraction=args.no_paper_fraction,
     )
     n = len(manifest["scenes"])
     print(f"{n} cenas em {args.out} (seed {args.seed})")
@@ -1156,6 +1474,11 @@ def main() -> int:
     if temporal_counts:
         n_seq = len(manifest.get("sequences", []))
         print(f"  sequências temporais: {n_seq} ({args.temporal_frames} frames cada)")
+    if "diet" in manifest:
+        d = manifest["diet"]
+        print(f"  dieta: foto-real={d['bg_real_fraction']} "
+              f"liso={d['bg_smooth_fraction']} escala={d['sheet_scale']} "
+              f"sem-papel={d['no_paper_fraction']}")
     return 0
 
 
