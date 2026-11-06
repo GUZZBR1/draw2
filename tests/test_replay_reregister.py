@@ -195,7 +195,10 @@ def test_reduced_run_reports_contract_fields(monkeypatch):
         "canvas_identical_after_move", "confirmed_px_delta",
         "generations_created", "false_page_turns",
     )
-    for section in ("move_same_canvas", "drop_and_return", "sway_negative"):
+    for section in (
+        "move_same_canvas", "drop_and_return", "drop_and_turn",
+        "sway_negative",
+    ):
         for by_hand in results[section].values():
             for run in by_hand.values():
                 for field in fields:
