@@ -227,7 +227,7 @@
   },
   "t7": {
     "decoder_hidden_size": 128,
-    "note": "O decoder NÃO é campo do train.py: quem aplica o override é o training/train_tpu.py (--decoder 128, default dele), via decoder_hidden_size no SegformerConfig. Em GPU, o mesmo efeito pede o override no build_model antes de rodar com esta config.",
+    "note": "decoder_hidden_size é aplicado pelo build_model de training/train.py quando o bloco t7 está presente na config (corrigido na corrida da noite 2026-11-05: antes só a rota TPU aplicava o override e a GPU treinava decoder 256 sob o mesmo nome). batch_per_core_tpu e learning_rate_tpu seguem sendo só da rota TPU.",
     "batch_per_core_tpu": 8,
     "learning_rate_tpu": 0.0002,
     "learning_rate_note": "No TPU o train_tpu.py usa lr 2e-4 por CLI (batch global 64 = 8/core x 8 cores); o training.learning_rate desta config (6e-5) é o da corrida GPU com batch 8."

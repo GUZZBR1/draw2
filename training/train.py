@@ -103,7 +103,13 @@ def pair_images_masks(split_dir):
         for img_path in sorted(split_dir.iterdir()):
             if img_path.suffix.lower() not in IMAGE_EXTS:
                 continue
-            if img_path.stem.endswith("_mask") or img_path.stem.endswith("_ink_full"):
+            if img_path.stem.endswith(("_mask", "_ink_full", "_change")):
+                continue
+            if img_path.stem.startswith("tseq_"):
+                # Frames de sequência temporal NÃO são cenas soltas:
+                # entram no treino só como pares consecutivos
+                # (build_pair_dataset), para a dieta de frames — e o
+                # val/test — seguir idêntica à receita sem temporal.
                 continue
             mask_path = split_dir / (img_path.stem + "_mask.png")
             if not mask_path.exists():
@@ -259,14 +265,26 @@ def dice_loss_numpy(prob, target, smooth=1e-6):
 
 # ---------------------------------------------------------------- torch
 def build_model(cfg):
-    """SegFormer-B0 pré-treinado, cabeça nova de 4 classes (lazy torch)."""
+    """SegFormer-B0 pré-treinado, cabeça nova de 4 classes (lazy torch).
+
+    Honra ``t7.decoder_hidden_size`` da config quando presente (a nota
+    da config t7 pedia isso: sem o override, a corrida GPU construía
+    decoder 256 enquanto a TPU treinava decoder 128 — arquiteturas
+    diferentes sob o mesmo nome). Config sem o bloco = comportamento
+    histórico, byte a byte.
+    """
     from transformers import SegformerForSemanticSegmentation
 
     model_cfg = cfg["model"]
+    extra = {}
+    decoder = (cfg.get("t7") or {}).get("decoder_hidden_size")
+    if decoder:
+        extra["decoder_hidden_size"] = int(decoder)
     model = SegformerForSemanticSegmentation.from_pretrained(
         model_cfg["backbone"],
         num_labels=model_cfg["num_classes"],
         ignore_mismatched_sizes=True,  # cabeça nova: 4 classes, não as do ImageNet
+        **extra,
     )
     return model
 
@@ -364,6 +382,120 @@ def build_dataset(
     return SegDataset()
 
 
+def pair_sequence_files(split_dir):
+    """Pares consecutivos das sequências temporais do gerador.
+
+    Layout plano: ``tseq_<split>_<i>_f<k>.png`` + ``_mask`` e, para
+    k>=1, ``_change``. Devolve lista de
+    ((img_a, mask_a, None), (img_b, mask_b, change_b)). Sequência com
+    buraco de frames ou sem ``_change`` é erro de geração: falha alto,
+    nunca degrada em silêncio. Sem sequências no split, devolve [].
+    """
+    split_dir = Path(split_dir)
+    if not split_dir.is_dir():
+        return []
+    seqs: dict[str, list[tuple[int, Path]]] = {}
+    for img_path in sorted(split_dir.iterdir()):
+        stem = img_path.stem
+        if not stem.startswith("tseq_") or img_path.suffix.lower() not in IMAGE_EXTS:
+            continue
+        if stem.endswith(("_mask", "_ink_full", "_change")):
+            continue
+        seq_id, sep, frame = stem.rpartition("_f")
+        if not sep or not frame.isdigit():
+            continue
+        seqs.setdefault(seq_id, []).append((int(frame), img_path))
+    pairs = []
+    for seq_id in sorted(seqs):
+        frames = sorted(seqs[seq_id])
+        for (ka, pa), (kb, pb) in zip(frames, frames[1:]):
+            if kb != ka + 1:
+                raise ValueError(
+                    f"sequência {seq_id} com buraco de frames ({ka} -> {kb})"
+                )
+            mask_a = split_dir / (pa.stem + "_mask.png")
+            mask_b = split_dir / (pb.stem + "_mask.png")
+            change_b = split_dir / (pb.stem + "_change.png")
+            for needed in (mask_a, mask_b, change_b):
+                if not needed.exists():
+                    raise FileNotFoundError(
+                        f"arquivo de sequência ausente: {needed} "
+                        "(gere com --temporal-train/--temporal-val)"
+                    )
+            pairs.append(((pa, mask_a, None), (pb, mask_b, change_b)))
+    return pairs
+
+
+def build_pair_dataset(data_dir, split, cfg):
+    """Dataset de PARES consecutivos da mesma cena (consistência temporal).
+
+    Cada item: (img_a, mask_a, img_b, mask_b, change_b) — change_b é a
+    máscara binária (0/1) de "onde o rótulo visível mudou de verdade"
+    do gerador. SEM albumentations geométrico: qualquer warp aplicado
+    a um frame só quebraria o alinhamento do par e invalidaria o
+    change. Normalização e resize idênticos aos do SegDataset.
+    """
+    import torch
+    from torch.utils.data import Dataset
+
+    pairs = pair_sequence_files(Path(data_dir) / split)
+    size = cfg["model"]["input"]["height"]
+
+    def load_frame(img_path, mask_path):
+        image = load_image_rgb(img_path)
+        mask = load_mask(mask_path)
+        if image.shape[:2] != mask.shape[:2]:
+            raise ValueError(
+                f"imagem/máscara com dimensões diferentes em {img_path}: "
+                f"{image.shape[:2]} x {mask.shape[:2]}"
+            )
+        image = cv2.resize(image, (size, size), interpolation=cv2.INTER_LINEAR)
+        mask = cv2.resize(mask, (size, size), interpolation=cv2.INTER_NEAREST)
+        image = image.astype(np.float32) / 255.0
+        image = (image - IMAGENET_MEAN) / IMAGENET_STD
+        image = np.transpose(image, (2, 0, 1))
+        return torch.from_numpy(image), torch.from_numpy(mask.astype(np.int64))
+
+    class PairDataset(Dataset):
+        def __len__(self):
+            return len(pairs)
+
+        def __getitem__(self, i):
+            (pa, ma, _), (pb, mb, cb) = pairs[i]
+            img_a, mask_a = load_frame(pa, ma)
+            img_b, mask_b = load_frame(pb, mb)
+            change = cv2.imread(str(cb), cv2.IMREAD_GRAYSCALE)
+            if change is None:
+                raise FileNotFoundError(f"change ilegível: {cb}")
+            change = cv2.resize(change, (size, size), interpolation=cv2.INTER_NEAREST)
+            return img_a, mask_a, img_b, mask_b, torch.from_numpy(
+                (change > 0).astype(np.uint8)
+            )
+
+    return PairDataset()
+
+
+def temporal_settings(cfg):
+    """Bloco opcional ``training.temporal`` da config.
+
+    Ausente = desligado (comportamento histórico, provado por teste).
+    Presente, valida os limites: pair_fraction em [0, 1] e
+    consistency_weight >= 0.
+    """
+    block = (cfg.get("training") or {}).get("temporal") or {}
+    pair_fraction = float(block.get("pair_fraction", 0.25))
+    consistency_weight = float(block.get("consistency_weight", 1.0))
+    if not 0.0 <= pair_fraction <= 1.0:
+        raise ValueError("training.temporal.pair_fraction precisa estar em [0, 1]")
+    if consistency_weight < 0.0:
+        raise ValueError("training.temporal.consistency_weight precisa ser >= 0")
+    return {
+        "enabled": bool(block.get("enabled", False)),
+        "pair_fraction": pair_fraction,
+        "consistency_weight": consistency_weight,
+    }
+
+
 def combined_loss(
     logits,
     target,
@@ -428,6 +560,30 @@ def combined_loss(
         raise ValueError("sample_weights precisa ser estritamente positivo")
     weights = weights * sample_is_valid
     return (per_sample * weights).sum() / weights.sum().clamp(min=1e-12)
+
+
+def masked_temporal_consistency_loss(logits_a, logits_b, change):
+    """Consistência temporal MASCARADA entre dois frames da mesma cena.
+
+    Penaliza (MSE entre probabilidades softmax) a predição que muda
+    onde o rótulo NÃO mudou: ``change == 0``. Onde o gerador diz que
+    mudou de verdade (change == 1 — tinta nova, mão que andou, borda
+    que derivou, ignore em algum dos frames) a penalidade é ZERO: o
+    modelo é livre — e supervisionado pela loss normal — para mudar.
+    É o "reconheceu uma vez, basta" virando gradiente: sem máscara, a
+    consistência ingênua ensinaria o modelo a NÃO registrar tinta
+    nova. Sem nenhum pixel estável no lote, devolve 0 ligado ao grafo
+    (backward válido, gradiente zero).
+    """
+    import torch
+
+    prob_a = torch.softmax(logits_a, dim=1)
+    prob_b = torch.softmax(logits_b, dim=1)
+    stable = change == 0
+    if not bool(stable.any()):
+        return logits_a.sum() * 0.0
+    diff2 = (prob_a - prob_b).pow(2).sum(dim=1)
+    return diff2[stable].mean()
 
 
 def warmup_cosine_scheduler(optimizer, total_steps, warmup_ratio):
@@ -695,7 +851,22 @@ def train_one_epoch(
     scheduler=None,
     accumulation_steps=1,
     amp_dtype=None,
+    pair_loader=None,
+    pair_fraction=0.0,
+    consistency_weight=0.0,
+    epoch_stats=None,
 ):
+    """Uma época. Com ``pair_loader`` + ``pair_fraction`` > 0, essa
+    fração dos lotes vira lote de PAR (dois frames da mesma cena):
+    os dois frames passam pela loss supervisionada normal e, se
+    ``consistency_weight`` > 0, pela consistência temporal mascarada.
+    Sem pair_loader (ou fração 0), o laço é o histórico — mesmo RNG,
+    mesma ordem, mesma loss (provado por teste de identidade).
+    ``epoch_stats``, quando passado, recebe {"pair_batches": n}.
+    """
+    import itertools
+    import random as _random
+
     import torch
     import torch.nn.functional as F
 
@@ -703,9 +874,26 @@ def train_one_epoch(
     total, n = 0.0, 0
     accumulation_steps = max(int(accumulation_steps), 1)
     num_batches = len(loader)
+    pair_iter = None
+    pair_rng = None
+    pair_batches = 0
+    if pair_loader is not None and pair_fraction > 0.0:
+        pair_iter = itertools.cycle(pair_loader)
+        pair_rng = _random.Random(20261105)
     optimizer.zero_grad(set_to_none=True)
     for batch_index, batch in enumerate(loader):
-        if len(batch) == 3:
+        use_pair = pair_iter is not None and pair_rng.random() < pair_fraction
+        change = None
+        half = 0
+        if use_pair:
+            p_img_a, p_mask_a, p_img_b, p_mask_b, p_change = next(pair_iter)
+            images = torch.cat([p_img_a, p_img_b], dim=0)
+            masks = torch.cat([p_mask_a, p_mask_b], dim=0)
+            change = p_change.to(device)
+            half = p_img_a.shape[0]
+            sample_weights = None
+            pair_batches += 1
+        elif len(batch) == 3:
             images, masks, sample_weights = batch
             sample_weights = sample_weights.to(device)
         else:
@@ -726,6 +914,10 @@ def train_one_epoch(
             loss = combined_loss(
                 logits, masks, class_weights, sample_weights=sample_weights
             )
+            if use_pair and consistency_weight > 0.0:
+                loss = loss + consistency_weight * masked_temporal_consistency_loss(
+                    logits[:half], logits[half:], change
+                )
         group_start = (batch_index // accumulation_steps) * accumulation_steps
         group_size = min(accumulation_steps, num_batches - group_start)
         scaled_loss = loss / group_size
@@ -753,6 +945,8 @@ def train_one_epoch(
         n += 1
     if n == 0:
         raise ValueError("época sem lotes de treino")
+    if epoch_stats is not None:
+        epoch_stats["pair_batches"] = pair_batches
     return total / n
 
 
@@ -1216,6 +1410,24 @@ def main(argv=None):
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, **dl_kwargs)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, **dl_kwargs)
     test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, **dl_kwargs)
+    tset = temporal_settings(cfg)
+    pair_loader = None
+    if tset["enabled"]:
+        pair_ds = build_pair_dataset(args.data_dir, "train", cfg)
+        if len(pair_ds) == 0:
+            parser.error(
+                "training.temporal.enabled=true, mas nenhum par de sequência "
+                f"em {Path(args.data_dir) / 'train'} — gere o dataset com "
+                "--temporal-train (tools/gen_synthetic.py) ou desligue o bloco"
+            )
+        pair_loader = DataLoader(
+            pair_ds, batch_size=batch_size, shuffle=True, **dl_kwargs
+        )
+        print(
+            f"temporal: {len(pair_ds)} pares de sequência | fração de lotes "
+            f"{tset['pair_fraction']} | peso da consistência "
+            f"{tset['consistency_weight']}"
+        )
     optimizer = torch.optim.AdamW(model.parameters(), lr=tr["learning_rate"], weight_decay=tr["weight_decay"])
     accumulation_steps = max(int(tr.get("gradient_accumulation_steps", 1)), 1)
     steps_per_epoch = math.ceil(len(train_loader) / accumulation_steps)
@@ -1231,6 +1443,7 @@ def main(argv=None):
     run_started = time.perf_counter()
     for epoch in range(epochs):
         epoch_started = time.perf_counter()
+        epoch_stats: dict = {}
         loss = train_one_epoch(
             model,
             train_loader,
@@ -1241,10 +1454,17 @@ def main(argv=None):
             scheduler=scheduler,
             accumulation_steps=accumulation_steps,
             amp_dtype=amp_dtype,
+            pair_loader=pair_loader,
+            pair_fraction=tset["pair_fraction"],
+            consistency_weight=tset["consistency_weight"],
+            epoch_stats=epoch_stats,
         )
         epoch_s = time.perf_counter() - epoch_started
         metrics = evaluate(model, val_loader, device)
-        history.append({"epoch": epoch, "train_loss": loss, "val": metrics, "epoch_s": round(epoch_s, 1)})
+        history_entry = {"epoch": epoch, "train_loss": loss, "val": metrics, "epoch_s": round(epoch_s, 1)}
+        if tset["enabled"]:
+            history_entry["pair_batches"] = epoch_stats.get("pair_batches", 0)
+        history.append(history_entry)
         if epoch == 0:
             receipt = utilization_receipt(
                 torch,
@@ -1255,6 +1475,16 @@ def main(argv=None):
                 precision,
                 probe_report=probe_report,
             )
+            if tset["enabled"]:
+                # Lotes de par processam 2x frames: samples_s do recibo
+                # conta lotes do loader principal; o bloco temporal
+                # registra o acréscimo para a projeção ser honesta.
+                receipt["temporal"] = {
+                    "pair_fraction": tset["pair_fraction"],
+                    "consistency_weight": tset["consistency_weight"],
+                    "pair_batches_epoch0": epoch_stats.get("pair_batches", 0),
+                    "pairs_total": len(pair_loader.dataset),
+                }
             receipt["projected_total_min"] = round(
                 epoch_s * epochs / 60, 1
             )

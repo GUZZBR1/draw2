@@ -17,8 +17,16 @@ idêntico a `base.json` hoje).
 - `base.json` — cópia fiel do `training/config.json` vigente: SegFormer-B0
   4 classes, 512x512, 30 épocas, batch 8, bf16 com fallback fp16.
 - `t7-segformer.json` — variante T7 (decoder C=128). O decoder mora no
-  bloco `t7` da config porque quem o aplica é o `training/train_tpu.py`
-  (`--decoder`), não o `train.py`; ver a nota dentro do arquivo.
+  bloco `t7` da config; desde a corrida da noite 2026-11-05 o
+  `build_model` do `train.py` aplica o override quando o bloco está
+  presente (antes só a rota TPU aplicava, e a GPU treinava decoder 256
+  sob o mesmo nome); ver a nota dentro do arquivo.
+- `t8-night-a.json` / `t8-night-b.json` — corrida da noite 2026-11-05
+  (Kaggle GPU): base T7 + augmentação temporal sintética (sequências
+  do gerador, pares consecutivos). A liga a perda de consistência
+  temporal mascarada (`training.temporal`, fração 0,25, peso 1,0);
+  B é a ablação com o MESMO custo e os mesmos pares, peso 0,0.
+  Sem o bloco `training.temporal`, o treino é o histórico.
 
 Configs do corpo irmão 3 classes (`training/train_ink3.py` — corpo
 gerado, linhagem distinta do SegFormer; ver `docs/TREINO.md`):

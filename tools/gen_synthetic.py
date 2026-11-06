@@ -53,6 +53,14 @@ Saída por cena (em ``<out>/<split>/``)::
     scene_0001_mask.png       # 1 canal, valores 0..3 e 255=ignorado
     scene_0001_ink_full.png   # 1 canal, 0/255 (desenho completo)
 
+Sequências temporais (OPT-IN, ``--temporal-train/--temporal-val``):
+a mesma cena em ``--temporal-frames`` frames consecutivos — deriva
+pequena de quad, tinta cumulativa, mão deslizando, deriva de luz.
+Arquivos ``tseq_<split>_<i>_f<k>.png`` (+ ``_mask``/``_ink_full`` e,
+para k≥1, ``_change.png`` = 255 onde o rótulo visível mudou vs o
+frame anterior ou é ignore em algum dos dois). Sem as flags, NADA
+muda: nenhuma sequência é gerada e o manifesto não ganha as chaves.
+
 Mais ``<out>/manifest.json`` com seed, splits por fonte e, por cena,
 tipo, fontes, placement da mão, placeholder e fração de papel.
 
@@ -341,49 +349,46 @@ def split_hand_sources(hands: list[HandSource], seed: int):
 # ---------------------------------------------------------------- papel
 
 
-def _draw_strokes(rng: np.random.Generator, canvas: np.ndarray, ink: np.ndarray) -> None:
-    """Desenha traços no canvas do papel e a máscara ink exata."""
-    h, w = canvas.shape[:2]
-    colors = [(20, 20, 20), (20, 20, 20), (180, 40, 30), (140, 140, 140)]
+_STROKE_COLORS = [(20, 20, 20), (20, 20, 20), (180, 40, 30), (140, 140, 140)]
+_STROKE_KINDS = [
+    "line", "curve", "circle", "rectangle", "triangle", "scribble", "writing", "arrow",
+]
+
+
+def _plan_strokes(rng: np.random.Generator, w: int, h: int) -> list:
+    """Sorteia os traços de um papel SEM desenhar: devolve specs.
+
+    Spec = (kind, color, thick, geometria resolvida). Todo o consumo
+    de RNG do desenho mora aqui, na MESMA ordem que o desenho direto
+    sempre fez — por isso ``_draw_strokes`` (plano + aplicação) gera
+    exatamente as mesmas cenas de antes. As sequências temporais
+    usam as specs para revelar a tinta traço a traço (cumulativa).
+    """
+    specs = []
     n = int(rng.integers(3, 9))
     for _ in range(n):
-        kind = rng.choice(
-            ["line", "curve", "circle", "rectangle", "triangle", "scribble", "writing", "arrow"]
-        )
-        color = colors[int(rng.integers(len(colors)))]
+        kind = str(rng.choice(_STROKE_KINDS))
+        color = _STROKE_COLORS[int(rng.integers(len(_STROKE_COLORS)))]
         thick = int(rng.choice([1, 1, 2, 2, 3, 4]))
         x0, y0 = int(rng.integers(20, w - 20)), int(rng.integers(20, h - 20))
         x1, y1 = int(rng.integers(20, w - 20)), int(rng.integers(20, h - 20))
-        if kind == "line":
-            cv2.line(canvas, (x0, y0), (x1, y1), color, thick)
-            cv2.line(ink, (x0, y0), (x1, y1), 255, thick)
-        elif kind == "curve":
+        if kind == "curve":
             cx, cy = int(rng.integers(20, w - 20)), int(rng.integers(20, h - 20))
             pts = []
             for t in np.linspace(0, 1, 40):
                 x = int((1 - t) ** 2 * x0 + 2 * (1 - t) * t * cx + t**2 * x1)
                 y = int((1 - t) ** 2 * y0 + 2 * (1 - t) * t * cy + t**2 * y1)
                 pts.append([x, y])
-            pts = np.array(pts, dtype=np.int32)
-            cv2.polylines(canvas, [pts], False, color, thick)
-            cv2.polylines(ink, [pts], False, 255, thick)
+            specs.append((kind, color, thick, np.array(pts, dtype=np.int32)))
         elif kind == "circle":
             r = int(rng.integers(25, 90))
-            cv2.circle(canvas, (x0, y0), r, color, thick)
-            cv2.circle(ink, (x0, y0), r, 255, thick)
-        elif kind == "rectangle":
-            cv2.rectangle(canvas, (x0, y0), (x1, y1), color, thick)
-            cv2.rectangle(ink, (x0, y0), (x1, y1), 255, thick)
+            specs.append((kind, color, thick, (x0, y0, r)))
         elif kind == "triangle":
             pts = np.array(
                 [[x0, y0], [x1, y1], [int(rng.integers(20, w - 20)), int(rng.integers(20, h - 20))]],
                 dtype=np.int32,
             )
-            cv2.polylines(canvas, [pts], True, color, thick)
-            cv2.polylines(ink, [pts], True, 255, thick)
-        elif kind == "arrow":
-            cv2.arrowedLine(canvas, (x0, y0), (x1, y1), color, thick, tipLength=0.25)
-            cv2.arrowedLine(ink, (x0, y0), (x1, y1), 255, thick, tipLength=0.25)
+            specs.append((kind, color, thick, pts))
         elif kind == "scribble":
             pts = [[x0, y0]]
             x, y = x0, y0
@@ -391,25 +396,60 @@ def _draw_strokes(rng: np.random.Generator, canvas: np.ndarray, ink: np.ndarray)
                 x = int(np.clip(x + rng.integers(-28, 29), 10, w - 10))
                 y = int(np.clip(y + rng.integers(-28, 29), 10, h - 10))
                 pts.append([x, y])
+            specs.append((kind, color, thick, np.array(pts, dtype=np.int32)))
+        elif kind == "writing":
+            specs.append((kind, color, thick, (x0, y0)))
+        else:  # line, rectangle, arrow
+            specs.append((kind, color, thick, (x0, y0, x1, y1)))
+    return specs
+
+
+def _apply_stroke(canvas: np.ndarray, ink: np.ndarray, spec) -> None:
+    """Desenha UM traço (spec de ``_plan_strokes``) no canvas e no ink."""
+    kind, color, thick, geo = spec
+    h, w = canvas.shape[:2]
+    if kind == "line":
+        cv2.line(canvas, (geo[0], geo[1]), (geo[2], geo[3]), color, thick)
+        cv2.line(ink, (geo[0], geo[1]), (geo[2], geo[3]), 255, thick)
+    elif kind in ("curve", "scribble"):
+        cv2.polylines(canvas, [geo], False, color, thick)
+        cv2.polylines(ink, [geo], False, 255, thick)
+    elif kind == "circle":
+        cv2.circle(canvas, (geo[0], geo[1]), geo[2], color, thick)
+        cv2.circle(ink, (geo[0], geo[1]), geo[2], 255, thick)
+    elif kind == "rectangle":
+        cv2.rectangle(canvas, (geo[0], geo[1]), (geo[2], geo[3]), color, thick)
+        cv2.rectangle(ink, (geo[0], geo[1]), (geo[2], geo[3]), 255, thick)
+    elif kind == "triangle":
+        cv2.polylines(canvas, [geo], True, color, thick)
+        cv2.polylines(ink, [geo], True, 255, thick)
+    elif kind == "arrow":
+        cv2.arrowedLine(canvas, (geo[0], geo[1]), (geo[2], geo[3]), color, thick, tipLength=0.25)
+        cv2.arrowedLine(ink, (geo[0], geo[1]), (geo[2], geo[3]), 255, thick, tipLength=0.25)
+    else:  # writing: escrita simulada, zigue-zague e laços
+        x0, y = geo
+        for k in range(4):
+            x_start = x0 + k * 45
+            if x_start > w - 40:
+                break
+            pts = []
+            for t in range(12):
+                pts.append([x_start + t * 3, y + int(8 * math.sin(t * 1.2))])
             pts = np.array(pts, dtype=np.int32)
-            cv2.polylines(canvas, [pts], False, color, thick)
-            cv2.polylines(ink, [pts], False, 255, thick)
-        else:  # writing: escrita simulada, zigue-zague e laços
-            y = y0
-            for k in range(4):
-                x_start = x0 + k * 45
-                if x_start > w - 40:
-                    break
-                pts = []
-                for t in range(12):
-                    pts.append([x_start + t * 3, y + int(8 * math.sin(t * 1.2))])
-                pts = np.array(pts, dtype=np.int32)
-                cv2.polylines(canvas, [pts], False, color, max(1, thick - 1))
-                cv2.polylines(ink, [pts], False, 255, max(1, thick - 1))
+            cv2.polylines(canvas, [pts], False, color, max(1, thick - 1))
+            cv2.polylines(ink, [pts], False, 255, max(1, thick - 1))
+    _ = h  # h faz parte do contrato visual; w é o usado acima
 
 
-def _paper_canvas(rng: np.random.Generator, style: str) -> tuple[np.ndarray, np.ndarray, int, int]:
-    """Canvas do papel (antes do warp): RGB + máscara ink, e seu tamanho."""
+def _draw_strokes(rng: np.random.Generator, canvas: np.ndarray, ink: np.ndarray) -> None:
+    """Desenha traços no canvas do papel e a máscara ink exata."""
+    h, w = canvas.shape[:2]
+    for spec in _plan_strokes(rng, w, h):
+        _apply_stroke(canvas, ink, spec)
+
+
+def _paper_base(rng: np.random.Generator, style: str) -> tuple[np.ndarray, int, int]:
+    """Canvas do papel SEM traços: RGB (fundo/textura/linhas) e tamanho."""
     # Proporções: A4 retrato, A4 paisagem, carta, quadrado, caderno.
     w, h = [
         (360, 510),
@@ -435,6 +475,12 @@ def _paper_canvas(rng: np.random.Generator, style: str) -> tuple[np.ndarray, np.
     if style == "notebook":
         for y in range(40, h - 20, 60):
             cv2.circle(canvas, (14, y), 7, (200, 200, 200), -1)
+    return canvas, w, h
+
+
+def _paper_canvas(rng: np.random.Generator, style: str) -> tuple[np.ndarray, np.ndarray, int, int]:
+    """Canvas do papel (antes do warp): RGB + máscara ink, e seu tamanho."""
+    canvas, w, h = _paper_base(rng, style)
     ink = np.zeros((h, w), dtype=np.uint8)
     _draw_strokes(rng, canvas, ink)
     return canvas, ink, w, h
@@ -461,12 +507,31 @@ def _background(rng: np.random.Generator, source: str) -> np.ndarray:
     return np.clip(img, 0, 255).astype(np.uint8)
 
 
-def _warp_to_scene(
-    rng: np.random.Generator, paper: np.ndarray, ink: np.ndarray, placement: str
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Warp do papel para a cena.
+def _sample_normal_quad(rng: np.random.Generator, w: int, h: int) -> np.ndarray:
+    """Quad da folha no placement normal: grande, rotacionada/deslocada.
 
-    Devolve (rgb_warp, paper_mask, ink_warp, quad, paper_cov, ink_cov).
+    Consumo de RNG idêntico ao ramo "normal" histórico de
+    ``_warp_to_scene`` (cx, cy, scale, ang — nesta ordem).
+    """
+    cx, cy = SIZE // 2 + int(rng.integers(-40, 41)), SIZE // 2 + int(rng.integers(-40, 41))
+    scale = float(rng.uniform(0.85, 1.05))
+    pw, ph = int(w * scale * SIZE / 560), int(h * scale * SIZE / 560)
+    ang = math.radians(float(rng.uniform(-18, 18)))
+    ca, sa = math.cos(ang), math.sin(ang)
+    corners = np.array(
+        [[-pw // 2, -ph // 2], [pw // 2, -ph // 2], [pw // 2, ph // 2], [-pw // 2, ph // 2]],
+        dtype=np.float32,
+    )
+    rot = np.array([[ca, -sa], [sa, ca]], dtype=np.float32)
+    return (corners @ rot.T + np.array([cx, cy], dtype=np.float32)).astype(np.float32)
+
+
+def _warp_paper(
+    paper: np.ndarray, ink: np.ndarray, dst: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Warp do papel para um quad explícito.
+
+    Devolve (rgb_warp, paper_mask, ink_warp, paper_cov, ink_cov).
     As coberturas são o MESMO warp com INTER_LINEAR sobre os campos
     binários: fração real de papel/tinta em cada pixel da cena. O RGB é
     warp LINEAR e as máscaras duras são NEAREST — onde a cobertura é
@@ -475,33 +540,6 @@ def _warp_to_scene(
     """
     h, w = paper.shape[:2]
     src = np.array([[0, 0], [w, 0], [w, h], [0, h]], dtype=np.float32)
-    if placement == "tiny_sheet":
-        cx, cy = SIZE // 2, SIZE // 2
-        pw, ph = 80, 110
-        dst = np.array(
-            [[cx - pw // 2, cy - ph // 2], [cx + pw // 2, cy - ph // 2],
-             [cx + pw // 2, cy + ph // 2], [cx - pw // 2, cy + ph // 2]],
-            dtype=np.float32,
-        )
-    elif placement == "sheet_out":
-        # Quase toda fora: só uma lasca visível num canto.
-        dst = np.array(
-            [[-320, -260], [-40, -280], [-20, 120], [-340, 100]], dtype=np.float32
-        )
-    else:
-        # Folha grande, com rotação e deslocamento, podendo sair um
-        # pouco do frame (parcialmente fora).
-        cx, cy = SIZE // 2 + int(rng.integers(-40, 41)), SIZE // 2 + int(rng.integers(-40, 41))
-        scale = float(rng.uniform(0.85, 1.05))
-        pw, ph = int(w * scale * SIZE / 560), int(h * scale * SIZE / 560)
-        ang = math.radians(float(rng.uniform(-18, 18)))
-        ca, sa = math.cos(ang), math.sin(ang)
-        corners = np.array(
-            [[-pw // 2, -ph // 2], [pw // 2, -ph // 2], [pw // 2, ph // 2], [-pw // 2, ph // 2]],
-            dtype=np.float32,
-        )
-        rot = np.array([[ca, -sa], [sa, ca]], dtype=np.float32)
-        dst = (corners @ rot.T + np.array([cx, cy], dtype=np.float32)).astype(np.float32)
     mat = cv2.getPerspectiveTransform(src, dst)
     rgb_w = cv2.warpPerspective(paper, mat, (SIZE, SIZE))
     paper_field = np.full((h, w), 255, dtype=np.uint8)
@@ -516,6 +554,33 @@ def _warp_to_scene(
     ink_cov = cv2.warpPerspective(
         ink.astype(np.float32) / 255.0, mat, (SIZE, SIZE), flags=cv2.INTER_LINEAR
     )
+    return rgb_w, paper_mask, ink_w, paper_cov, ink_cov
+
+
+def _warp_to_scene(
+    rng: np.random.Generator, paper: np.ndarray, ink: np.ndarray, placement: str
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Warp do papel para a cena, com o quad sorteado pelo placement.
+
+    Devolve (rgb_warp, paper_mask, ink_warp, quad, paper_cov, ink_cov).
+    """
+    h, w = paper.shape[:2]
+    if placement == "tiny_sheet":
+        cx, cy = SIZE // 2, SIZE // 2
+        pw, ph = 80, 110
+        dst = np.array(
+            [[cx - pw // 2, cy - ph // 2], [cx + pw // 2, cy - ph // 2],
+             [cx + pw // 2, cy + ph // 2], [cx - pw // 2, cy + ph // 2]],
+            dtype=np.float32,
+        )
+    elif placement == "sheet_out":
+        # Quase toda fora: só uma lasca visível num canto.
+        dst = np.array(
+            [[-320, -260], [-40, -280], [-20, 120], [-340, 100]], dtype=np.float32
+        )
+    else:
+        dst = _sample_normal_quad(rng, w, h)
+    rgb_w, paper_mask, ink_w, paper_cov, ink_cov = _warp_paper(paper, ink, dst)
     return rgb_w, paper_mask, ink_w, dst, paper_cov, ink_cov
 
 
@@ -795,12 +860,138 @@ def compose_scene(
     return finish(rgb)
 
 
+def _sequence_photometric(rng: np.random.Generator, rgb: np.ndarray, gain: float) -> np.ndarray:
+    """Fotometria COERENTE de sequência: ganho global (deriva de luz)
+    + ruído de sensor novo por frame. NÃO usa ``_augment_rgb``: sombra
+    e gradiente sorteados por frame fariam a cena piscar — e piscar
+    sem mudança de rótulo é exatamente o que a perda de consistência
+    temporal deve aprender a ignorar, não o gerador a fabricar."""
+    img = rgb.astype(np.float32) * float(gain)
+    noise = rng.normal(0, 5, size=img.shape).astype(np.float32)
+    return np.clip(img + noise, 0, 255).astype(np.uint8)
+
+
+def compose_scene_sequence(
+    seed: int,
+    split: str = "train",
+    index: int = 0,
+    frames: int = 6,
+    paper_style: str = "white",
+    hand: HandSource | None = None,
+    background_source: str = "table_wood",
+) -> dict:
+    """Compõe uma SEQUÊNCIA temporal da MESMA cena (opt-in).
+
+    O que muda entre frames — e só isso:
+    * o quad da folha deriva (random walk suave, ≤7 px por canto) —
+      a folha "anda" um pouco sem trocar de identidade;
+    * a tinta é CUMULATIVA: os traços entram um a um, em ordem, e
+      nunca somem (``ink_full`` monotônico por construção);
+    * a mão, quando participa (75%), tem a aparência transformada UMA
+      vez e desliza de fora para sobre o papel (smoothstep);
+    * a luz deriva (ganho global interpolado 0,93–1,07) e frames com
+      salto de deriva ≥2 px ganham blur leve de movimento.
+
+    Cada frame k≥1 traz ``change``: 255 onde o rótulo VISÍVEL mudou
+    em relação ao frame anterior OU é ignore em algum dos dois —
+    a máscara de "onde mudou de verdade" que a perda de consistência
+    temporal mascarada exclui da penalidade. Frame 0 não tem change.
+    A máscara de cada frame segue a mesma regra de rótulo visível +
+    ignore por ambiguidade das cenas soltas.
+    """
+    rng = _scene_rng(seed, split + "#seq", index)
+    bg = _background(rng, background_source)
+    base_canvas, pw, ph = _paper_base(rng, paper_style)
+    specs = _plan_strokes(rng, pw, ph)
+    quad0 = _sample_normal_quad(rng, pw, ph)
+    n = len(specs)
+
+    offsets = [np.zeros((4, 2), dtype=np.float32)]
+    for _ in range(1, frames):
+        step = rng.normal(0, 0.8, size=(4, 2)).astype(np.float32)
+        offsets.append(np.clip(offsets[-1] + step, -7.0, 7.0))
+
+    has_hand = hand is not None and float(rng.random()) < 0.75
+    hand_rgb = hand_mask = hand_cov_img = None
+    start = end = None
+    if has_hand:
+        scale = float(rng.uniform(0.7, 1.0))
+        hand_rgb, hand_mask, hand_cov_img = _transform_hand(rng, hand, scale)
+        centroid = quad0.mean(axis=0)
+        corner = quad0[int(rng.integers(4))]
+        end = centroid * 0.55 + corner * 0.45
+        start = np.array(
+            [SIZE * 0.95, centroid[1] + float(rng.integers(-40, 41))], dtype=np.float32
+        )
+    g0, g1 = float(rng.uniform(0.93, 1.07)), float(rng.uniform(0.93, 1.07))
+    log_g0, log_g1 = math.log(g0), math.log(g1)
+
+    frames_out: list[dict] = []
+    prev_mask: np.ndarray | None = None
+    ink_counts: list[int] = []
+    for t in range(frames):
+        k = n if t == frames - 1 else min(n, max(1, round((t + 1) * n / frames)))
+        canvas_t = base_canvas.copy()
+        ink_t = np.zeros((ph, pw), dtype=np.uint8)
+        for spec in specs[:k]:
+            _apply_stroke(canvas_t, ink_t, spec)
+        quad_t = quad0 + offsets[t]
+        rgb_w, paper_mask, ink_w, paper_cov, ink_cov = _warp_paper(canvas_t, ink_t, quad_t)
+        rgb = bg.copy()
+        mask = np.zeros((SIZE, SIZE), dtype=np.uint8)
+        on_paper = paper_mask > 0
+        rgb[on_paper] = rgb_w[on_paper]
+        mask[on_paper] = PAPER
+        ink_full = ink_w
+        mask[(ink_w > 0) & on_paper] = INK
+        hand_cov = np.zeros((SIZE, SIZE), dtype=np.float32)
+        if has_hand:
+            u = t / (frames - 1) if frames > 1 else 1.0
+            s = u * u * (3 - 2 * u)
+            cx = int(start[0] * (1 - s) + end[0] * s)
+            cy = int(start[1] * (1 - s) + end[1] * s)
+            _paste_hand(rgb, mask, hand_rgb, hand_mask, cx, cy)
+            _paste_coverage(hand_cov, hand_cov_img, cx, cy)
+        frac_t = t / (frames - 1) if frames > 1 else 0.0
+        gain = math.exp(log_g0 + (log_g1 - log_g0) * frac_t)
+        out_rgb = _sequence_photometric(rng, rgb, gain)
+        if t > 0 and float(np.abs(offsets[t] - offsets[t - 1]).max()) >= 2.0:
+            out_rgb = cv2.GaussianBlur(out_rgb, (3, 3), 0)
+        final_mask, _causes = _ambiguity_ignore(mask, paper_cov, ink_cov, hand_cov)
+        change = None
+        if prev_mask is not None:
+            changed = (final_mask != prev_mask) | (final_mask == IGNORE) | (prev_mask == IGNORE)
+            change = np.where(changed, 255, 0).astype(np.uint8)
+        ink_counts.append(int((ink_full > 0).sum()))
+        frames_out.append(
+            {"rgb": out_rgb, "mask": final_mask, "ink_full": ink_full, "change": change}
+        )
+        prev_mask = final_mask
+
+    info = {
+        "scene_type": "sequence",
+        "paper_style": paper_style,
+        "background_source": background_source,
+        "hand_source": hand.source_id if hand else None,
+        "hand_placeholder": bool(hand.placeholder) if hand else False,
+        "has_hand": bool(has_hand),
+        "frames": frames,
+        "stroke_count": n,
+        "ink_full_pixels": ink_counts,
+        "drift_max_px": float(max(float(np.abs(o).max()) for o in offsets)),
+        "has_valid_sheet": True,
+    }
+    return {"frames": frames_out, "info": info}
+
+
 def generate_dataset(
     out_dir: str | Path,
     seed: int = 0,
     counts: dict[str, int] | None = None,
     hands_dir: str | Path | None = None,
     two_hands: bool = False,
+    temporal_counts: dict[str, int] | None = None,
+    temporal_frames: int = 6,
 ) -> dict:
     """Gera o dataset completo com split por fonte + manifest.json."""
     counts = counts or {"train": 20, "val": 3, "test": 3}
@@ -833,6 +1024,21 @@ def generate_dataset(
             "Per-scene counts in ignore_causes."
         ),
     }
+    if temporal_counts:
+        manifest["temporal"] = {
+            "frames_per_sequence": temporal_frames,
+            "counts": temporal_counts,
+            "notes": (
+                "Sequences (tseq_*) are opt-in temporal augmentation: "
+                "same scene across frames — small quad drift, "
+                "cumulative ink, sliding hand, light drift. Each frame "
+                "k>=1 has a _change.png (255 = visible label changed "
+                "vs previous frame OR ignore in either frame). "
+                "Sequence frames are NOT scenes: training consumes "
+                "them only as consecutive pairs."
+            ),
+        }
+        manifest["sequences"] = []
     negative_cycle = NEGATIVE_TYPES
     for split, count in counts.items():
         split_dir = out / split
@@ -877,6 +1083,42 @@ def generate_dataset(
                 "paper_source": paper_src,
             }
             manifest["scenes"].append(entry)
+        # Sequências temporais (opt-in): MESMAS pools do split, índice
+        # próprio — nunca vazam fontes entre splits.
+        n_seq = int((temporal_counts or {}).get(split, 0))
+        for j in range(n_seq):
+            rng = _scene_rng(seed, split, 500_000 + j)
+            hand_pool = splits["hands"][split]
+            paper_pool = splits["papers"][split]
+            bg_pool = splits["backgrounds"][split]
+            hand_id = hand_pool[int(rng.integers(len(hand_pool)))]
+            paper_src = paper_pool[int(rng.integers(len(paper_pool)))]
+            paper_style = paper_src.rsplit("_", 1)[0]
+            bg = bg_pool[int(rng.integers(len(bg_pool)))]
+            seq = compose_scene_sequence(
+                seed, split, j, temporal_frames, paper_style,
+                hand_by_id.get(hand_id), bg,
+            )
+            seq_id = f"tseq_{split}_{j:04d}"
+            files: list[str] = []
+            for k, frame in enumerate(seq["frames"]):
+                stem = f"{seq_id}_f{k}"
+                cv2.imwrite(str(split_dir / f"{stem}.png"), frame["rgb"])
+                cv2.imwrite(str(split_dir / f"{stem}_mask.png"), frame["mask"])
+                cv2.imwrite(str(split_dir / f"{stem}_ink_full.png"), frame["ink_full"])
+                files += [f"{stem}.png", f"{stem}_mask.png", f"{stem}_ink_full.png"]
+                if frame["change"] is not None:
+                    cv2.imwrite(str(split_dir / f"{stem}_change.png"), frame["change"])
+                    files.append(f"{stem}_change.png")
+            manifest["sequences"].append(
+                {
+                    "id": seq_id,
+                    "split": split,
+                    "files": files,
+                    **seq["info"],
+                    "paper_source": paper_src,
+                }
+            )
     with open(out / "manifest.json", "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, sort_keys=True)
     return manifest
@@ -891,16 +1133,29 @@ def main() -> int:
     parser.add_argument("--val", type=int, default=3)
     parser.add_argument("--test", type=int, default=3)
     parser.add_argument("--two-hands", action="store_true", help="Gera algumas cenas com duas mãos")
+    parser.add_argument("--temporal-train", type=int, default=0,
+                        help="Sequências temporais no train (0 = desligado, padrão)")
+    parser.add_argument("--temporal-val", type=int, default=0,
+                        help="Sequências temporais no val (0 = desligado, padrão)")
+    parser.add_argument("--temporal-frames", type=int, default=6,
+                        help="Frames por sequência temporal")
     args = parser.parse_args()
+    temporal_counts = None
+    if args.temporal_train > 0 or args.temporal_val > 0:
+        temporal_counts = {"train": args.temporal_train, "val": args.temporal_val}
     manifest = generate_dataset(
         args.out, args.seed,
         {"train": args.train, "val": args.val, "test": args.test},
         args.hands_dir, args.two_hands,
+        temporal_counts, args.temporal_frames,
     )
     n = len(manifest["scenes"])
     print(f"{n} cenas em {args.out} (seed {args.seed})")
     for split in ("train", "val", "test"):
         print(f"  {split}: {sum(1 for s in manifest['scenes'] if s['split'] == split)}")
+    if temporal_counts:
+        n_seq = len(manifest.get("sequences", []))
+        print(f"  sequências temporais: {n_seq} ({args.temporal_frames} frames cada)")
     return 0
 
 
