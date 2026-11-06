@@ -148,6 +148,8 @@ def build_command(args: argparse.Namespace, backend: str) -> list[str]:
                                 ("--test-count", args.test_count)):
                 if value is not None:
                     cmd += [flag, str(value)]
+            if args.budget_min is not None:
+                cmd += ["--budget-min", str(args.budget_min)]
         if args.batch_size != "auto":
             cmd += ["--batch", str(args.batch_size)]
         if args.precision is not None:
@@ -173,6 +175,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--allow-unverified-real-train", action="store_true")
     parser.add_argument("--out-dir", default="out")
     parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--budget-min", type=float, default=None,
+                        help="Só rota TorchTPU (Colab): teto de "
+                             "parede em minutos; o corpo para no "
+                             "fim de uma época e entrega o melhor "
+                             "checkpoint (ausente = sem teto).")
     parser.add_argument("--train-count", type=int, default=None,
                         help="Só rotas TPU (dados gerados em sessão): "
                              "imagens de treino (padrão do corpo: 4000).")

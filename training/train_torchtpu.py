@@ -83,6 +83,7 @@ import argparse
 import json
 import os
 from contextlib import nullcontext
+import statistics
 import subprocess
 import sys
 import time
@@ -354,6 +355,49 @@ def _loader_kwargs(num_workers):
     return kwargs
 
 
+def _budget_decision(elapsed_s, epoch_s, epochs_done, epochs_total,
+                     budget_s):
+    """Portão de orçamento de parede (função pura, testável).
+
+    Retorna (parar, projetado_s). Parar = terminar a PRÓXIMA época
+    estouraria o teto menos a reserva de export+grade em CPU
+    (medida em ~1-3 min nas sessões do T7; reserva = max(120 s,
+    5% do teto)). elapsed_s é o relógio de parede desde o início
+    da corrida (geração de dados incluída); epoch_s é o ritmo
+    típico de época (mediana das concluídas); projetado_s é o
+    total estimado se todas as épocas rodarem.
+    """
+    if budget_s <= 0 or epochs_done >= epochs_total or epoch_s <= 0:
+        return False, 0.0
+    reserve_s = max(120.0, 0.05 * budget_s)
+    projected_s = elapsed_s + epoch_s * (epochs_total - epochs_done)
+    return (elapsed_s + epoch_s + reserve_s > budget_s), projected_s
+
+
+def _write_receipt(out_dir, rec, run_cfg, info, batch_global,
+                   epoch_s_list, wall0, budget_s):
+    """Grava o receipt.json (projeção + utilização) da época dada."""
+    receipt = dict(rec)
+    receipt["projected_total_min"] = round(
+        rec["epoch_s"] * run_cfg["epochs"] / 60, 1)
+    if budget_s > 0:
+        _, projected_s = _budget_decision(
+            time.time() - wall0, statistics.median(epoch_s_list),
+            rec["epoch"] + 1, run_cfg["epochs"], budget_s)
+        receipt["budget_min"] = round(budget_s / 60, 1)
+        receipt["budget_projected_total_min"] = round(
+            projected_s / 60, 1)
+    receipt["world"] = info["world"]
+    receipt["batch_global"] = batch_global
+    receipt["device"] = info["name"]
+    receipt["precision"] = run_cfg["precision"]
+    receipt["compile"] = bool(run_cfg["compile"])
+    receipt["scoped_vmem_kib"] = run_cfg.get("scoped_vmem_kib")
+    with open(out_dir / "receipt.json", "w", encoding="utf-8") as f:
+        json.dump(receipt, f, indent=2)
+    _log("RECEIPT", json.dumps(receipt))
+
+
 def _train(run_cfg, data_dir, out_dir, device_kind):
     """Treino em processo único (TorchTPU ou CPU no selftest)."""
     import torch
@@ -410,6 +454,10 @@ def _train(run_cfg, data_dir, out_dir, device_kind):
     out_dir = Path(out_dir)
     best_iou = -1.0
     t_start = time.time()
+    epoch_s_list = []
+    run_cfg.setdefault("budget_stopped", False)
+    wall0 = run_cfg.get("t_wall0") or t_start
+    budget_s = float(run_cfg.get("budget_min") or 0.0) * 60.0
 
     for epoch in range(run_cfg["epochs"]):
         model.train()
@@ -474,27 +522,41 @@ def _train(run_cfg, data_dir, out_dir, device_kind):
         _log("EPOCA", json.dumps(rec))
         with open(out_dir / "history.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
+        epoch_s_list.append(dt)
         if epoch == min(1, run_cfg["epochs"] - 1):
-            receipt = dict(rec)
-            receipt["projected_total_min"] = round(
-                rec["epoch_s"] * run_cfg["epochs"] / 60, 1)
-            receipt["world"] = info["world"]
-            receipt["batch_global"] = run_cfg["batch"] * accum
-            receipt["device"] = info["name"]
-            receipt["precision"] = run_cfg["precision"]
-            receipt["compile"] = bool(run_cfg["compile"])
-            receipt["scoped_vmem_kib"] = run_cfg.get(
-                "scoped_vmem_kib")
-            with open(out_dir / "receipt.json", "w",
-                      encoding="utf-8") as f:
-                json.dump(receipt, f, indent=2)
-            _log("RECEIPT", json.dumps(receipt))
+            _write_receipt(out_dir, rec, run_cfg, info,
+                           run_cfg["batch"] * accum, epoch_s_list,
+                           wall0, budget_s)
         sd = {k: v.cpu() for k, v in model.state_dict().items()}
         torch.save(sd, out_dir / "checkpoints" / "last.pt")
         if iou > best_iou:
             best_iou = iou
             torch.save(sd, out_dir / "checkpoints" / "best.pt")
             _log("BEST", iou)
+        if budget_s > 0:
+            elapsed_wall = time.time() - wall0
+            stop, projected_s = _budget_decision(
+                elapsed_wall, statistics.median(epoch_s_list),
+                epoch + 1, run_cfg["epochs"], budget_s)
+            _log("BUDGET", json.dumps({
+                "elapsed_min": round(elapsed_wall / 60, 1),
+                "projected_total_min": round(projected_s / 60, 1),
+                "budget_min": round(budget_s / 60, 1),
+                "epochs_done": epoch + 1,
+                "epochs_total": run_cfg["epochs"]}))
+            if stop:
+                run_cfg["budget_stopped"] = True
+                run_cfg["epochs_completed"] = epoch + 1
+                if not (out_dir / "receipt.json").exists():
+                    _write_receipt(out_dir, rec, run_cfg, info,
+                                   run_cfg["batch"] * accum,
+                                   epoch_s_list, wall0, budget_s)
+                _log("BUDGET_STOP: teto de "
+                     f"{budget_s / 60:.0f} min — encerrando com "
+                     f"{epoch + 1} épocas; export/grade seguem "
+                     "com o best.pt salvo.")
+                break
+    run_cfg.setdefault("epochs_completed", run_cfg["epochs"])
     _log("TREINO_TORCHTPU_DONE")
     return info
 
@@ -602,6 +664,12 @@ def main(argv=None):
                         help="Alias legado do corpo XLA; vale como "
                              "--batch.")
     parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--budget-min", type=float, default=0.0,
+                        help="Teto de parede em minutos (geração "
+                             "incluída; 0 = sem teto). Ao projetar "
+                             "estouro, o treino para no fim da época "
+                             "corrente e a entrega (export/grade) "
+                             "segue com o best.pt salvo.")
     parser.add_argument("--lr", type=float, default=1.4e-4)
     parser.add_argument("--precision", choices=("bf16", "fp32"),
                         default="bf16")
@@ -662,6 +730,8 @@ def main(argv=None):
         "augment": True,
         "n_train": args.train_count, "n_val": args.val_count,
         "n_test": args.test_count, "backend": "torchtpu",
+        "budget_min": args.budget_min,
+        "t_wall0": time.time(),
     }
     _log("RUN_CFG", json.dumps(run_cfg))
     _preflight()

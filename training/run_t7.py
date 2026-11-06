@@ -384,6 +384,8 @@ def _run(args, data_dir, out_dir):
                         ("--test-count", args.test_count)):
         if value is not None:
             base += [flag, str(value)]
+    if args.budget_min is not None:
+        base += ["--budget-min", str(args.budget_min)]
     if args.scoped_vmem_kib is not None:
         base += ["--scoped-vmem-kib", str(args.scoped_vmem_kib)]
     log_path = out_dir.parent / "train_t7.log"
@@ -445,6 +447,9 @@ def main(argv=None):
     parser.add_argument("--benchmark-only", action="store_true",
                         help="Mede T7 sem executar a corrida ou salvar checkpoints.")
     parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--budget-min", type=float, default=None,
+                        help="Teto de parede em minutos, repassado "
+                             "ao corpo (0/ausente = sem teto).")
     parser.add_argument("--train-count", type=int, default=None,
                         help="Imagens de treino geradas (padrao do "
                              "corpo: 4000). Reduzir encurta geracao e "
@@ -523,7 +528,8 @@ def main(argv=None):
                 ("--batch", args.batch),
                 ("--train-count", args.train_count),
                 ("--val-count", args.val_count),
-                ("--test-count", args.test_count)) if value is not None)
+                ("--test-count", args.test_count),
+                ("--budget-min", args.budget_min)) if value is not None)
         _log("  4) corrida:", sys.executable, BODY, "--compile",
              f"--epochs {args.epochs} --precision {args.precision}"
              f"{extra}")
