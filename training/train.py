@@ -409,14 +409,39 @@ def presence_targets(masks):
     return present.reshape(masks.shape[0], -1).any(dim=1).to(torch.float32)
 
 
-def presence_loss(presence_logit, masks, sample_weights=None):
-    """BCE imagem-nível da cabeça de presença (termo L_pres do OPCNet)."""
+def presence_loss(
+    presence_logit, masks, sample_weights=None, targets=None, pos_weight=None
+):
+    """BCE imagem-nível da cabeça de presença (termo L_pres do OPCNet).
+
+    ``targets`` explícitos (tensor float, um por imagem) vencem a
+    derivação pela máscara; valor < 0 numa posição = derivar da máscara
+    naquela posição. É o caminho do pool de presença (Rodada 2): frames
+    reais rotulados só com has_paper, cuja máscara é toda IGNORE —
+    derivar dela diria "ausente" até para os controles positivos.
+    ``pos_weight`` repassa ao BCEWithLogits (peso do termo positivo):
+    com a dieta dominada por positivos (SmartDoc é 100% presença), ele
+    devolve voz aos negativos sem mudar a amostragem.
+    """
     import torch
     import torch.nn.functional as F
 
-    targets = presence_targets(masks)
+    if targets is None:
+        targets = presence_targets(masks)
+    else:
+        targets = torch.as_tensor(
+            targets, dtype=presence_logit.dtype, device=presence_logit.device
+        )
+        if bool((targets < 0).any()):
+            derived = presence_targets(masks)
+            targets = torch.where(targets >= 0, targets, derived)
+    pw = None
+    if pos_weight is not None:
+        pw = torch.as_tensor(
+            [float(pos_weight)], dtype=presence_logit.dtype, device=presence_logit.device
+        )
     per_sample = F.binary_cross_entropy_with_logits(
-        presence_logit, targets, reduction="none"
+        presence_logit, targets, reduction="none", pos_weight=pw
     )
     if sample_weights is None:
         return per_sample.mean()
@@ -474,6 +499,46 @@ class WeightEMA:
             for k, v in model.state_dict().items():
                 if k in backup:
                     v.copy_(backup[k])
+
+
+def _make_augmentation():
+    """Compose de augmentation da config (geométrica idêntica em imagem
+    e máscara; fotométrica só na imagem; máscara sempre nearest)."""
+    import albumentations as A
+
+    try:
+        return A.Compose(
+            [
+                A.HorizontalFlip(p=0.5),
+                A.Affine(
+                    scale=(0.9, 1.1),
+                    rotate=(-15, 15),
+                    mask_interpolation=cv2.INTER_NEAREST,
+                    p=0.5,
+                ),
+                A.Perspective(
+                    scale=(0.02, 0.06),
+                    mask_interpolation=cv2.INTER_NEAREST,
+                    p=0.2,
+                ),
+                A.RandomBrightnessContrast(
+                    brightness_limit=0.2, contrast_limit=0.2, p=0.3
+                ),
+                A.GaussNoise(std_range=(0.01, 0.05), p=0.2),
+                A.GaussianBlur(blur_limit=(3, 5), p=0.2),
+                A.HueSaturationValue(
+                    hue_shift_range=(-8, 8),
+                    sat_shift_range=(-12, 12),
+                    val_shift_range=(-12, 12),
+                    p=0.2,
+                ),
+            ]
+        )
+    except ImportError as exc:
+        raise RuntimeError(
+            "albumentations é obrigatório para reproduzir as augmentations "
+            "definidas em training/config.json; instale training/requirements.txt"
+        ) from exc
 
 
 def build_dataset(
@@ -538,43 +603,7 @@ def build_dataset(
         )
     elif cache_mode != "none":
         raise ValueError(f"cache_mode desconhecido: {cache_mode!r}")
-    aug = None
-    if augment:
-        try:
-            import albumentations as A
-
-            aug = A.Compose(
-                [
-                    A.HorizontalFlip(p=0.5),
-                    A.Affine(
-                        scale=(0.9, 1.1),
-                        rotate=(-15, 15),
-                        mask_interpolation=cv2.INTER_NEAREST,
-                        p=0.5,
-                    ),
-                    A.Perspective(
-                        scale=(0.02, 0.06),
-                        mask_interpolation=cv2.INTER_NEAREST,
-                        p=0.2,
-                    ),
-                    A.RandomBrightnessContrast(
-                        brightness_limit=0.2, contrast_limit=0.2, p=0.3
-                    ),
-                    A.GaussNoise(std_range=(0.01, 0.05), p=0.2),
-                    A.GaussianBlur(blur_limit=(3, 5), p=0.2),
-                    A.HueSaturationValue(
-                        hue_shift_range=(-8, 8),
-                        sat_shift_range=(-12, 12),
-                        val_shift_range=(-12, 12),
-                        p=0.2,
-                    ),
-                ]
-            )
-        except ImportError as exc:
-            raise RuntimeError(
-                "albumentations é obrigatório para reproduzir as augmentations "
-                "definidas em training/config.json; instale training/requirements.txt"
-            ) from exc
+    aug = _make_augmentation() if augment else None
 
     class SegDataset(Dataset):
         def __len__(self):
@@ -608,6 +637,111 @@ def build_dataset(
             return image_tensor, mask_tensor
 
     return SegDataset()
+
+
+def build_pool_dataset(pool_dir, cfg, augment=False):
+    """Dataset do POOL DE PRESENÇA (Rodada 2): frames reais rotulados só
+    com has_paper (labels.csv: file, has_paper), SEM máscara de
+    segmentação. Cada item devolve (imagem, máscara toda IGNORE, peso
+    1.0, alvo de presença explícito): a loss de segmentação se anula
+    sozinha (nenhum pixel válido — ver combined_loss/sample_is_valid)
+    e só a cabeça de presença aprende com estes frames. É o remédio
+    medido da Rodada 1: a cabeça convergiu (presence_loss 0,003) sobre
+    negativos SINTÉTICOS e não transferiu pra mesa real (mediana 0,9993
+    nas 187 cenas vazias da bancada). Negativos reais e disjuntos do
+    holdout de julgamento — absence_v1 NUNCA entra aqui.
+
+    Frames decodificados uma vez, já no tamanho do modelo, e servidos
+    da RAM: o pool é pequeno (336) mas o sampler o revisita ~18x/época.
+    """
+    import csv as _csv
+
+    import torch
+    from torch.utils.data import Dataset
+
+    pool_dir = Path(pool_dir)
+    labels_path = pool_dir / "labels.csv"
+    if not labels_path.is_file():
+        raise FileNotFoundError(f"labels.csv do pool ausente: {labels_path}")
+    rows = []
+    with labels_path.open(newline="", encoding="utf-8") as fh:
+        for row in _csv.DictReader(fh):
+            raw = str(row.get("has_paper", "")).strip().lower()
+            if raw in ("1", "true"):
+                has_paper = 1.0
+            elif raw in ("0", "false"):
+                has_paper = 0.0
+            else:
+                raise ValueError(f"has_paper ilegível na linha {row}: {raw!r}")
+            img_path = pool_dir / str(row["file"])
+            if not img_path.is_file():
+                raise FileNotFoundError(f"frame do pool ausente: {img_path}")
+            rows.append((img_path, has_paper))
+    if not rows:
+        raise ValueError(f"pool de presença vazio: {labels_path}")
+    size = cfg["model"]["input"]["height"]
+    cache = []
+    for img_path, _ in rows:
+        im = load_image_rgb(img_path)
+        cache.append(cv2.resize(im, (size, size), interpolation=cv2.INTER_LINEAR))
+    n_neg = sum(1 for _, hp in rows if hp == 0.0)
+    print(
+        f"pool de presença: {len(rows)} frames reais "
+        f"({n_neg} sem papel, {len(rows) - n_neg} com papel) de {pool_dir}"
+    )
+    aug = _make_augmentation() if augment else None
+
+    class PoolDataset(Dataset):
+        def __len__(self):
+            return len(rows)
+
+        def __getitem__(self, i):
+            image = cache[i].copy()
+            if aug is not None:
+                dummy = np.zeros(image.shape[:2], dtype=np.uint8)
+                image = aug(image=image, mask=dummy)["image"]
+            image = image.astype(np.float32) / 255.0
+            image = (image - IMAGENET_MEAN) / IMAGENET_STD
+            image = np.transpose(image, (2, 0, 1))
+            mask = np.full((size, size), IGNORE_INDEX, dtype=np.int64)
+            return (
+                torch.from_numpy(image),
+                torch.from_numpy(mask),
+                1.0,
+                float(rows[i][1]),
+            )
+
+    return PoolDataset()
+
+
+def collate_with_presence(items):
+    """Collate do treino com pool: itens de 3 campos (base) ganham alvo
+    de presença -1 (derivar da máscara); itens de 4 campos (pool) já
+    trazem o alvo explícito. Devolve (imagens, máscaras, pesos, alvos).
+    """
+    import torch
+
+    images, masks, weights, targets = [], [], [], []
+    for item in items:
+        if len(item) == 3:
+            img, mask, weight = item
+            target = -1.0
+        elif len(item) == 4:
+            img, mask, weight, target = item
+        else:
+            raise ValueError(
+                f"item de treino com {len(item)} campos (esperado 3 ou 4)"
+            )
+        images.append(img)
+        masks.append(mask)
+        weights.append(float(weight))
+        targets.append(float(target))
+    return (
+        torch.stack(images),
+        torch.stack(masks),
+        torch.tensor(weights, dtype=torch.float32),
+        torch.tensor(targets, dtype=torch.float32),
+    )
 
 
 def pair_sequence_files(split_dir):
@@ -864,6 +998,52 @@ def masked_temporal_consistency_loss(logits_a, logits_b, change):
     return diff2[stable].mean()
 
 
+def build_optimizer(model, tr):
+    """AdamW da corrida. Com ``training.presence_head_lr`` na config, a
+    cabeça de presença ganha grupo próprio com esse LR e todo o resto
+    fica com ``training.learning_rate`` — o LR DIFERENCIAL da Rodada 2:
+    a cabeça enfrenta um sinal novo (negativos reais) e precisa andar
+    10-50x mais rápido que o backbone já treinado, que só coopera
+    devagar (congelar o backbone está fora da spec: ele precisa
+    acompanhar, não travar). Sem a chave, um grupo só com o LR
+    histórico: comportamento idêntico ao de antes.
+    """
+    import torch
+
+    base_lr = float(tr["learning_rate"])
+    weight_decay = float(tr["weight_decay"])
+    head_lr = tr.get("presence_head_lr")
+    if head_lr is None:
+        return torch.optim.AdamW(
+            model.parameters(), lr=base_lr, weight_decay=weight_decay
+        )
+    head_params, backbone_params = [], []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        (head_params if "presence_head" in name else backbone_params).append(param)
+    if not head_params:
+        print(
+            "AVISO: presence_head_lr configurado mas o modelo não tem "
+            "parâmetros presence_head; usando um grupo só.",
+            file=sys.stderr,
+        )
+        return torch.optim.AdamW(
+            model.parameters(), lr=base_lr, weight_decay=weight_decay
+        )
+    print(
+        f"LR diferencial: backbone {base_lr:g} ({len(backbone_params)} tensores) | "
+        f"cabeça de presença {float(head_lr):g} ({len(head_params)} tensores)"
+    )
+    return torch.optim.AdamW(
+        [
+            {"params": backbone_params, "lr": base_lr},
+            {"params": head_params, "lr": float(head_lr)},
+        ],
+        weight_decay=weight_decay,
+    )
+
+
 def warmup_cosine_scheduler(optimizer, total_steps, warmup_ratio):
     """LR linear warmup followed by cosine decay, stepped per optimizer update."""
     import torch
@@ -1026,7 +1206,10 @@ def probe_batch_size(
     def try_batch(bs):
         loader = DataLoader(dataset, batch_size=bs, shuffle=False, num_workers=0)
         batch = next(iter(loader))
-        if len(batch) == 3:
+        if len(batch) == 4:
+            images, masks, sample_weights, _ = batch
+            sample_weights = sample_weights.to(device)
+        elif len(batch) == 3:
             images, masks, sample_weights = batch
             sample_weights = sample_weights.to(device)
         else:
@@ -1153,6 +1336,7 @@ def train_one_epoch(
     consistency_weight=0.0,
     epoch_stats=None,
     presence_weight=0.0,
+    presence_pos_weight=None,
     hnbs_weight=0.0,
     hnbs_threshold=0.35,
     hnbs_topk_fraction=0.005,
@@ -1175,6 +1359,8 @@ def train_one_epoch(
     model.train()
     total, n = 0.0, 0
     presence_total, presence_n = 0.0, 0
+    presence_pos_sum, presence_pos_n = 0.0, 0
+    presence_neg_sum, presence_neg_n = 0.0, 0
     accumulation_steps = max(int(accumulation_steps), 1)
     num_batches = len(loader)
     pair_iter = None
@@ -1192,6 +1378,7 @@ def train_one_epoch(
         use_pair = pair_iter is not None and pair_rng.random() < pair_fraction
         change = None
         half = 0
+        presence_targets_batch = None
         if use_pair:
             try:
                 p_img_a, p_mask_a, p_img_b, p_mask_b, p_change = next(pair_iter)
@@ -1206,6 +1393,10 @@ def train_one_epoch(
             half = p_img_a.shape[0]
             sample_weights = None
             pair_batches += 1
+        elif len(batch) == 4:
+            images, masks, sample_weights, presence_targets_batch = batch
+            sample_weights = sample_weights.to(device)
+            presence_targets_batch = presence_targets_batch.to(device)
         elif len(batch) == 3:
             images, masks, sample_weights = batch
             sample_weights = sample_weights.to(device)
@@ -1244,10 +1435,32 @@ def train_one_epoch(
                 hnbs_topk_fraction=hnbs_topk_fraction,
             )
             if presence_logit is not None:
-                p_loss = presence_loss(presence_logit, masks, sample_weights)
+                p_loss = presence_loss(
+                    presence_logit,
+                    masks,
+                    sample_weights,
+                    targets=presence_targets_batch,
+                    pos_weight=presence_pos_weight,
+                )
                 loss = loss + presence_weight * p_loss
                 presence_total += float(p_loss.detach().item())
                 presence_n += 1
+                with torch.no_grad():
+                    eff_targets = presence_targets(masks)
+                    if presence_targets_batch is not None:
+                        eff_targets = torch.where(
+                            presence_targets_batch >= 0,
+                            presence_targets_batch,
+                            eff_targets,
+                        )
+                    probs = torch.sigmoid(presence_logit.detach())
+                    pos_sel = eff_targets >= 0.5
+                    if bool(pos_sel.any()):
+                        presence_pos_sum += float(probs[pos_sel].sum())
+                        presence_pos_n += int(pos_sel.sum())
+                    if bool((~pos_sel).any()):
+                        presence_neg_sum += float(probs[~pos_sel].sum())
+                        presence_neg_n += int((~pos_sel).sum())
             if use_pair and consistency_weight > 0.0:
                 loss = loss + consistency_weight * masked_temporal_consistency_loss(
                     logits[:half], logits[half:], change
@@ -1285,6 +1498,10 @@ def train_one_epoch(
         epoch_stats["pair_batches"] = pair_batches
         if presence_n:
             epoch_stats["presence_loss"] = presence_total / presence_n
+        if presence_pos_n:
+            epoch_stats["presence_mean_pos"] = presence_pos_sum / presence_pos_n
+        if presence_neg_n:
+            epoch_stats["presence_mean_neg"] = presence_neg_sum / presence_neg_n
     return total / n
 
 
@@ -1620,6 +1837,12 @@ def main(argv=None):
         default=None,
         help="Diretório opcional com images/ e masks/ para adicionar ao treino sintético; val/test continuam em --data-dir.",
     )
+    parser.add_argument(
+        "--presence-pool-dir",
+        default=None,
+        help="Diretório opcional do pool de presença (labels.csv + frames): "
+        "frames reais rotulados só com has_paper; treinam SÓ a cabeça de presença.",
+    )
     parser.add_argument("--out-dir", default="out")
     parser.add_argument(
         "--allow-unverified-real-train",
@@ -1733,12 +1956,17 @@ def main(argv=None):
         augment=True,
         extra_pairs=real_pairs,
         extra_sample_weight=real_loss_weight,
-        return_sample_weights=bool(real_pairs),
+        return_sample_weights=bool(real_pairs or args.presence_pool_dir),
         cache_mode=cache_mode,
         cache_cap_mb=int(tr.get("cache_cap_mb", 24576)),
     )
     val_ds = build_dataset(args.data_dir, "val", cfg, augment=False)
     test_ds = build_dataset(args.data_dir, "test", cfg, augment=False)
+    pool_ds = None
+    pool_count = 0
+    if args.presence_pool_dir:
+        pool_ds = build_pool_dataset(args.presence_pool_dir, cfg, augment=True)
+        pool_count = len(pool_ds)
     configure_fast_runtime(torch, device)
     train_pairs = synthetic_train_pairs + real_pairs
     counts = pixel_counts(train_pairs)
@@ -1784,7 +2012,12 @@ def main(argv=None):
     hnbs_weight = float(hnbs_cfg.get("weight", 0.0))
     hnbs_threshold = float(hnbs_cfg.get("threshold", 0.35))
     hnbs_topk_fraction = float(hnbs_cfg.get("topk_fraction", 0.005))
+    presence_pos_weight = pres_cfg.get("pos_weight")
+    presence_pos_weight = (
+        None if presence_pos_weight is None else float(presence_pos_weight)
+    )
     train_sampler = None
+    sampler_weights = None
     bal_cfg = tr.get("balanced_real") or {}
     if bal_cfg.get("enabled"):
         if not real_pairs:
@@ -1800,11 +2033,6 @@ def main(argv=None):
         n_syn, n_real = len(synthetic_train_pairs), len(real_pairs)
         w_real = (target_real / (1.0 - target_real)) * (n_syn / n_real)
         sampler_weights = [1.0] * n_syn + [w_real] * n_real
-        from torch.utils.data import WeightedRandomSampler
-
-        train_sampler = WeightedRandomSampler(
-            sampler_weights, num_samples=len(sampler_weights), replacement=True
-        )
         print(
             f"amostragem balanceada: alvo {target_real:.0%} real/lote | "
             f"peso por amostra real {w_real:.2f} (sintética 1,0) | "
@@ -1815,9 +2043,35 @@ def main(argv=None):
             f"modelo C: presence_weight {presence_weight} | hnbs_weight "
             f"{hnbs_weight} (limiar {hnbs_threshold}, top {hnbs_topk_fraction:.1%})"
         )
+    if pool_ds is not None:
+        pool_target = float(tr.get("presence_pool_fraction", 0.30))
+        if not 0.0 < pool_target < 1.0:
+            parser.error("training.presence_pool_fraction precisa estar em (0, 1)")
+        if sampler_weights is None:
+            sampler_weights = [1.0] * len(train_ds)
+        base_sum = float(sum(sampler_weights))
+        w_pool = (pool_target / (1.0 - pool_target)) * (base_sum / pool_count)
+        sampler_weights = sampler_weights + [w_pool] * pool_count
+        print(
+            f"pool de presença na amostragem: alvo {pool_target:.0%} dos lotes | "
+            f"peso por frame do pool {w_pool:.2f} | {pool_count} frames"
+        )
+        from torch.utils.data import ConcatDataset
+
+        train_ds = ConcatDataset([train_ds, pool_ds])
+    if sampler_weights is not None:
+        from torch.utils.data import WeightedRandomSampler
+
+        train_sampler = WeightedRandomSampler(
+            sampler_weights, num_samples=len(sampler_weights), replacement=True
+        )
     if train_sampler is not None:
         train_loader = DataLoader(
-            train_ds, batch_size=batch_size, sampler=train_sampler, **dl_kwargs
+            train_ds,
+            batch_size=batch_size,
+            sampler=train_sampler,
+            collate_fn=collate_with_presence if pool_ds is not None else None,
+            **dl_kwargs,
         )
     else:
         train_loader = DataLoader(
@@ -1863,7 +2117,7 @@ def main(argv=None):
     if ema_cfg.get("enabled"):
         ema = WeightEMA(base_model, float(ema_cfg.get("decay", 0.999)))
         print(f"EMA de pesos: LIGADA (decay {ema.decay}) — best/avaliação usam EMA")
-    optimizer = torch.optim.AdamW(model.parameters(), lr=tr["learning_rate"], weight_decay=tr["weight_decay"])
+    optimizer = build_optimizer(base_model, tr)
     accumulation_steps = max(int(tr.get("gradient_accumulation_steps", 1)), 1)
     steps_per_epoch = math.ceil(len(train_loader) / accumulation_steps)
     scheduler = warmup_cosine_scheduler(
@@ -1894,6 +2148,7 @@ def main(argv=None):
             consistency_weight=tset["consistency_weight"],
             epoch_stats=epoch_stats,
             presence_weight=presence_weight,
+            presence_pos_weight=presence_pos_weight,
             hnbs_weight=hnbs_weight,
             hnbs_threshold=hnbs_threshold,
             hnbs_topk_fraction=hnbs_topk_fraction,
@@ -1905,6 +2160,9 @@ def main(argv=None):
         history_entry = {"epoch": epoch, "train_loss": loss, "val": metrics, "epoch_s": round(epoch_s, 1)}
         if "presence_loss" in epoch_stats:
             history_entry["presence_loss"] = round(epoch_stats["presence_loss"], 4)
+        for _key in ("presence_mean_pos", "presence_mean_neg"):
+            if _key in epoch_stats:
+                history_entry[_key] = round(epoch_stats[_key], 4)
         if tset["enabled"]:
             history_entry["pair_batches"] = epoch_stats.get("pair_batches", 0)
         history.append(history_entry)
@@ -1986,10 +2244,12 @@ def main(argv=None):
     final_metrics["train_source_counts"] = {
         "synthetic": len(synthetic_train_pairs),
         "real": len(real_pairs),
+        "presence_pool": pool_count,
     }
     cfg["data_sources"] = {
         "synthetic_root": str(Path(args.data_dir)),
         "real_train_root": str(Path(args.real_train_dir)) if args.real_train_dir else None,
+        "presence_pool_root": str(Path(args.presence_pool_dir)) if args.presence_pool_dir else None,
         "train_pair_counts": final_metrics["train_source_counts"],
         "validation_source": "synthetic --data-dir/val only",
         "test_source": "synthetic --data-dir/test only; evaluated once after selecting best checkpoint",
