@@ -288,7 +288,72 @@ def build_model(cfg):
     )
     if (cfg.get("presence") or {}).get("enabled"):
         model = _wrap_presence_head(model)
+    init_path = (cfg.get("training") or {}).get("init_checkpoint")
+    if init_path:
+        report = load_init_checkpoint(model, init_path)
+        print(
+            f"[init] warm start de {init_path}: {report['loaded']} tensores "
+            f"carregados, {report['fresh']} frescos (cabeca nova), "
+            f"ignorados por shape: {report['skipped_shape']}"
+        )
     return model
+
+
+def _strip_wrapped_prefix(key):
+    """Nome de tensor sem o prefixo do embrulho do modelo vivo.
+
+    O PresenceSegformer guarda o modelo base em ``self.base``: o
+    state_dict vivo tem as chaves ``base.segformer...`` /
+    ``base.decode_head...`` — mas o checkpoint do modelo antigo foi salvo
+    sem o embrulho, com as chaves nuas (``segformer...``). Casar pelo nome
+    sem o prefixo, nos dois sentidos; sem isso o warm init carrega 0
+    tensores em silêncio (rodada 1 do loop, 2026-11-07: 0/208).
+    """
+    return key[len("base."):] if key.startswith("base.") else key
+
+
+def load_init_checkpoint(model, path):
+    """Warm init parcial a partir de um checkpoint anterior.
+
+    Copia todo tensor de mesmo nome (ignorando o prefixo ``base.`` do
+    embrulho) e mesma forma; tensores novos do modelo atual (ex.: a
+    cabeca de presenca, que o checkpoint antigo nao tem) ficam com a
+    inicializacao fresca, e tensores de forma incompativel sao
+    ignorados — nunca um load estrito que derrube a corrida por causa
+    da cabeca nova. Retorna o relatorio da carga.
+    """
+    import torch
+
+    raw = torch.load(path, map_location="cpu")
+    if isinstance(raw, dict):
+        for key in ("model", "state_dict", "model_state_dict"):
+            if isinstance(raw.get(key), dict):
+                raw = raw[key]
+                break
+    raw_by_bare = {}
+    for key, value in raw.items():
+        if torch.is_tensor(value):
+            raw_by_bare.setdefault(_strip_wrapped_prefix(key), value)
+    target = model.state_dict()
+    matched = {}
+    skipped_shape = []
+    for key in target:
+        bare = _strip_wrapped_prefix(key)
+        if bare not in raw_by_bare:
+            continue
+        if raw_by_bare[bare].shape == target[key].shape:
+            matched[key] = raw_by_bare[bare]
+        else:
+            skipped_shape.append(key)
+    report = {
+        "loaded": len(matched),
+        "fresh": sum(
+            1 for key in target if _strip_wrapped_prefix(key) not in raw_by_bare
+        ),
+        "skipped_shape": skipped_shape,
+    }
+    model.load_state_dict(matched, strict=False)
+    return report
 
 
 def _wrap_presence_head(base):

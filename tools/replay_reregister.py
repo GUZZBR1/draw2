@@ -420,7 +420,7 @@ class ReplayWorker:
             if first_pass and self._identity_ecc is not None:
                 ecc_info = self._identity_ecc
             else:
-                prob, ecc_info = _ink._register_ink_probability(
+                prob, _visible, ecc_info = _ink._register_ink_probability(
                     prob, self.anchor, corners, self.ecc_reference
                 )
         self.ecc_records.append(ecc_info)
@@ -466,7 +466,7 @@ class ReplayWorker:
         self._identity_candidate = None
         self._identity_ecc = None
         if reference is not None:
-            candidate, self._identity_ecc = _ink._register_ink_probability(
+            candidate, _visible, self._identity_ecc = _ink._register_ink_probability(
                 prob, reference_corners, corners, self.ecc_reference
             )
             prior = reference > 0

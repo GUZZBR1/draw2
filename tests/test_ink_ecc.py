@@ -127,6 +127,40 @@ def test_ecc_corner_gate_uses_canonical_page_pixels_on_reduced_maps(monkeypatch)
     np.testing.assert_array_equal(aligned, obs)
 
 
+def test_visibility_follows_anchor_and_residual_warps(monkeypatch):
+    prob = smooth_page()
+    corners = np.float32([[0, 0], [850, 0], [850, 1200], [0, 1200]])
+    current = corners + np.float32([8, 0])
+    visible = np.ones(prob.shape, dtype=bool)
+    visible[100:200, 300:400] = False
+    geometry = ink._registration_matrix(corners, current, prob.shape)
+    align = np.float64([[1, 0, -14], [0, 1, 5], [0, 0, 1]])
+    anchor_visible = cv2.warpPerspective(
+        visible.astype(np.uint8), geometry, (850, 1200),
+        flags=cv2.INTER_NEAREST,
+    ) > 0
+
+    def refine(reference, observed, hand_mask=None):
+        np.testing.assert_array_equal(hand_mask, ~anchor_visible)
+        return (
+            cv2.warpPerspective(observed, align, (850, 1200), flags=cv2.INTER_LINEAR),
+            align,
+            {"ecc_ms": 1.0, "ecc_mode": "homography", "ecc_rejected": False},
+        )
+
+    monkeypatch.setattr(ink, "_refine_ink_ecc", refine)
+    _aligned, aligned_visible, _info = ink._register_ink_probability(
+        prob, corners, current, prob, visible
+    )
+    expected = cv2.warpPerspective(
+        anchor_visible.astype(np.uint8), align, (850, 1200),
+        flags=cv2.INTER_NEAREST,
+    ) > 0
+    np.testing.assert_array_equal(aligned_visible, expected)
+    # Um residuo nao pode reabrir a faixa que o registro recortou.
+    assert not aligned_visible[10, 840]
+
+
 @pytest.mark.lento
 def test_worker_refines_after_anchor_registration_and_keeps_float_reference(monkeypatch):
     monkeypatch.setattr(ink, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.001)
