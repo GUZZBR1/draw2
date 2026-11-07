@@ -8,7 +8,9 @@ manter o resto fresco e relatar os tres grupos — nunca falhar estrito.
 import sys
 from pathlib import Path
 
-import torch
+import pytest
+
+torch = pytest.importorskip("torch")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "training"))
 
