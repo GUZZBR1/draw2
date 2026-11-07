@@ -283,6 +283,114 @@ def _registration_is_identity(matrix):
     )
 
 
+def _refine_ink_ecc(reference, observed, hand_mask=None):
+    """Refina somente o residuo na grade da ancora; devolve mapa, H e custo."""
+    started = time.perf_counter()
+    identity = np.eye(3, dtype=np.float64)
+    info = {"ecc_rejected": False, "ecc_mode": "bypass"}
+
+    def finish(aligned, matrix):
+        info["ecc_ms"] = (time.perf_counter() - started) * 1000.0
+        return aligned, matrix, info
+
+    if reference is None or reference.shape != observed.shape:
+        return finish(observed, identity)
+    ref = np.asarray(reference, dtype=np.float32)
+    obs = np.asarray(observed, dtype=np.float32)
+    if hand_mask is not None:
+        ref = ref.copy()
+        obs = obs.copy()
+        ref[hand_mask > 0] = 0.0
+        obs[hand_mask > 0] = 0.0
+    if np.array_equal(ref, obs):
+        return finish(obs, identity)
+    # Massa equivalente a 64 pixels e suporte de 64 pixels: apenas
+    # seguranca numerica do otimizador, nao um limiar de identidade.
+    if (not np.isfinite(ref).all() or not np.isfinite(obs).all()
+            or float(ref.sum()) < 64.0
+            or np.count_nonzero(ref > 0.1) < 64):
+        return finish(obs, identity)
+    height, width = obs.shape
+    half_size = (width // 2, height // 2)
+    if min(half_size) < 2:
+        return finish(obs, identity)
+    ref_half = cv2.resize(ref, half_size, interpolation=cv2.INTER_AREA)
+    obs_half = cv2.resize(obs, half_size, interpolation=cv2.INTER_AREA)
+    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 100, 1e-5)
+    info["ecc_mode"] = "homography"
+    try:
+        _, estimated = cv2.findTransformECC(
+            ref_half, obs_half, np.eye(3, dtype=np.float32),
+            cv2.MOTION_HOMOGRAPHY, criteria, None, 5,
+        )
+    except cv2.error:
+        info["ecc_mode"] = "affine"
+        try:
+            _, affine = cv2.findTransformECC(
+                ref_half, obs_half, np.eye(2, 3, dtype=np.float32),
+                cv2.MOTION_AFFINE, criteria, None, 5,
+            )
+            estimated = np.vstack((affine, [0.0, 0.0, 1.0]))
+        except cv2.error:
+            info["ecc_rejected"] = True
+            return finish(obs, identity)
+    scale = np.diag([half_size[0] / width, half_size[1] / height, 1.0])
+    try:
+        full = np.linalg.inv(scale) @ estimated @ scale
+        align = np.linalg.inv(full)
+        if not np.isfinite(align).all() or abs(align[2, 2]) < 1e-12:
+            raise ValueError("homografia nao normalizavel")
+        align /= align[2, 2]
+        corners = np.array(
+            [[0, 0, 1], [width, 0, 1], [width, height, 1], [0, height, 1]],
+            dtype=np.float64,
+        )
+        projected = corners @ align.T
+        if (not np.isfinite(align).all() or np.linalg.det(align) <= 1e-6
+                or np.any(projected[:, 2] <= 1e-6)):
+            raise ValueError("homografia degenerada")
+        projected = projected[:, :2] / projected[:, 2:]
+        # A margem e medida na grade titular 850x1200, inclusive
+        # quando ferramentas/testes usam uma pagina reduzida.
+        displacement = np.linalg.norm(
+            (projected - corners[:, :2]) * [850.0 / width, 1200.0 / height],
+            axis=1,
+        )
+        if not np.isfinite(displacement).all() or displacement.max() > 55.0:
+            raise ValueError("residuo fora da margem")
+    except (np.linalg.LinAlgError, ValueError):
+        info["ecc_rejected"] = True
+        return finish(obs, identity)
+    aligned = cv2.warpPerspective(
+        obs, align, (width, height), flags=cv2.INTER_LINEAR,
+        borderValue=0.0,
+    )
+    return finish(aligned, align)
+
+
+def _register_ink_probability(prob, anchor, corners, reference, hand_mask=None):
+    """Registro existente na ancora, seguido do refinamento residual ECC."""
+    info = {"ecc_ms": 0.0, "ecc_rejected": False, "ecc_mode": "bypass"}
+    if hand_mask is not None:
+        prob = prob.copy()
+        prob[hand_mask > 0] = 0.0
+    if anchor is None or corners is None:
+        return prob, info
+    matrix = _registration_matrix(anchor, corners, prob.shape)
+    if not _registration_is_identity(matrix):
+        size = (prob.shape[1], prob.shape[0])
+        prob = cv2.warpPerspective(
+            prob, matrix, size, flags=cv2.INTER_LINEAR, borderValue=0.0,
+        )
+        if hand_mask is not None:
+            hand_mask = cv2.warpPerspective(
+                hand_mask.astype(np.uint8), matrix, size,
+                flags=cv2.INTER_NEAREST, borderValue=0,
+            )
+    prob, _align, info = _refine_ink_ecc(reference, prob, hand_mask)
+    return prob, info
+
+
 class _LayeredInkAccumulator:
     """Tinta de uma geracao em duas camadas: provisoria e confirmada.
 
@@ -476,8 +584,10 @@ class _PageCleanWorker:
     assincronia e da cadencia, nao de pular bloco.
     """
 
-    def __init__(self, page_clean):
+    def __init__(self, page_clean, hand_masker=None):
         self._page_clean = page_clean
+        self._hand_masker = hand_masker
+        self._ecc_reference = None
         self._condition = threading.Condition()
         self._thread = threading.Thread(
             target=self._work, name="draw-page-clean", daemon=True
@@ -821,7 +931,12 @@ class _PageCleanWorker:
             identity_containment = None
             identity_reference_px = None
             identity_geometry_registered = False
+            ecc_info = {"ecc_ms": 0.0, "ecc_rejected": False, "ecc_mode": "bypass"}
             try:
+                hand_mask = (
+                    None if self._hand_masker is None
+                    else self._hand_masker.mask(warped)
+                )
                 ink_prob = getattr(self._page_clean, "ink_prob", None)
                 if ink_prob is not None:
                     prob = ink_prob(warped)
@@ -829,13 +944,33 @@ class _PageCleanWorker:
                     prob = (
                         self._page_clean.ink_mask(warped) > 0
                     ).astype(np.float32)
+                pass_ended_at = time.monotonic()
+                with self._condition:
+                    if self._stopped:
+                        return
+                    if generation != self._generation:
+                        continue
+                    first_pass = generation != self._worker_generation
+                    recovering = first_pass and self._identity_reference is not None
+                    anchor = (
+                        self._identity_reference_corners if recovering
+                        else corners if first_pass else self._anchor_corners
+                    )
+                    ecc_reference = (
+                        self._ecc_reference
+                        if ink_prob is not None and (not first_pass or recovering)
+                        else None
+                    )
+                # ECC nao segura o lock que submit/poll/new_generation usam.
+                registered_prob, ecc_info = _register_ink_probability(
+                    prob, anchor, corners, ecc_reference, hand_mask
+                )
             except Exception as error:  # noqa: BLE001 - vai para o laco
                 with self._condition:
                     self._error = error
                     self._stopped = True
                     self._condition.notify_all()
                 return
-            pass_ended_at = time.monotonic()
             with self._condition:
                 if self._stopped:
                     return
@@ -853,19 +988,9 @@ class _PageCleanWorker:
                     )
                     keep_page = False
                     if identity_reference is not None:
-                        candidate = prob
+                        candidate = registered_prob
                         if identity_corners is not None and corners is not None:
                             identity_geometry_registered = True
-                            matrix = _registration_matrix(
-                                identity_corners, corners, prob.shape
-                            )
-                            if not _registration_is_identity(matrix):
-                                candidate = cv2.warpPerspective(
-                                    prob, matrix,
-                                    (prob.shape[1], prob.shape[0]),
-                                    flags=cv2.INTER_LINEAR,
-                                    borderValue=0.0,
-                                )
                         prior = identity_reference > 0
                         prior_px = int(np.count_nonzero(prior))
                         identity_reference_px = prior_px
@@ -919,36 +1044,29 @@ class _PageCleanWorker:
                             "containment_threshold": (
                                 _PAGE_IDENTITY_MIN_CONTAINMENT
                             ),
+                            **ecc_info,
                         })
                     if not keep_page:
                         self._accumulator.reset()
                         self._anchor_corners = corners
+                        self._ecc_reference = None
                     # Keep the old anchor when identity matched: all future
                     # observations remain registered into the same canvas.
                     self._identity_reference = None
                     self._identity_reference_corners = None
                     self._identity_recovery_requested = False
-                if (
-                    self._anchor_corners is not None
-                    and corners is not None
-                ):
-                    # Registro na ancora: a evidencia desta
-                    # passada e re-projetada para a grade da
-                    # primeira geometria da geracao antes do
-                    # voto, para a mesma tinta nao confirmar de
-                    # novo a cada alinhamento do quad (ver o
-                    # comentario de _REGISTRATION_IDENTITY_TOL).
-                    matrix = _registration_matrix(
-                        self._anchor_corners, corners, prob.shape
-                    )
-                    if not _registration_is_identity(matrix):
-                        prob = cv2.warpPerspective(
-                            prob,
-                            matrix,
-                            (prob.shape[1], prob.shape[0]),
-                            flags=cv2.INTER_LINEAR,
-                            borderValue=0.0,
-                        )
+                if first_pass and not keep_page:
+                    if hand_mask is not None:
+                        prob = prob.copy()
+                        prob[hand_mask > 0] = 0.0
+                else:
+                    prob = registered_prob
+                if ink_prob is not None:
+                    if (self._ecc_reference is None
+                            or self._ecc_reference.shape != prob.shape):
+                        self._ecc_reference = prob.copy()
+                    else:
+                        np.maximum(self._ecc_reference, prob, out=self._ecc_reference)
                 result = self._accumulator.add(prob)
                 if (
                     result["confirmed_changed"]
@@ -1015,6 +1133,7 @@ class _PageCleanWorker:
                 if first_pass or result["confirmed_changed"]:
                     self._telemetry_publishes += 1
                 self._telemetry_records.append({
+                    **ecc_info,
                     "generation": generation,
                     "version": self._version,
                     "page_identity_decision": identity_decision,
