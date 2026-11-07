@@ -244,6 +244,13 @@ _PAGE_IDENTITY_MIN_CONTAINMENT = 0.5
 # dois lados pela mesma tolerancia do comparador da regua.
 _IDENTITY_DILATION_KERNEL = 2 * _INK_FRONTIER_RADIUS + 1
 
+_ECC_REFINE_ENV = "DRAW_ECC_REFINE"
+
+
+def _ecc_refinement_enabled():
+    value = os.environ.get(_ECC_REFINE_ENV, "0").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
 
 # Oclusao na decisao de identidade: o recall so julga a tinta
 # anterior que a passada consegue VER (a mao sobre a pagina nao e
@@ -301,7 +308,11 @@ def _refine_ink_ecc(reference, observed, hand_mask=None):
     """Refina somente o residuo na grade da ancora; devolve mapa, H e custo."""
     started = time.perf_counter()
     identity = np.eye(3, dtype=np.float64)
-    info = {"ecc_rejected": False, "ecc_mode": "bypass"}
+    info = {
+        "ecc_rejected": False,
+        "ecc_converged": False,
+        "ecc_mode": "bypass",
+    }
 
     def finish(aligned, matrix):
         info["ecc_ms"] = (time.perf_counter() - started) * 1000.0
@@ -335,6 +346,7 @@ def _refine_ink_ecc(reference, observed, hand_mask=None):
             ref_half, obs_half, np.eye(3, dtype=np.float32),
             cv2.MOTION_HOMOGRAPHY, criteria, None, 5,
         )
+        info["ecc_converged"] = True
     except cv2.error:
         info["ecc_mode"] = "affine"
         try:
@@ -342,6 +354,7 @@ def _refine_ink_ecc(reference, observed, hand_mask=None):
                 ref_half, obs_half, np.eye(2, 3, dtype=np.float32),
                 cv2.MOTION_AFFINE, criteria, None, 5,
             )
+            info["ecc_converged"] = True
             estimated = np.vstack((affine, [0.0, 0.0, 1.0]))
         except cv2.error:
             info["ecc_rejected"] = True
@@ -381,8 +394,13 @@ def _refine_ink_ecc(reference, observed, hand_mask=None):
 
 
 def _register_ink_probability(prob, anchor, corners, reference, visible=None):
-    """Registro existente na ancora, seguido do refinamento residual ECC."""
-    info = {"ecc_ms": 0.0, "ecc_rejected": False, "ecc_mode": "bypass"}
+    """Registra na ancora; o refinamento ECC fica opt-in via ambiente."""
+    info = {
+        "ecc_ms": 0.0,
+        "ecc_rejected": False,
+        "ecc_converged": False,
+        "ecc_mode": "bypass",
+    }
     if visible is not None:
         prob = prob.copy()
         prob[~visible] = 0.0
@@ -400,6 +418,9 @@ def _register_ink_probability(prob, anchor, corners, reference, visible=None):
                 flags=cv2.INTER_NEAREST, borderValue=0,
             ) > 0
     hand_mask = None if visible is None else ~visible
+    if not _ecc_refinement_enabled():
+        info["ecc_mode"] = "disabled"
+        return prob, visible, info
     prob, align, info = _refine_ink_ecc(reference, prob, hand_mask)
     if visible is not None and not _registration_is_identity(align):
         visible = cv2.warpPerspective(
@@ -1005,7 +1026,12 @@ class _PageCleanWorker:
             identity_visible_reference_px = None
             identity_deferred = False
             identity_geometry_registered = False
-            ecc_info = {"ecc_ms": 0.0, "ecc_rejected": False, "ecc_mode": "bypass"}
+            ecc_info = {
+                "ecc_ms": 0.0,
+                "ecc_rejected": False,
+                "ecc_converged": False,
+                "ecc_mode": "bypass",
+            }
             try:
                 if visible is None and self._hand_masker is not None:
                     hand_mask = self._hand_masker.mask(warped)

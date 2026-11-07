@@ -88,12 +88,14 @@ def test_worker_mirror_matches_real_worker(monkeypatch):
 
 
 def test_worker_mirror_ecc_uses_only_confirmed_canvas(monkeypatch):
+    monkeypatch.setenv("DRAW_ECC_REFINE", "1")
     references = []
 
     def refine(reference, observed, hand_mask=None):
         references.append(None if reference is None else reference.copy())
         return observed, np.eye(3), {
-            "ecc_ms": 0.0, "ecc_rejected": False, "ecc_mode": "bypass",
+            "ecc_ms": 0.0, "ecc_rejected": False,
+            "ecc_converged": False, "ecc_mode": "bypass",
         }
 
     monkeypatch.setattr(ink_layers_module, "_refine_ink_ecc", refine)

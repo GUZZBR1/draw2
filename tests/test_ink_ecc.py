@@ -41,6 +41,7 @@ def test_ecc_direction_and_half_scale_on_smooth_probability_map():
     assert containment(aligned) > 0.90
     restored = cv2.perspectiveTransform(displaced[None], align)[0]
     assert np.max(np.linalg.norm(restored - corners, axis=1)) < 2.0
+    assert info["ecc_converged"]
     assert info["ecc_ms"] > 0
 
 
@@ -74,6 +75,7 @@ def test_ecc_exact_parameters_mask_and_affine_fallback(monkeypatch):
     expected = cv2.warpPerspective(masked, matrix, (850, 1200), flags=cv2.INTER_LINEAR)
     np.testing.assert_array_equal(aligned, expected)
     assert not info["ecc_rejected"]
+    assert info["ecc_converged"]
 
 
 @pytest.mark.parametrize("estimated", [
@@ -94,6 +96,7 @@ def test_ecc_rejects_unsafe_homography_without_affine_retry(monkeypatch, estimat
     np.testing.assert_array_equal(matrix, np.eye(3))
     np.testing.assert_array_equal(aligned, obs)
     assert info["ecc_rejected"]
+    assert info["ecc_converged"]
 
 
 def test_ecc_low_ink_bypasses_optimizer_and_failed_fallback_is_safe(monkeypatch):
@@ -103,6 +106,7 @@ def test_ecc_low_ink_bypasses_optimizer_and_failed_fallback_is_safe(monkeypatch)
     np.testing.assert_array_equal(matrix, np.eye(3))
     assert aligned is obs and info["ecc_mode"] == "bypass"
     assert not info["ecc_rejected"]
+    assert not info["ecc_converged"]
 
     def fail(*args):
         raise cv2.error("nao convergiu")
@@ -111,6 +115,7 @@ def test_ecc_low_ink_bypasses_optimizer_and_failed_fallback_is_safe(monkeypatch)
     aligned, matrix, info = ink._refine_ink_ecc(obs, np.roll(obs, 1, axis=0))
     np.testing.assert_array_equal(matrix, np.eye(3))
     assert info["ecc_rejected"] and info["ecc_mode"] == "affine"
+    assert not info["ecc_converged"]
 
 
 @pytest.mark.parametrize("side", ["reference", "observed"])
@@ -147,6 +152,7 @@ def test_ecc_runs_with_exactly_500_active_pixels_in_both_maps(monkeypatch):
     _aligned, matrix, info = ink._refine_ink_ecc(ref, obs)
     assert calls == [cv2.MOTION_HOMOGRAPHY]
     assert info["ecc_mode"] == "homography" and not info["ecc_rejected"]
+    assert info["ecc_converged"]
     np.testing.assert_array_equal(matrix, np.eye(3))
 
 
@@ -181,6 +187,7 @@ def test_ecc_corner_gate_uses_canonical_page_pixels_on_reduced_maps(monkeypatch)
 
 
 def test_visibility_follows_anchor_and_residual_warps(monkeypatch):
+    monkeypatch.setenv("DRAW_ECC_REFINE", "1")
     prob = smooth_page()
     corners = np.float32([[0, 0], [850, 0], [850, 1200], [0, 1200]])
     current = corners + np.float32([8, 0])
@@ -198,7 +205,12 @@ def test_visibility_follows_anchor_and_residual_warps(monkeypatch):
         return (
             cv2.warpPerspective(observed, align, (850, 1200), flags=cv2.INTER_LINEAR),
             align,
-            {"ecc_ms": 1.0, "ecc_mode": "homography", "ecc_rejected": False},
+            {
+                "ecc_ms": 1.0,
+                "ecc_mode": "homography",
+                "ecc_rejected": False,
+                "ecc_converged": True,
+            },
         )
 
     monkeypatch.setattr(ink, "_refine_ink_ecc", refine)
@@ -214,8 +226,69 @@ def test_visibility_follows_anchor_and_residual_warps(monkeypatch):
     assert not aligned_visible[10, 840]
 
 
+def test_anchor_registration_keeps_ecc_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("DRAW_ECC_REFINE", raising=False)
+    corners = np.float32([[0, 0], [84, 0], [84, 119], [0, 119]])
+    current = corners + np.float32([2, 0])
+    prob = np.arange(120 * 85, dtype=np.float32).reshape(120, 85)
+    reference = np.ones_like(prob)
+
+    def unexpected_ecc(*_args):
+        pytest.fail("ECC deve permanecer desligado por padrao")
+
+    monkeypatch.setattr(ink, "_refine_ink_ecc", unexpected_ecc)
+    registered, visible, info = ink._register_ink_probability(
+        prob, corners, current, reference
+    )
+    expected = cv2.warpPerspective(
+        prob, ink._registration_matrix(corners, current, prob.shape),
+        (85, 120), flags=cv2.INTER_LINEAR, borderValue=0.0,
+    )
+    np.testing.assert_array_equal(registered, expected)
+    assert visible is None
+    assert info == {
+        "ecc_ms": 0.0,
+        "ecc_rejected": False,
+        "ecc_converged": False,
+        "ecc_mode": "disabled",
+    }
+
+
+def test_anchor_registration_refines_only_with_explicit_environment_opt_in(monkeypatch):
+    monkeypatch.setenv("DRAW_ECC_REFINE", "1")
+    corners = np.float32([[0, 0], [84, 0], [84, 119], [0, 119]])
+    current = corners + np.float32([2, 0])
+    prob = np.ones((120, 85), dtype=np.float32)
+    reference = np.full_like(prob, 0.5)
+    calls = []
+
+    def refine(ref, observed, hand_mask=None):
+        calls.append((ref.copy(), observed.copy(), hand_mask))
+        return observed, np.eye(3), {
+            "ecc_ms": 2.0,
+            "ecc_mode": "homography",
+            "ecc_rejected": False,
+            "ecc_converged": True,
+        }
+
+    monkeypatch.setattr(ink, "_refine_ink_ecc", refine)
+    registered, _visible, info = ink._register_ink_probability(
+        prob, corners, current, reference
+    )
+    expected = cv2.warpPerspective(
+        prob, ink._registration_matrix(corners, current, prob.shape),
+        (85, 120), flags=cv2.INTER_LINEAR, borderValue=0.0,
+    )
+    np.testing.assert_array_equal(calls[0][0], reference)
+    np.testing.assert_array_equal(calls[0][1], expected)
+    assert calls[0][2] is None
+    np.testing.assert_array_equal(registered, expected)
+    assert info["ecc_converged"] and info["ecc_mode"] == "homography"
+
+
 @pytest.mark.lento
 def test_worker_refines_after_anchor_registration_against_confirmed_canvas(monkeypatch):
+    monkeypatch.setenv("DRAW_ECC_REFINE", "1")
     monkeypatch.setattr(ink, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.001)
     monkeypatch.setattr(ink, "_IDLE_PROBE_SECONDS", 0.001)
     ref = smooth_page()
