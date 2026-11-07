@@ -1,10 +1,12 @@
 # F-07 B4 — minuta de calibração instrumental e transferência ao pré-portão
 
-**Status: texto revisado e autorizado para espelhamento; ainda não executável.**
-Nenhuma calibração, validação, célula de movimento, grade ou confirmação B4 está
-autorizada. O runner B4 ainda não foi implementado/congelado; não existe limiar
-B4 medido. Antes de qualquer dado novo: implementar e testar o runner privado,
-congelar seu hash e obter autorização explícita para a fase correspondente.
+**Status: revisão de escopo em dois perfis; execução continua desautorizada.**
+Nenhuma calibração, validação, diagnóstico raster, célula de movimento, grade ou
+confirmação B4 está autorizada. O runner privado foi validado apenas com testes
+sintéticos e congelado no SHA-256
+`1613fa1658bf9a0dac112ea336e345561ef1bd26034ba1c53f81ee6d44e17243`; não existe
+limiar B4 medido. A revisão do espelhamento ainda precisa ser integrada antes de
+qualquer dado novo.
 
 ## 1. O que a B3 permite concluir — e o que não permite
 
@@ -60,15 +62,25 @@ O resultado será um piso **condicional ao simulador/configuração**, não uma
 estimativa do ruído de uma webcam real.
 
 Unidade estatística: **bloco independente de ruído**, não cada passada correlata.
-512 blocos de calibração e 512 blocos reservados de validação. Não selecionar
-blocos/cantos por resultados favoráveis. Uma execução completa por fase; sem
-acrescentar amostras, repetir seeds ou escolher outra seed se a regra reprovar.
+Usar **581 blocos por perfil** na calibração e 581 por perfil na validação
+reservada (1.162 por fase). Essa quantidade mantém, com quatro distribuições
+perfil×estrato, pelo menos a cobertura simultânea declarada na minuta original.
+Não selecionar blocos/cantos por resultados favoráveis. Uma execução completa
+por fase; sem acrescentar amostras, repetir seeds ou escolher outra seed se a
+regra reprovar.
 
-Perfil primário: página estática, sinal `presente_mexendo` (mão presente/ativa,
-sem movimento físico da página), para não transformar descanso em ausência de
-amostras. É calibração do instrumento em regime ativo, não validação de todos
-os regimes de mão. `ausente`/`presente_parada` estáticos podem ser vacuosos;
-não se fabricam passadas nem se declara resolvida sua disponibilidade.
+Perfis: (1) `presente_mexendo`, página verdadeira estática e sinal de mão
+presente/ativo; (2) `presente_parada`, página estática e mão presente sem sinal
+de movimento. A primeira mantém o cronograma de 32 warmups + 64 medições. A
+segunda usa uma passada ordinária, reset instrumental na cópia-sombra e a
+próxima passada imediata. O worker real pausa naturalmente após 1 s parado;
+não simular movimento, desabilitar descanso nem inventar warmups. O bloco
+estacionário mede diretamente o evento usado pelo H1. `ausente` e outros
+regimes continuam fora do escopo.
+
+Um único estado-base estático, criado com `sem_sinal`, é restaurado para os dois
+perfis; cada bloco verifica o mesmo hash do estado, Q e canvas. O sinal de mão
+de cada perfil só é aplicado ao iniciar a respectiva sequência medida.
 
 O driver deve usar os mesmos cantos pós-tracker/mediana que chegariam à passada,
 FPS 30, detecção 36,7 ms e cadência ativa original. Não usar diretamente ruído
@@ -81,27 +93,26 @@ se isso não for possível, fica bloqueado até revisão, sem substituir o model
 - Restaurar o mesmo estado-base, obtido do cache real; manter o quadrilátero
   verdadeiro Q constante. Independência vem dos blocos de ruído, não de cenas
   reais diferentes. Registrar Q, shape da página, estado inicial e hash.
-- Aquecer por 32 passadas efetivas, preservando tracker/mediana originais.
-- Observar 64 passadas efetivas, registrando também frame, tempo de cena e
-  proveniência de cada canto. Se não existirem 64 em 6.000 frames, marcar bloco
-  incompleto e interromper a fase; não omitir o bloco nem preencher amostras.
-- Estrato `ordinary`: máximo de excursão nas passadas 1–32 com âncora fixa.
-- Após medir a passada 32, executar uma única reancoragem-noop **instrumental**:
+- Para `presente_mexendo`, aquecer 32 passadas efetivas e observar 64; registrar
+  frame, tempo de cena e proveniência de cada canto. Estrato `ordinary`: máximo
+  das passadas 1–32; `post_noop`: máximo das passadas 33–64.
+- Para `presente_parada`, sem warmup artificial, observar uma passada ordinária
+  (estrato `ordinary`) e então executar uma única reancoragem-noop **instrumental**:
   resetar âncora/pontos/history de uma cópia-sombra para os cantos atuais.
   Não induzir uma decisão de movimento, votar, re-warpar confirmado, abrir
-  geração ou alterar estado de produção. Q continua constante.
-- Estrato `post_noop`: máximo das passadas 33–64. A passada 33 (a imediatamente
-  seguinte) é reportada separadamente, mas não escolhida retrospectivamente.
-- Guardar todas as excursões em precisão completa, sem arredondar antes de
-  calcular o corte. Abstenção/timeout/vacuidade de qualquer observador adicional
-  devem ser registrados, nunca usados para censurar excursões grandes.
+  geração ou alterar estado de produção. Q continua constante. A única passada
+  seguinte é a observação `post_noop`.
+- Em ambos os perfis, preservar tracker/mediana/cadência reais, guardar todas as
+  excursões sem arredondar antes de T e interromper diante de bloco incompleto.
+  O teto continua 6.000 frames por bloco; nunca omitir ou preencher amostras.
 
-N0 repete o mesmo cronograma em ruído zero; NG usa sigma original de 1 px de
+N0 permanece determinístico, em ruído zero. NG usa sigma original de 1 px de
 câmera. Seed de cada bloco:
-`SeedSequence([20261107, 4, phase_id, block_id])` com `PCG64`;
-`phase_id=0` sanidade, `1` calibração, `2` validação reservada,
-`3` futuro pré-portão (bloco 0). N0 tem 1 bloco, as fases 1 e 2 têm 512 cada.
-Nenhuma seed B3 será escolhida por sua excursão observada.
+`SeedSequence([20261107, 4, profile_id, phase_id, block_id])` com `PCG64`;
+`profile_id=0` para `presente_mexendo`, `1` para `presente_parada`; `phase_id=0`
+sanidade (perfil 0), `1` calibração, `2` validação reservada e `3` futuro
+pré-portão (perfil 1, bloco 0). Nenhuma seed B3 será escolhida por sua excursão
+observada.
 
 ## 5. Regra do corte: medir, congelar, só então validar
 
@@ -110,23 +121,26 @@ descritivos usam nearest-rank: valor ordenado na posição `ceil(p*n)`.
 Para a decisão, usar os **máximos por bloco**, preservando a dependência temporal:
 
 ```
-Z[b, ordinary]  = max(e[b, 1:32])
-Z[b, post_noop] = max(e[b, 33:64])
-T = nextafter(max_b,s Z[b,s], +infinity)
+Z[b, p, ordinary]  = max(excursões ordinárias do perfil p no bloco b)
+Z[b, p, post_noop] = max(excursões após o no-op do perfil p no bloco b)
+T = nextafter(max_{b,p,s} Z[b,p,s], +infinity)
 ```
 
 T é um limite superior conservador para o p99 dos máximos de bloco, não o
-p99 empírico das passadas nem `1,993 + margem`. Para 512 blocos independentes
-por estrato, a cobertura simultânea mínima para os dois p99, por union bound,
-é `1 - 2 * 0.99**512` (aproximadamente 98,84%), sob o modelo de ruído declarado.
-Isso não transforma seeds sintéticas em evidência de generalização real.
+p99 empírico das passadas nem `1,993 + margem`. Com 581 blocos independentes
+por perfil e quatro distribuições perfil×estrato, a cobertura simultânea
+mínima por union bound é `1 - 4 * 0.99**581 = 0,988355842998997` (98,8356%),
+ligeiramente acima do alvo original `1 - 2 * 0.99**512 = 0,988352046462673`
+(98,8352%). Isso não transforma seeds sintéticas em evidência de generalização
+real.
 
 Persistir T, fórmula, vetores Z, hashes e fingerprint **antes** de abrir a fase
 reservada. T fica imutável: falha na validação não autoriza recalculá-lo juntando
 calibração/validação ou alterando a fórmula.
 
-Na validação, exigir `q99(Z_validacao[:,s]) <= T` em ambos os estratos; relatar
-também contagens/proporções acima de T e incerteza por bloco. O teste da
+Na validação, exigir nearest-rank `q99(Z_validacao[:,p,s]) <= T` nos quatro
+grupos perfil×estrato; relatar também contagens/proporções acima de T e
+incerteza por bloco. O teste da
 validação é empírico; não atribuir a ele, isoladamente, a garantia estatística
 da regra de calibração. Qualquer fase incompleta ou N0 falho reprova o processo.
 
@@ -136,8 +150,9 @@ passar. Se T for menor, ainda não existe autorização automática de movimento
 
 ## 6. Decomposição linear × vizinho-mais-próximo
 
-Diagnóstico pareado pré-especificado: primeiros 8 blocos de calibração, mapas
-f28/f29/f30, passadas 1/32/33/64. Mesmos cantos/âncoras/matrizes/timestamps para
+Diagnóstico pareado pré-especificado: primeiros 8 blocos de calibração de cada
+perfil (16 no total), mapas f28/f29/f30. Usar passadas 1/32/33/64 em
+`presente_mexendo` e 1/2 em `presente_parada`. Mesmos cantos/âncoras/matrizes/timestamps para
 os quatro braços `render kernel × registration kernel`, cada kernel em
 `INTER_LINEAR`/`INTER_NEAREST`. O braço primário permanece linear/linear.
 Preservar máscara de visibilidade, bordas e atalhos de identidade originais;
@@ -160,7 +175,8 @@ alteração do envelope de 1 px do próprio algoritmo.
 Registrar verdade de cena, cantos observados, âncora e instante da reancoragem.
 Exigir que a página verdadeira esteja estática entre reancoragem e próxima
 passada, e que provider/unidades/cadência sejam compatíveis com a calibração.
-Se houver movimento verdadeiro ou mudança de contexto, marcar não comparável
+O perfil `presente_parada` está incluído diretamente na calibração. Se houver
+movimento verdadeiro ou mudança de contexto, marcar não comparável
 e parar, sem escolher uma passada posterior conveniente.
 
 Preservar os outros requisitos B3: célula não vacuosa, exatamente uma
@@ -182,9 +198,9 @@ naturais, disponibilidade do probe ou fluxo completo.
 
 Produção e F-11 (identidade, 16/24) ficam intocadas/paradas. Confirmação
 `rotate_12deg / scale_0_85` permanece reservada. Não sobrescrever B1/B2/B3.
-O protocolo (Markdown e JSON) é espelhado no repo como trilha auditável; dados
-reais, runner e saídas experimentais permanecem privados. O espelhamento não
-autoriza nenhuma execução B4.
+O protocolo (Markdown e JSON) está em revisão de espelhamento no repo; dados
+reais, runner e saídas experimentais permanecem privados. A alteração do plano
+não autoriza nenhuma execução B4.
 
 Arquivos previstos, ainda inexistentes: `instrument-calibration-v4.json`,
 `frozen-instrument-threshold-v4.json`, `instrument-validation-v4.json`,
@@ -196,8 +212,15 @@ da fase e ausência de output anterior.
 
 Fontes: código e JSON já existentes em arquivos locais; nenhuma consulta SQL,
 nova distribuição ou experimento real foi executado para preparar esta minuta.
+Runner V4: 16 smoke tests sintéticos passaram; nenhum cache foi carregado e
+nenhuma fase B4 foi executada. Calibração, validação, raster, H1, grade e
+confirmação permanecem desautorizadas. `mirror_approved` reflete a autorização
+do usuário para espelhar o protocolo; a PR desta revisão ainda aguarda merge.
 
+- CI integrada: https://github.com/santleme/draw/pull/41
 - PR #42 integrado: https://github.com/santleme/draw/pull/42
+- PR #43 integrado: https://github.com/santleme/draw/pull/43
 - Resultado B3 SHA-256: `d08b9430dc8b05188a30532a4cf9fb3865ca3c3d5facb7c22cfa53afa2ff1373`.
 - Harness V3 SHA-256: `3c83d3fc8098bf211df2669bed969a9daa958a40a57ff093d8b9d29f98ea11ad`.
+- Runner V4 privado SHA-256: `1613fa1658bf9a0dac112ea336e345561ef1bd26034ba1c53f81ee6d44e17243`.
 - B3 continua reprovada; seu corte e sua autorização não foram reabertos.

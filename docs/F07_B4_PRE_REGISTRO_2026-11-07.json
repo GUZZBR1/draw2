@@ -2,7 +2,7 @@
   "protocol_id": "F-07-B4-instrument-floor-calibration",
   "version": 4,
   "title": "Geometry-noise floor calibration before any B4 movement cell",
-  "status": "text_reviewed_mirror_approved_runner_pending",
+  "status": "runner_frozen_pending_authorization",
   "created_utc": "2026-11-07",
   "purpose": "Estimate a conservative, instrument-conditional threshold from frozen static cache replays, separate geometry from raster kernels, then require a separately authorized single-cell preflight. This is not a grid or production test.",
   "prior_b3": {
@@ -29,8 +29,8 @@
     "runner_review_and_separate_execution_authorization_required": true
   },
   "runner": {
-    "path": "motion_gate_experiment_v4.py (not yet implemented)",
-    "sha256": null,
+    "path": "motion_gate_experiment_v4.py (private frozen candidate; no stage execution authorized)",
+    "sha256": "1613fa1658bf9a0dac112ea336e345561ef1bd26034ba1c53f81ee6d44e17243",
     "fingerprint_required": true,
     "absent_outputs_required_before_start": [
       "instrument-calibration-v4.json",
@@ -39,7 +39,7 @@
       "raster-diagnostic-v4.json",
       "preflight-v4.json"
     ],
-    "fail_closed": "The runner must reject draft/false authorization, mismatched hashes/fingerprint, missing cache entries, repeated outputs, incomplete blocks, failed N0, failed holdout, T >= 3 page-grid px, and any request to sweep/confirm without separate authorization."
+    "fail_closed": "The runner must reject a false mirror approval or stage authorization, mismatched hashes/fingerprint, missing cache entries, repeated outputs, incomplete profile blocks, failed N0, failed holdout, T >= 3 page-grid px, and any request to sweep/confirm without separate authorization."
   },
   "questions": {
     "N0_numeric_identity": "Do identical corners with zero detector noise and an exact no-op reset produce excursion <= 0.001 page px?",
@@ -65,30 +65,52 @@
     "detector_noise_sigma_camera_px": 1.0,
     "fps": 30,
     "detection_latency_ms": 36.7,
-    "hand_profile": "presente_mexendo (hand-present/active sampling signal), while true page geometry remains static.",
-    "external_validity": "T applies only to this frozen simulated corner provider, detector-noise model, tracker/median, page shape and cadence. It is not a measured webcam floor or an automatic threshold for other hand/rest strata."
+    "hand_profiles": ["presente_mexendo", "presente_parada"],
+    "external_validity": "T applies only to these two frozen simulated corner-provider profiles, detector-noise model, tracker/median, page shape and cadence. The moving profile uses 32 warmups and 64 measured passes per block; the stationary profile uses one ordinary pass and its immediate post-no-op pass because the real worker naturally rests. T is not a measured webcam floor or an automatic threshold for other hand/rest strata."
   },
   "sampling": {
     "unit": "One independent PCG64 detector-noise seed block; passes within a block are dependent and are not counted as independent samples.",
-    "block_seed": "SeedSequence([20261107, 4, phase_id, block_id]); phase_id=0 N0, 1 calibration, 2 held-out validation, 3 reserved future preflight block 0.",
+    "block_seed": "SeedSequence([20261107, 4, profile_id, phase_id, block_id]); profile_id=0 presente_mexendo, 1 presente_parada; phase_id=0 N0 (profile 0), 1 calibration, 2 held-out validation, 3 reserved future preflight.",
     "blocks": {
       "N0_noiseless": 1,
-      "calibration_per_block_max_stratum": 512,
-      "validation_per_block_max_stratum": 512,
-      "raster_diagnostic_blocks": 8
+      "calibration_per_profile": 581,
+      "calibration_total": 1162,
+      "validation_per_profile": 581,
+      "validation_total": 1162,
+      "raster_per_profile": 8,
+      "raster_total": 16
+    },
+    "max_simulated_frames_per_block": 6000,
+    "profiles": {
+      "presente_mexendo": {
+        "profile_id": 0,
+        "moving_signal": true,
+        "warmup_passes": 32,
+        "ordinary_passes": 32,
+        "post_noop_passes": 32,
+        "raster_passes": [1, 32, 33, 64]
+      },
+      "presente_parada": {
+        "profile_id": 1,
+        "moving_signal": false,
+        "warmup_passes": 0,
+        "ordinary_passes": 1,
+        "post_noop_passes": 1,
+        "raster_passes": [1, 2]
+      }
     },
     "state_per_geometry_block": [
       "Restore the same hashed static real-cache base and fixed true quad Q.",
-      "Warm up the original tracker/median for 32 effective passes.",
-      "Record 64 effective passes, all corners, pass indices, simulation time and state provenance.",
-      "After measuring pass 32, perform one instrumental no-op reset on a shadow copy only; do not alter the app, canvas, gate decision, confirmed map, votes, or generation.",
-      "If 64 effective passes are not delivered within 6000 simulated frames, mark the block incomplete and stop the phase; never backfill or discard it."
+      "Use the warmup, ordinary and post-no-op pass counts frozen for the selected profile; do not synthesize stationary-profile warmups.",
+      "After the last ordinary pass, perform one instrumental no-op reset on a shadow copy only; do not alter the app, canvas, gate decision, confirmed map, votes, or generation.",
+      "Record every profile-specific pass, all corners, pass indices, simulation time and state provenance.",
+      "If all profile-specific passes are not delivered within 6000 simulated frames, mark the block incomplete and stop the phase; never backfill or discard it."
     ],
     "strata": {
-      "ordinary": "Per-block max(e[1:32]) against the fixed pre-reset anchor.",
-      "post_noop": "Per-block max(e[33:64]) after the shadow reset; report e[33] separately as the immediately-next-pass diagnostic."
+      "ordinary": "Per-block max of the profile's preregistered ordinary passes against the fixed pre-reset anchor; presente_parada contributes one pass.",
+      "post_noop": "Per-block max of the profile's preregistered passes after the shadow reset; presente_parada contributes exactly the immediate next pass."
     },
-    "vacuity": "No pass admitted by the frozen corner provider means incomplete/inconclusive, not a fabricated observation. Other hand/rest profiles are not inferred from this active-signal stratum."
+    "vacuity": "No pass admitted by the frozen corner provider means incomplete/inconclusive, not a fabricated observation. No synthetic movement or rest bypass is allowed for presente_parada. Other hand/rest profiles are not inferred."
   },
   "N0": {
     "noise_sigma": 0.0,
@@ -97,27 +119,31 @@
     "decision": "Any value above 0.001 px or missing evidence stops the calibration; do not relax this numeric sanity check from observed results."
   },
   "threshold": {
-    "calibration_statistic": "Z[b,s] is the maximum excursion within independent noise block b and stratum s.",
-    "freeze_rule": "T = nextafter(max(Z[b,s] over all 512 calibration blocks and both strata), +infinity).",
-    "coverage_claim": "If the 512 seed blocks are independent and representative under the frozen simulator, the maximum is an upper tolerance bound for the p99 block-max in each stratum with simultaneous coverage >= 1 - 2*(0.99**512) = 0.9883520464626726, by union bound/order-statistic argument. This is conditional to the simulator, not a real-camera guarantee.",
-    "report_only_quantiles": "Nearest-rank ceil(p*n) for p50/p90/p95/p99 of per-pass excursions and block maxima, by stratum; these descriptive quantiles do not replace the frozen T rule.",
+    "calibration_statistic": "Z[b,p,s] is the maximum excursion within independent noise block b, profile p and ordinary/post-no-op stratum s.",
+    "freeze_rule": "T = nextafter(max(Z[b,p,s] over all 581 independent blocks per profile, both profiles p and both strata s), +infinity).",
+    "coverage_claim": "If each profile has 581 independent representative seed blocks under the frozen simulator, the maximum is an upper tolerance bound for the p99 block-max in each of four profile×stratum distributions with simultaneous coverage >= 1 - 4*(0.99**581) = 0.988355842998997. This preserves the previous two-stratum target 1 - 2*(0.99**512) = 0.9883520464626726, by union bound/order-statistic argument. This is conditional to the simulator, not a real-camera guarantee.",
+    "report_only_quantiles": "Nearest-rank ceil(p*n) for p50/p90/p95/p99 of per-pass excursions and block maxima, by profile and stratum; these descriptive quantiles do not replace the frozen T rule.",
+    "resolution_target_page_px": 3.0,
     "threshold_value_page_px": null,
     "threshold_must_be_frozen_before_validation": true,
     "no_posthoc_margin_or_pooling": true,
     "resolution_stop": "If T >= 3 page-grid px, instrument resolution is insufficient for a 3 px target; stop. Do not widen the algorithm envelope or select a different metric."
   },
   "held_out_validation": {
-    "seeds": "phase_id=2, block_id 0..511, unavailable to calibration/fitting.",
-    "binary_rule": "For each of ordinary and post_noop, nearest-rank q99 of the 512 held-out block maxima must be <= the previously frozen T.",
-    "report": "Counts and fractions of block maxima above T, empirical quantiles and interval/uncertainty by block and stratum.",
-    "failure": "Incomplete blocks, failed N0, missing hashes, or either stratum q99 > T fails/inconclusive; no recalculating T from validation or adding seeds."
+    "seeds": "phase_id=2, profile_id 0 and 1, block_id 0..580, unavailable to calibration/fitting.",
+    "binary_rule": "For each of ordinary and post_noop within each profile, nearest-rank q99 of 581 held-out block maxima must be <= the previously frozen T.",
+    "report": "Counts and fractions of block maxima above T, empirical quantiles and interval/uncertainty by profile and stratum.",
+    "failure": "Incomplete profile blocks, failed N0, missing hashes, or any of the four profile×stratum q99 values > T fails/inconclusive; no recalculating T from validation or adding seeds."
   },
   "raster_decomposition": {
     "separate_authorization": "raster_diagnostic_authorized",
     "authorized": false,
-    "blocks": "The first 8 calibration blocks only, selected before execution.",
+    "blocks": "The first 8 calibration blocks within each profile, 16 total, selected before execution.",
     "maps": ["f28", "f29", "f30"],
-    "passes": [1, 32, 33, 64],
+    "passes_by_profile": {
+      "presente_mexendo": [1, 32, 33, 64],
+      "presente_parada": [1, 2]
+    },
     "factorial": {
       "render_kernel": ["INTER_LINEAR", "INTER_NEAREST"],
       "registration_kernel": ["INTER_LINEAR", "INTER_NEAREST"],
@@ -133,7 +159,7 @@
     "authorized": false,
     "cell": "translate_small / presente_parada / Config(1,3,0.8), no probe, phase_id=3 block_id=0.",
     "only_new_cutoff": "Immediate next classified-pass geometric excursion <= frozen T; do not change MotionGate's 1 px envelope, persistence ratio, window, or timeout.",
-    "comparability": "The true page quad must be static from reanchor through next classified pass and the corner-provider shape/cadence/profile must match the frozen calibration contract. Otherwise mark non-comparable/inconclusive; never choose a later pass.",
+    "comparability": "The presente_parada profile is now calibrated with one ordinary pass and its immediate next pass after a shadow no-op. The true page quad must be static from reanchor through next classified pass and the corner-provider shape/cadence/profile must match. Otherwise mark non-comparable/inconclusive; never choose a later pass.",
     "other_frozen_invariants": ["non-vacuous", "exactly one reanchor", "next pass exists", "zero timeouts", "confirmed hash unchanged", "zero generations", "zero confirmed pixel additions/losses outside tolerance"],
     "outcome": "Failure stops. Success opens no grid, confirmation, or production change; those need separate complete preregistration and approval."
   },
@@ -154,6 +180,6 @@
     "B3_authorized_preflight_protocol_sha256": "70266c96665c9a93bda9feea2c74c10a7e2926d9f32c8c8804afa7d40eeb72a1",
     "B3_protocol_fingerprint_sha256": "b19a0a3b8c6596c79750b4035f0aba623361b34339f4ad7912c1e57de7674e5d",
     "repo_main_head_at_draft": "ad15cd87f33453cc24f25c0d6e1749a759a56293",
-    "v4_runner_sha256": null
+    "v4_runner_sha256": "1613fa1658bf9a0dac112ea336e345561ef1bd26034ba1c53f81ee6d44e17243"
   }
 }
