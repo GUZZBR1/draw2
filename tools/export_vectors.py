@@ -511,8 +511,8 @@ def export_vectors(bgr, mask_source="model", onnx_path=None, epsilon=1.5,
         "stroke_width_px": width_px,
         "stroke_width_mm": width_px * 0.5 * (sx + sy),
         "scale_mm_per_px": (sx, sy),
-        "points_raw": int(sum(len(line["points"]) for line in raw)),
-        "points_simplified": int(sum(len(line["points"]) for line in simplified)),
+        "points_raw": int(sum(len(poly["points"]) for poly in raw)),
+        "points_simplified": int(sum(len(poly["points"]) for poly in simplified)),
     }
 
 
