@@ -38,9 +38,11 @@ A escolha de modelos separados foi motivada pela interferência medida na
 linhagem T7. A memória atual registra que a hipótese de um modelo único
 (folha + tinta + mão) foi reaberta em 2026-11-06; portanto essa decisão
 de arquitetura continua em avaliação. O Modelo C de folha tem cabeça
-de presença e negativos difíceis; seu estado de execução no Kaggle não
-foi reconfirmado nesta revisão. A anotação histórica de lançamento não
-prova que ainda esteja treinando, nem há novo veredito aqui.
+de presença e negativos difíceis; foi lançado em 2026-11-06 e
+**cancelado antes do smoke** (status `cancelAcknowledged`, conferido
+na API do Kaggle no mesmo dia). Nenhum artefato foi produzido, **não
+há Modelo C em treino** e não há veredito sobre ele; relançar depende
+de decisão nova do Santleme.
 
 O registro de rollback em `FT_TEST_ROLLBACK.md` confirma que o detector
 384 foi instalado para teste, com v3 original e fine-tune fixo 512
@@ -110,7 +112,7 @@ regressão do modelo.
    e teste de mesa.
 3. Usar o mesmo vídeo rotulado para comparar hashes de detector e
    separar falha do modelo, tracker, câmera e regra de queda; incluir
-   o Modelo C quando a avaliação estiver disponível.
+   o Modelo C apenas se ele for relançado (hoje cancelado, sem artefato).
 4. Montar a régua de oclusão da mão e conectar uma máscara de
    visibilidade ao page-clean sem alterar o modelo antes de medir.
 5. Definir suporte a apagamento e a régua conjunta de remoção, traço

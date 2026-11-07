@@ -197,10 +197,13 @@ passou nas duas instâncias (bancada + mesa) até agora.
   ausência é outra doença (negativos reais + mecanismo de
   presença). O A também trouxe instabilidade na mesa dele
   (centróide saltando 156 px × ~3,7 px do incumbente).
-- **Modelo C (lançado 2026-11-06; execução não reconfirmada).** Cabeça de
+- **Modelo C (lançado e cancelado em 2026-11-06, antes do smoke; não
+  está em treino).** Cabeça de
   **presença** (segunda saída ONNX) + ênfase em negativos duros
   (HNBS), desenhado de pesquisa só-2026 (OPCNet). É o ataque direto
-  à doença da ausência. Julgamento quando pousar: bancada completa,
+  à doença da ausência. Morreu na geração de dados sintéticos, sem
+  artefato e sem veredito; quem cancelou não foi identificado. Se for
+  relançado e pousar um artefato, o julgamento é a bancada completa,
   com os portões de ausência e a estabilidade na mesa como
   perguntas decisivas.
 - **Desafiantes prontos (régua de 2026-11-05, laboratório).** SAM 2.1
@@ -368,11 +371,11 @@ história:
   o MANIFEST da main também estava atrasado; os dois foram
   corrigidos e provados por download com sha idêntico ao do PC
   dele. A Release antiga fica como rollback.
-- **Modelo C: lançamento registrado** no Kaggle (conta
-  pascalcoimbra, T4); estado atual do kernel não reconfirmado nesta
-  revisão. Não perpetuar “treinando” como estado observado. Quando
-  houver artefato, julgar ausência/estabilidade na bancada; o
-  veredito final é a mesa dele.
+- **Modelo C: lançado e cancelado em 2026-11-06** no Kaggle (conta
+  pascalcoimbra, T4), antes do smoke — status `cancelAcknowledged`
+  conferido na API. Não há Modelo C em treino e nenhum artefato foi
+  produzido. Se for relançado e houver artefato, julgar
+  ausência/estabilidade na bancada; o veredito final é a mesa dele.
 - **F-01 mitigada ao vivo; movimento F-07 ainda reprovado na régua.**
   A base de identidade em passada única é do Santleme, não da Julia;
   a alternativa arquivada é dela. A página real confirmou duplicação
