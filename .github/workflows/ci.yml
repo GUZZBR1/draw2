@@ -47,6 +47,7 @@ jobs:
             treino:
               - 'training/**'
               - 'tests/test_train_pairing.py'
+              - 'tests/test_train_init_checkpoint.py'
               - 'tests/test_efficiency_package.py'
               - 'tests/test_gen_synthetic.py'
               - 'tests/test_matformer.py'
@@ -139,6 +140,7 @@ jobs:
         run: >-
           pytest -q
           tests/test_train_pairing.py tests/test_efficiency_package.py
+          tests/test_train_init_checkpoint.py
           tests/test_gen_synthetic.py tests/test_matformer.py
           tests/test_model_c_presence_hnbs.py tests/test_temporal_training.py
 
