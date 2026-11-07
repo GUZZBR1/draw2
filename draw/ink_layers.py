@@ -318,11 +318,9 @@ def _refine_ink_ecc(reference, observed, hand_mask=None):
         obs[hand_mask > 0] = 0.0
     if np.array_equal(ref, obs):
         return finish(obs, identity)
-    # Massa equivalente a 64 pixels e suporte de 64 pixels: apenas
-    # seguranca numerica do otimizador, nao um limiar de identidade.
     if (not np.isfinite(ref).all() or not np.isfinite(obs).all()
-            or float(ref.sum()) < 64.0
-            or np.count_nonzero(ref > 0.1) < 64):
+            or np.count_nonzero(ref > 0.7) < 500
+            or np.count_nonzero(obs > 0.7) < 500):
         return finish(obs, identity)
     height, width = obs.shape
     half_size = (width // 2, height // 2)
@@ -648,7 +646,6 @@ class _PageCleanWorker:
     def __init__(self, page_clean, hand_masker=None):
         self._page_clean = page_clean
         self._hand_masker = hand_masker
-        self._ecc_reference = None
         self._condition = threading.Condition()
         self._thread = threading.Thread(
             target=self._work, name="draw-page-clean", daemon=True
@@ -1036,9 +1033,11 @@ class _PageCleanWorker:
                         self._identity_reference_corners if recovering
                         else corners if first_pass else self._anchor_corners
                     )
+                    confirmed = self._accumulator._confirmed
                     ecc_reference = (
-                        self._ecc_reference
-                        if ink_prob is not None and (not first_pass or recovering)
+                        confirmed.astype(np.float32) / 255.0
+                        if (confirmed is not None and ink_prob is not None
+                            and (not first_pass or recovering))
                         else None
                     )
                 # ECC nao segura o lock que submit/poll/new_generation usam.
@@ -1204,7 +1203,6 @@ class _PageCleanWorker:
                         if not keep_page:
                             self._accumulator.reset()
                             self._anchor_corners = corners
-                            self._ecc_reference = None
                         # Keep the old anchor when identity matched: all future
                         # observations remain registered into the same canvas.
                         self._identity_reference = None
@@ -1217,12 +1215,6 @@ class _PageCleanWorker:
                 else:
                     prob = registered_prob
                     visible = registered_visible
-                if ink_prob is not None:
-                    if (self._ecc_reference is None
-                            or self._ecc_reference.shape != prob.shape):
-                        self._ecc_reference = prob.copy()
-                    else:
-                        np.maximum(self._ecc_reference, prob, out=self._ecc_reference)
                 result = self._accumulator.add(prob, visible)
                 if (
                     result["confirmed_changed"]

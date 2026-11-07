@@ -31,10 +31,10 @@ def test_ecc_direction_and_half_scale_on_smooth_probability_map():
     assert not info["ecc_rejected"]
     assert info["ecc_mode"] == "homography"
     assert np.sqrt(np.mean((aligned - ref) ** 2)) < np.sqrt(np.mean((obs - ref) ** 2))
-    prior = cv2.dilate((ref > 0.5).astype(np.uint8), np.ones((7, 7), np.uint8)) > 0
+    prior = cv2.dilate((ref > 0.7).astype(np.uint8), np.ones((7, 7), np.uint8)) > 0
 
     def containment(prob):
-        seen = prob > 0.5
+        seen = prob > 0.7
         return np.count_nonzero(seen & prior) / np.count_nonzero(seen)
 
     assert containment(aligned) > containment(obs)
@@ -113,8 +113,61 @@ def test_ecc_low_ink_bypasses_optimizer_and_failed_fallback_is_safe(monkeypatch)
     assert info["ecc_rejected"] and info["ecc_mode"] == "affine"
 
 
+@pytest.mark.parametrize("side", ["reference", "observed"])
+@pytest.mark.parametrize("count, probability", [(0, 0.95), (499, 0.95), (500, 0.7), (2000, 0.6)])
+def test_ecc_bypasses_when_either_map_has_less_than_500_active_pixels(
+    monkeypatch, side, count, probability,
+):
+    ref = np.zeros((120, 85), dtype=np.float32)
+    obs = ref.copy()
+    ref.flat[:2000] = 0.95
+    obs.flat[2000:4000] = 0.95
+    sparse = ref if side == "reference" else obs
+    sparse.fill(0)
+    sparse.flat[:count] = probability
+    monkeypatch.setattr(cv2, "findTransformECC", lambda *a: pytest.fail("pouca tinta"))
+    aligned, matrix, info = ink._refine_ink_ecc(ref, obs)
+    np.testing.assert_array_equal(matrix, np.eye(3))
+    assert aligned is obs and info["ecc_mode"] == "bypass"
+    assert not info["ecc_rejected"]
+
+
+def test_ecc_runs_with_exactly_500_active_pixels_in_both_maps(monkeypatch):
+    ref = np.zeros((120, 85), dtype=np.float32)
+    obs = ref.copy()
+    ref.flat[:500] = 0.71
+    obs.flat[500:1000] = 0.71
+    calls = []
+
+    def ecc(*args):
+        calls.append(args[3])
+        return 0.99, np.eye(3, dtype=np.float32)
+
+    monkeypatch.setattr(cv2, "findTransformECC", ecc)
+    _aligned, matrix, info = ink._refine_ink_ecc(ref, obs)
+    assert calls == [cv2.MOTION_HOMOGRAPHY]
+    assert info["ecc_mode"] == "homography" and not info["ecc_rejected"]
+    np.testing.assert_array_equal(matrix, np.eye(3))
+
+
+@pytest.mark.parametrize("side", ["reference", "observed"])
+def test_ecc_counts_active_pixels_after_hand_exclusion(monkeypatch, side):
+    ref = np.zeros((120, 85), dtype=np.float32)
+    obs = ref.copy()
+    ref.flat[:500] = 0.95
+    obs.flat[500:1000] = 0.95
+    mask = np.zeros(ref.shape, dtype=np.uint8)
+    mask.flat[0 if side == "reference" else 500] = 255
+    monkeypatch.setattr(cv2, "findTransformECC", lambda *a: pytest.fail("tinta oculta"))
+    aligned, matrix, info = ink._refine_ink_ecc(ref, obs, mask)
+    np.testing.assert_array_equal(matrix, np.eye(3))
+    assert info["ecc_mode"] == "bypass" and not info["ecc_rejected"]
+    assert not aligned[mask > 0].any()
+
+
 def test_ecc_corner_gate_uses_canonical_page_pixels_on_reduced_maps(monkeypatch):
-    ref = cv2.resize(smooth_page(), (85, 120), interpolation=cv2.INTER_AREA)
+    ref = np.zeros((120, 85), dtype=np.float32)
+    ref[20:90, 20:65] = 0.95
     obs = np.roll(ref, 6, axis=1)
 
     def ecc(*args):
@@ -162,7 +215,7 @@ def test_visibility_follows_anchor_and_residual_warps(monkeypatch):
 
 
 @pytest.mark.lento
-def test_worker_refines_after_anchor_registration_and_keeps_float_reference(monkeypatch):
+def test_worker_refines_after_anchor_registration_against_confirmed_canvas(monkeypatch):
     monkeypatch.setattr(ink, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.001)
     monkeypatch.setattr(ink, "_IDLE_PROBE_SECONDS", 0.001)
     ref = smooth_page()
@@ -201,16 +254,22 @@ def test_worker_refines_after_anchor_registration_and_keeps_float_reference(monk
     try:
         generation = worker.new_generation()
         submit(ref, generation, corners)
+        assert calls[-1][0] is None
         shifted = cv2.warpPerspective(ref, np.float32([[1, 0, -8], [0, 1, 0], [0, 0, 1]]), (850, 1200))
         submit(shifted, generation, corners + np.float32([8, 0]))
         np.testing.assert_allclose(calls[-1][1], ref, atol=1e-5)
         assert calls[-1][0].dtype == np.float32
-        assert np.any((calls[-1][0] > 0) & (calls[-1][0] < 0.7))
+        assert not np.any(calls[-1][0])
+        confirmed = worker._accumulator._confirmed.copy()
         submit(ref, generation, corners)
+        np.testing.assert_array_equal(calls[-1][0], confirmed.astype(np.float32) / 255.0)
+        assert np.any(calls[-1][0] == 1.0)
+        assert not hasattr(worker, "_ecc_reference")
+        confirmed = worker._accumulator._confirmed.copy()
         generation = worker.new_generation(preserve_identity=True)
         submit(ref, generation, corners)
         assert worker.telemetry_snapshot()["page_identity_events"][-1]["threshold"] == 0.65
-        assert calls[-1][0] is not None
+        np.testing.assert_array_equal(calls[-1][0], confirmed.astype(np.float32) / 255.0)
         generation = worker.new_generation()
         submit(ref, generation, corners)
         assert calls[-1][0] is None

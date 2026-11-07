@@ -322,7 +322,6 @@ class ReplayWorker:
         self.identity_reference_corners = None
         self.identity_recovery_requested = False
         self.identity_events = []
-        self.ecc_reference = None
         self.ecc_records = []
         self._identity_candidate = None
         self._identity_ecc = None
@@ -412,7 +411,6 @@ class ReplayWorker:
             if not self._identity_keeps_page(prob, corners, generation):
                 self.acc.reset()
                 self.anchor = corners
-                self.ecc_reference = None
         if first_pass and self._identity_candidate is not None:
             prob = self._identity_candidate
             ecc_info = self._identity_ecc
@@ -420,14 +418,12 @@ class ReplayWorker:
             if first_pass and self._identity_ecc is not None:
                 ecc_info = self._identity_ecc
             else:
+                confirmed = self.acc._confirmed
                 prob, _visible, ecc_info = _ink._register_ink_probability(
-                    prob, self.anchor, corners, self.ecc_reference
+                    prob, self.anchor, corners,
+                    None if confirmed is None else confirmed.astype(np.float32) / 255.0,
                 )
         self.ecc_records.append(ecc_info)
-        if self.ecc_reference is None or self.ecc_reference.shape != prob.shape:
-            self.ecc_reference = prob.copy()
-        else:
-            np.maximum(self.ecc_reference, prob, out=self.ecc_reference)
         result = self.acc.add(prob)
         if (
             result["confirmed_changed"]
@@ -466,8 +462,10 @@ class ReplayWorker:
         self._identity_candidate = None
         self._identity_ecc = None
         if reference is not None:
+            confirmed = self.acc._confirmed
             candidate, _visible, self._identity_ecc = _ink._register_ink_probability(
-                prob, reference_corners, corners, self.ecc_reference
+                prob, reference_corners, corners,
+                None if confirmed is None else confirmed.astype(np.float32) / 255.0,
             )
             prior = reference > 0
             prior_px = int(np.count_nonzero(prior))

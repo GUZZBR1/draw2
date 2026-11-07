@@ -87,6 +87,35 @@ def test_worker_mirror_matches_real_worker(monkeypatch):
     assert np.array_equal(mirror.published[1] > 0, real_canvas > 0)
 
 
+def test_worker_mirror_ecc_uses_only_confirmed_canvas(monkeypatch):
+    references = []
+
+    def refine(reference, observed, hand_mask=None):
+        references.append(None if reference is None else reference.copy())
+        return observed, np.eye(3), {
+            "ecc_ms": 0.0, "ecc_rejected": False, "ecc_mode": "bypass",
+        }
+
+    monkeypatch.setattr(ink_layers_module, "_refine_ink_ecc", refine)
+    mirror = rr.ReplayWorker()
+    generation = mirror.new_generation()
+    corners = rr.base_quad(SHAPE)
+    prob = np.full(SHAPE, 0.8, dtype=np.float32)
+    for index in range(4):
+        confirmed = mirror.acc._confirmed
+        expected = None if confirmed is None else confirmed.astype(np.float32) / 255.0
+        mirror.submit((prob, corners, corners), generation)
+        assert mirror.tick((index + 1) * 10.0) is not None
+        if expected is None:
+            assert references[-1] is None
+        else:
+            np.testing.assert_array_equal(references[-1], expected)
+            assert references[-1].dtype == np.float32
+    assert not references[1].any()
+    assert np.all(references[-1] == 1.0)
+    assert not hasattr(mirror, "ecc_reference")
+
+
 def _drive_real_identity(sequence, returned):
     real = app_module._PageCleanWorker(_ProbIsWarp()).start()
     try:
