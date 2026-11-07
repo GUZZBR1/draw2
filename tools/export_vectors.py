@@ -29,7 +29,6 @@ Uso:
 
 import argparse
 import json
-import math
 import re
 import sys
 import time
@@ -493,8 +492,8 @@ def export_vectors(bgr, mask_source="model", onnx_path=None, epsilon=1.5,
         "stroke_width_px": width_px,
         "stroke_width_mm": width_px * 0.5 * (sx + sy),
         "scale_mm_per_px": (sx, sy),
-        "points_raw": int(sum(len(l["points"]) for l in raw)),
-        "points_simplified": int(sum(len(l["points"]) for l in simplified)),
+        "points_raw": int(sum(len(poly["points"]) for poly in raw)),
+        "points_simplified": int(sum(len(poly["points"]) for poly in simplified)),
     }
 
 
