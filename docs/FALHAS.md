@@ -463,11 +463,13 @@ conteúdo.
   são o registro textual daquela rodada, não uma nova execução
   nesta máquina, seguindo a distinção de `tools/judge.py` entre
   medição de laboratório e fato validado na mesa.
-  - `control_static`: **APROVADO**; `sway_negative` com a flag de
-    virada desligada (padrão real): **APROVADO**.
+  - `control_static`: **APROVADO** (4/4); `sway_negative` com a
+    flag de virada desligada (padrão real): **APROVADO** (8/8).
   - `drop_and_return`: ausências média (30 quadros) e longa
     (150 quadros), nos dois modos de ausência e em todos os regimes
     de mão, dão **`new_page` em 16/16 retornos**, somados.
+    Os eventos da rodada registram recall de decisão de
+    0,093–0,099; a rodada levou 102 s.
     Ausência curta (6 quadros) não chega à decisão: o tracker
     segura. Confirma a falha F-09/F-11 da revisão medida: a
     recuperação por identidade nunca dispara nesses retornos.
@@ -581,7 +583,10 @@ dilatada pela tolerância de fronteira.
   0,218–0,240 / 0,231–0,251; mesma página com +75% de tinta nova
   cai para containment 0,65 — com 0,5 aceita ~1,8x de crescimento
   e mantém margem de 2x contra página diferente. Sem esse teto, a
-  guarda rejeitaria a mesma página e perderia o canvas.
+  guarda rejeitaria a mesma página e perderia o canvas. Na página
+  real (2026-11-06), uma passada @0,7 cobre só ~10% do canvas
+  confirmado de 134.574 px, contra ~60% do sintético (~12.600 px)
+  — a calibragem sintética do limiar não transfere sozinha.
 - `tools/replay_reregister.py`, cenário `drop_and_turn` (guarda da
   correção): a página de conteúdo distinto que volta após o drop
   decide `new_page` em 8/8 drops efetivos na régua sintética
@@ -605,8 +610,8 @@ dilatada pela tolerância de fronteira.
   disparo falso de 2026-11-01 foi medido antes do registro e com o
   modelo rodando no quadro re-warpado; aqui o mapa é re-warpado.
 - Baseline com página real (mesma data): balanço **aprovado no
-  padrão**, mas evento de virada ligado cria **9 gerações no
-  biestável**. O resultado real substitui a leitura de que a flag
+  padrão** (8/8), mas evento de virada ligado cria **9 gerações
+  no biestável** (2/8 reprovados). O resultado real substitui a leitura de que a flag
   ligada seria segura; ela continua desligada por padrão.
 - **Buraco:** continua faltando o corpus de transições reais (troca
   real de folha × balanço/movimento sem troca, os dois em vídeo

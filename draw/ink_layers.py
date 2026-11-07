@@ -245,6 +245,20 @@ _PAGE_IDENTITY_MIN_CONTAINMENT = 0.5
 _IDENTITY_DILATION_KERNEL = 2 * _INK_FRONTIER_RADIUS + 1
 
 
+# Oclusao na decisao de identidade: o recall so julga a tinta
+# anterior que a passada consegue VER (a mao sobre a pagina nao e
+# evidencia de pagina nova). Abaixo deste minimo de tinta anterior
+# visivel, a decisao e ADIADA para a proxima passada em vez de
+# sair no chute com a pagina coberta.
+_IDENTITY_MIN_VISIBLE_FRACTION = 0.25
+_IDENTITY_MIN_VISIBLE_PX = 32
+
+# Julgamento de virada sob oclusao: a cobertura e medida sobre a
+# tinta confirmada VISIVEL; com menos que isto de tinta visivel, a
+# passada se abstem — nem avanca nem zera a sequencia de virada.
+_OCCLUSION_TURN_MIN_VISIBLE_PX = 200
+
+
 def _corners_page_matrix(corners, width, height):
     """Homografia camera->pagina de um quad, na grade do mapa.
 
@@ -353,8 +367,12 @@ class _LayeredInkAccumulator:
             np.logical_or(seen, item > self.threshold, out=seen)
         return score, hits, seen
 
-    def add(self, prob):
+    def add(self, prob, visible=None):
         prob = np.asarray(prob, dtype=np.float32)
+        if visible is not None:
+            visible = np.asarray(visible, dtype=bool)
+            if visible.shape != prob.shape:
+                visible = None
         if self._confirmed is None or self._confirmed.shape != prob.shape:
             self._confirmed = np.zeros(prob.shape, dtype=np.uint8)
             self._provisional = np.zeros(prob.shape, dtype=np.uint8)
@@ -365,23 +383,51 @@ class _LayeredInkAccumulator:
             self._turn_fired = False
         confirmed_before = self._confirmed > 0
         canvas_before = int(np.count_nonzero(self._confirmed))
-        mask_now = prob > self.threshold
+        # Oclusao: pixel que a passada nao pode ver (a mao sobre a
+        # pagina) nao entrega evidencia, nem a favor nem contra. A
+        # probabilidade dele entra zerada na janela — soma zero no
+        # escore, nao conta hit nem "visto como tinta" —, o
+        # julgamento de virada mede a cobertura so sobre a tinta
+        # confirmada visivel (ou se abstem quando quase tudo esta
+        # coberto: mao segurando a pagina nao e pagina trocada) e a
+        # camada provisoria congela onde nao ha visao (ver abaixo).
+        evidence = (
+            prob
+            if visible is None
+            else np.where(visible, prob, 0.0).astype(np.float32)
+        )
+        mask_now = evidence > self.threshold
         turn = False
         if (
             canvas_before >= _INK_TURN_MIN_CANVAS_PX
             and not self._turn_fired
         ):
-            covered = int(
-                np.count_nonzero(mask_now & confirmed_before)
-            )
-            if covered <= _INK_TURN_MAX_OVERLAP * canvas_before:
-                self._low_overlap_streak += 1
-                if self._low_overlap_streak >= _INK_TURN_PASSES:
-                    turn = True
-                    self._turn_fired = True
+            if visible is None:
+                judge_turn = True
+                turn_low = (
+                    int(np.count_nonzero(mask_now & confirmed_before))
+                    <= _INK_TURN_MAX_OVERLAP * canvas_before
+                )
             else:
-                self._low_overlap_streak = 0
-        self._window.append(prob.copy())
+                visible_confirmed = confirmed_before & visible
+                visible_px = int(np.count_nonzero(visible_confirmed))
+                judge_turn = (
+                    visible_px >= _OCCLUSION_TURN_MIN_VISIBLE_PX
+                    and visible_px >= 0.5 * canvas_before
+                )
+                turn_low = judge_turn and (
+                    int(np.count_nonzero(mask_now & visible_confirmed))
+                    <= _INK_TURN_MAX_OVERLAP * visible_px
+                )
+            if judge_turn:
+                if turn_low:
+                    self._low_overlap_streak += 1
+                    if self._low_overlap_streak >= _INK_TURN_PASSES:
+                        turn = True
+                        self._turn_fired = True
+                else:
+                    self._low_overlap_streak = 0
+        self._window.append(evidence.copy())
         score, hits, seen_as_ink = self._window_stats()
         confirmed_rule = (score >= _INK_VOTE_SCORE_STRONG) | (
             (hits >= _INK_VOTE_MIN_HITS) & (score >= _INK_VOTE_SCORE)
@@ -409,6 +455,15 @@ class _LayeredInkAccumulator:
         confirmed_now = self._confirmed > 0
         provisional_now = seen_as_ink & ~confirmed_now
         previous_provisional = self._provisional > 0
+        if visible is not None:
+            # Sem visao nao ha retracao nem estreia: o provisorio
+            # coberto fica como estava. Retrair e afirmar que a
+            # tinta sumiu — e quem esta sobre ela e a mao, nao o
+            # apagador; sem este congelamento, toda oclusao virava
+            # retracao na regua e a tinta piscava ao reaparecer.
+            provisional_now = provisional_now | (
+                previous_provisional & ~visible
+            )
         retracted = (
             previous_provisional & ~provisional_now & ~confirmed_now
         )
@@ -576,7 +631,7 @@ class _PageCleanWorker:
             self._condition.notify_all()
             return self._generation
 
-    def submit(self, warped, generation, corners=None):
+    def submit(self, warped, generation, corners=None, visible=None):
         """Entrega o warp mais recente (latest-wins).
 
         corners e o quad que retificou ESTE warp (os mesmos
@@ -586,6 +641,13 @@ class _PageCleanWorker:
         do formato (4, 2) sao tratados como ausentes — um quad
         malformado nao pode derrubar a thread da tinta; sem
         cantos, a passada entra na propria geometria.
+
+        visible e a mascara de visibilidade DESTE warp (True onde
+        a camera ve a pagina; False sob a mao), na mesma grade do
+        warp. Onde ela e False, a passada se abstem: a evidencia
+        nao vota, a virada nao julga e a decisao de identidade so
+        olha a tinta anterior visivel. Formato divergente do warp
+        e tratado como ausente, pela mesma razao dos cantos.
         """
         if corners is not None:
             try:
@@ -594,6 +656,13 @@ class _PageCleanWorker:
                 corners = None
             if corners is not None and corners.shape != (4, 2):
                 corners = None
+        if visible is not None:
+            try:
+                visible = np.asarray(visible, dtype=bool)
+            except (TypeError, ValueError):
+                visible = None
+            if visible is not None and visible.shape != warped.shape[:2]:
+                visible = None
         with self._condition:
             if self._stopped or generation != self._generation:
                 return
@@ -604,7 +673,7 @@ class _PageCleanWorker:
                 self._telemetry_replaced += 1
             self._telemetry_submits += 1
             self._pending = (
-                warped, generation, time.monotonic(), corners
+                warped, generation, time.monotonic(), corners, visible
             )
             self._condition.notify_all()
 
@@ -803,7 +872,7 @@ class _PageCleanWorker:
                         return
                 if self._pending is None:
                     continue
-                warped, generation, submitted_at, corners = (
+                warped, generation, submitted_at, corners, visible = (
                     self._pending
                 )
                 self._pending = None
@@ -820,6 +889,8 @@ class _PageCleanWorker:
             identity_recall = None
             identity_containment = None
             identity_reference_px = None
+            identity_visible_reference_px = None
+            identity_deferred = False
             identity_geometry_registered = False
             try:
                 ink_prob = getattr(self._page_clean, "ink_prob", None)
@@ -846,6 +917,14 @@ class _PageCleanWorker:
                     self._worker_generation = generation
                     self._generation_passes = 0
                     self._quiet_passes = 0
+                # A decisao de identidade roda na primeira passada e,
+                # enquanto estiver adiada por oclusao, nas seguintes
+                # — a referencia so e consumida quando a decisao sai.
+                identity_pending = (
+                    self._identity_recovery_requested
+                    and self._identity_reference is not None
+                )
+                if first_pass or identity_pending:
                     identity_reference = self._identity_reference
                     identity_corners = self._identity_reference_corners
                     identity_recovery_requested = (
@@ -854,6 +933,7 @@ class _PageCleanWorker:
                     keep_page = False
                     if identity_reference is not None:
                         candidate = prob
+                        identity_visible = visible
                         if identity_corners is not None and corners is not None:
                             identity_geometry_registered = True
                             matrix = _registration_matrix(
@@ -866,13 +946,36 @@ class _PageCleanWorker:
                                     flags=cv2.INTER_LINEAR,
                                     borderValue=0.0,
                                 )
+                                if identity_visible is not None:
+                                    # A visibilidade acompanha o
+                                    # candidato para a grade antiga:
+                                    # fora do quadro registrado e sob
+                                    # a mao, a passada nao ve.
+                                    identity_visible = (
+                                        cv2.warpPerspective(
+                                            identity_visible.astype(
+                                                np.uint8
+                                            ),
+                                            matrix,
+                                            (
+                                                prob.shape[1],
+                                                prob.shape[0],
+                                            ),
+                                            flags=cv2.INTER_NEAREST,
+                                            borderValue=0,
+                                        )
+                                        > 0
+                                    )
                         prior = identity_reference > 0
                         prior_px = int(np.count_nonzero(prior))
                         identity_reference_px = prior_px
                         if prior_px == 0:
-                            keep_page = not np.any(
+                            seen_any = (
                                 candidate > self._accumulator.threshold
                             )
+                            if identity_visible is not None:
+                                seen_any = seen_any & identity_visible
+                            keep_page = not np.any(seen_any)
                             identity_recall = 1.0 if keep_page else 0.0
                         else:
                             seen = candidate > self._accumulator.threshold
@@ -882,36 +985,90 @@ class _PageCleanWorker:
                             seen_d = cv2.dilate(
                                 seen.astype(np.uint8), kernel
                             ) > 0
-                            prior_d = cv2.dilate(
-                                prior.astype(np.uint8), kernel
-                            ) > 0
-                            identity_recall = (
-                                np.count_nonzero(prior & seen_d) / prior_px
-                            )
-                            seen_px = int(np.count_nonzero(seen))
-                            identity_containment = (
-                                0.0
-                                if seen_px == 0
-                                else (
-                                    np.count_nonzero(seen & prior_d)
-                                    / seen_px
+                            if identity_visible is not None:
+                                prior_visible = prior & identity_visible
+                                prior_visible_px = int(
+                                    np.count_nonzero(prior_visible)
                                 )
-                            )
-                            keep_page = (
-                                identity_recall >= _PAGE_IDENTITY_MIN_RECALL
-                                and identity_containment
-                                >= _PAGE_IDENTITY_MIN_CONTAINMENT
-                            )
+                                identity_visible_reference_px = (
+                                    prior_visible_px
+                                )
+                                if prior_visible_px < max(
+                                    _IDENTITY_MIN_VISIBLE_PX,
+                                    int(
+                                        _IDENTITY_MIN_VISIBLE_FRACTION
+                                        * prior_px
+                                    ),
+                                ):
+                                    # Tinta anterior quase toda
+                                    # coberta: decidir agora seria
+                                    # condenar a pagina pela mao.
+                                    # Adia; a referencia fica para a
+                                    # proxima passada.
+                                    identity_deferred = True
+                                else:
+                                    prior_d = cv2.dilate(
+                                        prior_visible.astype(np.uint8),
+                                        kernel,
+                                    ) > 0
+                                    identity_recall = (
+                                        np.count_nonzero(
+                                            prior_visible & seen_d
+                                        )
+                                        / prior_visible_px
+                                    )
+                                    seen_px = int(np.count_nonzero(seen))
+                                    identity_containment = (
+                                        0.0
+                                        if seen_px == 0
+                                        else (
+                                            np.count_nonzero(seen & prior_d)
+                                            / seen_px
+                                        )
+                                    )
+                                    keep_page = (
+                                        identity_recall
+                                        >= _PAGE_IDENTITY_MIN_RECALL
+                                        and identity_containment
+                                        >= _PAGE_IDENTITY_MIN_CONTAINMENT
+                                    )
+                            else:
+                                prior_d = cv2.dilate(
+                                    prior.astype(np.uint8), kernel
+                                ) > 0
+                                identity_recall = (
+                                    np.count_nonzero(prior & seen_d) / prior_px
+                                )
+                                seen_px = int(np.count_nonzero(seen))
+                                identity_containment = (
+                                    0.0
+                                    if seen_px == 0
+                                    else (
+                                        np.count_nonzero(seen & prior_d)
+                                        / seen_px
+                                    )
+                                )
+                                keep_page = (
+                                    identity_recall >= _PAGE_IDENTITY_MIN_RECALL
+                                    and identity_containment
+                                    >= _PAGE_IDENTITY_MIN_CONTAINMENT
+                                )
                     if identity_recovery_requested:
-                        identity_decision = (
-                            "same_page" if keep_page else "new_page"
-                        )
+                        if identity_deferred:
+                            identity_decision = "deferred_occlusion"
+                        else:
+                            identity_decision = (
+                                "same_page" if keep_page else "new_page"
+                            )
                         self._identity_events.append({
                             "generation": generation,
                             "decision": identity_decision,
                             "recall": identity_recall,
                             "containment": identity_containment,
                             "reference_px": identity_reference_px,
+                            "visible_reference_px": (
+                                identity_visible_reference_px
+                            ),
                             "geometry_registered": (
                                 identity_geometry_registered
                             ),
@@ -920,14 +1077,23 @@ class _PageCleanWorker:
                                 _PAGE_IDENTITY_MIN_CONTAINMENT
                             ),
                         })
-                    if not keep_page:
-                        self._accumulator.reset()
-                        self._anchor_corners = corners
-                    # Keep the old anchor when identity matched: all future
-                    # observations remain registered into the same canvas.
-                    self._identity_reference = None
-                    self._identity_reference_corners = None
-                    self._identity_recovery_requested = False
+                    if identity_deferred:
+                        # A referencia NAO e consumida: a proxima
+                        # passada decide quando houver tinta
+                        # anterior visivel o bastante. A evidencia
+                        # desta entra no acumulador com a oclusao
+                        # abstida; se a decisao final for pagina
+                        # nova, o reset dela a descarta.
+                        pass
+                    else:
+                        if not keep_page:
+                            self._accumulator.reset()
+                            self._anchor_corners = corners
+                        # Keep the old anchor when identity matched: all future
+                        # observations remain registered into the same canvas.
+                        self._identity_reference = None
+                        self._identity_reference_corners = None
+                        self._identity_recovery_requested = False
                 if (
                     self._anchor_corners is not None
                     and corners is not None
@@ -949,7 +1115,20 @@ class _PageCleanWorker:
                             flags=cv2.INTER_LINEAR,
                             borderValue=0.0,
                         )
-                result = self._accumulator.add(prob)
+                        if visible is not None:
+                            # A visibilidade viaja com a evidencia
+                            # para a grade ancora, pelo mesmo mapa.
+                            visible = (
+                                cv2.warpPerspective(
+                                    visible.astype(np.uint8),
+                                    matrix,
+                                    (prob.shape[1], prob.shape[0]),
+                                    flags=cv2.INTER_NEAREST,
+                                    borderValue=0,
+                                )
+                                > 0
+                            )
+                result = self._accumulator.add(prob, visible)
                 if (
                     result["confirmed_changed"]
                     or result["provisional_changed"]
@@ -1021,6 +1200,9 @@ class _PageCleanWorker:
                     "page_identity_recall": identity_recall,
                     "page_identity_containment": identity_containment,
                     "page_identity_reference_px": identity_reference_px,
+                    "page_identity_visible_reference_px": (
+                        identity_visible_reference_px
+                    ),
                     "page_identity_geometry_registered": (
                         identity_geometry_registered
                     ),

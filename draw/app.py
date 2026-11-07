@@ -964,6 +964,19 @@ def run(
                         else ink_corners
                     )
                     ink_warped = paper_module.warp_sheet(frame, warp_corners)
+                    # Visibilidade na grade da pagina: onde a mao
+                    # esta, a passada nao ve a folha — nenhum dos
+                    # dois caminhos pode votar com evidencia
+                    # fabricada sob oclusao. O mesmo mapa serve a
+                    # trabalhadora neural e ao caminho classico.
+                    visible = None
+                    if hand_masker is not None:
+                        camera_mask = hand_masker.mask(frame)
+                        if camera_mask is not None:
+                            hand_warped = paper_module.warp_sheet(
+                                camera_mask, warp_corners
+                            )
+                            visible = hand_warped == 0
                     if page_clean is not None:
                         # Caminho novo: o warp vai para a trabalhadora
                         # de tinta e o laco segue sem esperar o modelo.
@@ -980,20 +993,13 @@ def run(
                         # a sua copia (a reimpressao da regua de
                         # 2026-11-05 em draw/ink_layers.py).
                         ink_worker.submit(
-                            ink_warped, clean_generation, warp_corners
+                            ink_warped, clean_generation, warp_corners,
+                            visible,
                         )
                         if session_recorder is not None:
                             session_recorder.note_warp(
                                 clean_generation, ink_warped)
                     else:
-                        visible = None
-                        if hand_masker is not None:
-                            camera_mask = hand_masker.mask(frame)
-                            if camera_mask is not None:
-                                hand_warped = paper_module.warp_sheet(
-                                    camera_mask, warp_corners
-                                )
-                                visible = hand_warped == 0
                         if session_ink is not None:
                             if not session_ink.ready:
                                 if baseline_armed:
