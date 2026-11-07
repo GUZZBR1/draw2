@@ -23,6 +23,12 @@ Hashes SHA-256 da preparação, antes de atualizar qualquer autorização:
 - Texto original: `2d3aa411892bb6c5550befb43ac39c9aa005da9f409099ae4a5fabae017e059c`.
 - Protocolo JSON: `7025d19c8568466b2ce117957b70ac133675f8a5b403eece13edb6197c7edae6`.
 
+## Resultado posterior (fora do protocolo congelado)
+
+O pré-portão foi **reprovado**: passada seguinte à reancoragem em 1,993 px,
+acima do limite de 1 px. A grade não foi executada.
+[Resultado e auditoria](F07_B3_PRE_PORTAO_RESULTADO_2026-11-07.md).
+
 ---
 
 # F-07 B3 — pré-inscrição (rascunho para revisão)
