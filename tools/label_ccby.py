@@ -21,10 +21,20 @@ quad clássico apontando pra outro objeto manda o frame pra revisão.
 O detector clássico NÃO tem veto positivo: medido em 2026-11-08, ele
 devolve "nenhum candidato" até nos frames da mesa do autor com papel
 óbvio (presença neural 1,000, área 0,52) — a folha colada na mesa não
-forma o contorno que ele procura. Negativo exige presença baixa +
-máscara vazia + nenhum candidato clássico. Todo o resto é
-discordância e vai pra fila de revisão (frames guardados à parte,
-SEM rótulo) — é o insumo priorizado pra tradução humana depois.
+forma o contorno que ele procura.
+
+NEGATIVO NÃO SAI DE VÍDEO "serve" (regra medida no portão zero,
+2026-11-08): a primeira versão rotulava has_paper=0 com presença
+baixa + máscara vazia, e 53/85 frames do primeiro vídeo viraram
+"negativos" — a inspeção visual mostrou papel ocupando o frame
+INTEIRO (close-up extremo, sem borda de folha visível): ausência de
+máscara delimitada NÃO é evidência de ausência de papel, é papel sem
+delimitação, que o teacher não reconhece. Este corpus foi caçado POR
+ter papel: ele é fonte de positivos + revisão, nunca de negativos.
+Negativo rotulado só com --allow-negatives, reservado a fontes cuja
+ausência é conhecida por construção. Todo o resto é discordância e
+vai pra fila de revisão (frames guardados à parte, SEM rótulo) — é o
+insumo priorizado pra tradução humana depois.
 
 Saídas (nos formatos que o corpo de treino já consome):
     labels.csv    file,has_paper,source,video_id (build_pool_dataset)
@@ -167,7 +177,8 @@ def shape_stats(mask: np.ndarray) -> tuple[float, float]:
     return share, fill
 
 
-def judge(detector: NeuralSheetDetector, frame: np.ndarray) -> dict:
+def judge(detector: NeuralSheetDetector, frame: np.ndarray,
+          allow_negatives: bool = False) -> dict:
     presence_logit, mask255 = detector.predict(frame)
     p = sigmoid(float(presence_logit))
     neural = (mask255 > 0).astype(np.uint8)
@@ -186,7 +197,12 @@ def judge(detector: NeuralSheetDetector, frame: np.ndarray) -> dict:
         and not classical_disagrees
     ):
         decision = "pos"
-    elif p <= NEG_PRESENCE and area < NEG_AREA_MAX and corners is None:
+    elif (
+        allow_negatives
+        and p <= NEG_PRESENCE
+        and area < NEG_AREA_MAX
+        and corners is None
+    ):
         decision = "neg"
     else:
         decision = "review"
@@ -213,6 +229,8 @@ def main() -> int:
     ap.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
     ap.add_argument("--sync-dir", default="")
     ap.add_argument("--keep-videos", action="store_true")
+    ap.add_argument("--allow-negatives", action="store_true",
+                    help="permite has_paper=0 (só fontes de ausência conhecida)")
     args = ap.parse_args()
 
     import onnxruntime as ort
@@ -264,7 +282,7 @@ def main() -> int:
             counts = {"sampled": 0, "pos": 0, "neg": 0, "review": 0}
             for fidx, frame in sample_frames(src, args.fps):
                 counts["sampled"] += 1
-                res = judge(detector, frame)
+                res = judge(detector, frame, allow_negatives=args.allow_negatives)
                 stem = f"{vid}_{fidx:06d}"
                 if res["decision"] == "pos":
                     cv2.imwrite(str(out / "frames" / f"{stem}.jpg"), frame,
