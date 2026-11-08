@@ -565,6 +565,58 @@ e os pixels de referência da primeira máscara após a recuperação. O app
 usa recall mínimo de 65% e contenção mínima de 50%, com comparação
 dilatada pela tolerância de fronteira.
 
+**Instrumentação Chamfer (opt-in, sem voto novo).**
+`DRAW_IDENTITY_CHAMFER=1` acrescenta diagnóstico aos eventos de
+identidade e aos records por passada de `draw/ink_layers.py`.
+O parser, como no ECC, aceita `1/true/yes/on` (ignora caixa e espaços);
+ausente ou qualquer outro valor deixa a flag OFF. Desligada, não calcula
+distâncias nem acrescenta campos. As decisões vivas continuam usando
+recall 0,65, contenção 0,5 e o mesmo adiamento por oclusão.
+
+- `chamfer_seen_to_reference_median_px` e
+  `chamfer_reference_to_seen_median_px`: medianas das distâncias
+  euclidianas, via `cv2.distanceTransform` (`DIST_L2`, `DIST_MASK_PRECISE`)
+  sobre o complemento do alvo. Unidade: pixel da grade registrada na
+  âncora, não pixel canônico reescalado. Com visibilidade, a referência
+  é `prior_visible`; sem ela, `prior`. Os conjuntos não são dilatados.
+- `chamfer_{seen_to_reference,reference_to_seen}_coverage_{2,4,8,16}px`:
+  fração dos pontos da origem a distância **≤** ao raio, nos dois sentidos.
+  Estes raios são apenas medidas de cobertura, nunca limiares de decisão.
+  Origem vazia: mediana e coberturas `null`; alvo vazio com origem não
+  vazia: mediana `null` (distância indefinida), coberturas zero. Referência
+  indisponível: todas as métricas `null`, nunca sentinelas enormes do OpenCV.
+- `ecc_refine_enabled`: estado explícito 0/1 de `DRAW_ECC_REFINE`.
+  Não misturar distribuições de estados diferentes sem anotação.
+- `shadow_decision`: `defer` se `ecc_rejected=True`; caso contrário,
+  a decisão viva (`same_page`, `new_page` ou `deferred_occlusion`). Não
+  altera reset, consumo da referência, geração nem canvas, inclusive
+  quando a decisão viva é `new_page` e a sombra é `defer`.
+  Decisão/recall/contenção existentes continuam lado a lado; nos records
+  por passada eles conservam os nomes `page_identity_*`.
+
+O replay usa os mesmos nomes de diagnóstico nos eventos. Com a flag on,
+`Episode.report` inclui `identity_events`, `identity_true_class` e
+`identity_chamfer_by_ecc`: valores individuais, contagem, ausentes,
+min/p25/mediana/p75/max para cada métrica, separados por estado ECC.
+`identity_chamfer.by_true_class` agrega `move_same_canvas` e
+`drop_and_return` como `same_page`, e `drop_and_turn` como `new_page`,
+independentemente da decisão inferida. Episódios sem evento de identidade
+continuam sem amostras (não são zeros). A divergência pré-existente do
+replay permanece: não passa `visible`, usa `prior` inteiro e não adia por
+oclusão. A rejeição ECC só adia a sombra do evento, não o replay vivo.
+
+Para medir sem calibrar corte, executar os dois estados separadamente:
+
+```sh
+DRAW_IDENTITY_CHAMFER=1 DRAW_ECC_REFINE=0 python tools/replay_reregister.py --synthetic --out chamfer-ecc0.json
+DRAW_IDENTITY_CHAMFER=1 DRAW_ECC_REFINE=1 python tools/replay_reregister.py --synthetic --out chamfer-ecc1.json
+```
+
+Remover `--synthetic` só usa dados reais se o laboratório estiver presente;
+conferir sempre `source`. Mesmo com `source=real`, `drop_and_turn` usa
+espelho vertical como proxy, não uma segunda folha real. A amostra de
+quatro páginas reais não permite promover qualquer limiar novo.
+
 - `tools/replay_reregister.py`, cenário `drop_and_return` (ver F-09):
   antes da correção de identidade, `new_page` em 16/16 retornos da
   mesma página nas baselines sintética e real (recall 0,58–0,61 <

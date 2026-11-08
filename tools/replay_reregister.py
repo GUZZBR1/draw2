@@ -459,6 +459,7 @@ class ReplayWorker:
         keep_page = False
         recall = None
         containment = None
+        seen = prior = None
         self._identity_candidate = None
         self._identity_ecc = None
         if reference is not None:
@@ -498,15 +499,22 @@ class ReplayWorker:
             if keep_page:
                 self._identity_candidate = candidate
         if requested:
+            decision = "same_page" if keep_page else "new_page"
+            chamfer = (
+                _ink._identity_chamfer_fields(
+                    seen, prior, decision, self._identity_ecc or {},
+                ) if _ink._identity_chamfer_enabled() else {}
+            )
             self.identity_events.append({
                 "generation": generation,
-                "decision": "same_page" if keep_page else "new_page",
+                "decision": decision,
                 "recall": None if recall is None else round(float(recall), 4),
                 "containment": (
                     None if containment is None
                     else round(float(containment), 4)
                 ),
                 **(self._identity_ecc or {}),
+                **chamfer,
             })
         return keep_page
 
@@ -873,6 +881,33 @@ def settle_drawing(drawing, settled, hand_config, turn_event_enabled):
     return app, quad
 
 
+def identity_chamfer_distribution(events):
+    """Distribuicoes separadas por estado ECC, nunca por decisao inferida."""
+    groups = {}
+    for enabled in (0, 1):
+        records = [e for e in events if e["ecc_refine_enabled"] == enabled]
+        metrics = {}
+        keys = _ink._identity_chamfer_fields(None, None, None, {})
+        for key in keys:
+            if not key.startswith("chamfer_"):
+                continue
+            values = [e[key] for e in records if e[key] is not None]
+            metrics[key] = {
+                "values": values,
+                "count": len(values),
+                "missing": len(records) - len(values),
+                **{
+                    label: float(np.percentile(values, q)) if values else None
+                    for label, q in (
+                        ("min", 0), ("p25", 25), ("median", 50),
+                        ("p75", 75), ("max", 100),
+                    )
+                },
+            }
+        groups[str(enabled)] = {"events": len(records), "metrics": metrics}
+    return groups
+
+
 class Episode:
     """Mede um trecho do replay a partir de um app assentado."""
 
@@ -915,7 +950,7 @@ class Episode:
         """Fim da perturbação (o resto é assentamento)."""
         self.passes_during = self.app.worker.passes_total - self.passes_before
 
-    def report(self, true_before, true_after):
+    def report(self, true_before, true_after, identity_true_class=None):
         app = self.app
         shape = (self.before if self.before is not None else app.canvas()).shape
         events = {
@@ -947,8 +982,16 @@ class Episode:
         ecc_records = app.worker.ecc_records[self.passes_before:]
         ecc_ms = [record["ecc_ms"] for record in ecc_records]
         same_page = sum(1 for e in identity if e["decision"] == "same_page")
+        chamfer = {}
+        if _ink._identity_chamfer_enabled():
+            chamfer = {
+                "identity_true_class": identity_true_class,
+                "identity_events": identity,
+                "identity_chamfer_by_ecc": identity_chamfer_distribution(identity),
+            }
         return {
             **comparison,
+            **chamfer,
             "ecc_records": ecc_records,
             "ecc_ms_median": float(np.median(ecc_ms)) if ecc_ms else None,
             "ecc_ms_p95": float(np.percentile(ecc_ms, 95)) if ecc_ms else None,
@@ -1030,7 +1073,7 @@ def run_move(base, settled, hand_config, spec):
         ))
     ep.mark()
     _settle(ep, settled, target, rng, hand_config)
-    out = ep.report(quad, target)
+    out = ep.report(quad, target, identity_true_class="same_page")
     out["passes_gate"] = (
         out["canvas_identical_after_move"]
         and out["generations_created"] == 0
@@ -1062,7 +1105,10 @@ def run_drop(base, settled, hand_config, lost_frames, mode,
         ))
     ep.mark()
     _settle(ep, returned, quad, rng, hand_config)
-    out = ep.report(quad, quad)
+    out = ep.report(
+        quad, quad,
+        identity_true_class="same_page" if return_pages is None else "new_page",
+    )
     out["return_kind"] = "turn" if return_pages is not None else "same"
     # Sobreviver = o acumulador não foi zerado: nenhuma reabertura
     # como página nova (legacy sempre zera; main zera quando a
@@ -1288,6 +1334,27 @@ def run_all(drawing, settled, source):
             runs("sway_negative", "_turn_event_enabled")
         ),
     }
+    if _ink._identity_chamfer_enabled():
+        episodes = (
+            runs("move_same_canvas") + runs("drop_and_return")
+            + runs("drop_and_turn")
+        )
+        results["identity_chamfer"] = {
+            "replay_visibility": (
+                "not modeled: identity uses full prior, no occlusion deferral; "
+                "ECC rejection defers only the shadow_decision"
+            ),
+            "by_true_class": {
+                label: {
+                    "episodes": sum(r["identity_true_class"] == label for r in episodes),
+                    "by_ecc": identity_chamfer_distribution([
+                        event for r in episodes if r["identity_true_class"] == label
+                        for event in r["identity_events"]
+                    ]),
+                }
+                for label in ("same_page", "new_page")
+            },
+        }
     return results
 
 
