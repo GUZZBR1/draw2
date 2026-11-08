@@ -322,6 +322,9 @@ class ReplayWorker:
         self.identity_reference_corners = None
         self.identity_recovery_requested = False
         self.identity_events = []
+        self.ecc_records = []
+        self._identity_candidate = None
+        self._identity_ecc = None
 
     def new_generation(self, preserve_identity=False):
         self.identity_recovery_requested = bool(preserve_identity)
@@ -408,13 +411,19 @@ class ReplayWorker:
             if not self._identity_keeps_page(prob, corners, generation):
                 self.acc.reset()
                 self.anchor = corners
-        if self.anchor is not None and corners is not None:
-            matrix = _ink._registration_matrix(self.anchor, corners, prob.shape)
-            if not _ink._registration_is_identity(matrix):
-                prob = cv2.warpPerspective(
-                    prob, matrix, (prob.shape[1], prob.shape[0]),
-                    flags=cv2.INTER_LINEAR, borderValue=0.0,
+        if first_pass and self._identity_candidate is not None:
+            prob = self._identity_candidate
+            ecc_info = self._identity_ecc
+        else:
+            if first_pass and self._identity_ecc is not None:
+                ecc_info = self._identity_ecc
+            else:
+                confirmed = self.acc._confirmed
+                prob, _visible, ecc_info = _ink._register_ink_probability(
+                    prob, self.anchor, corners,
+                    None if confirmed is None else confirmed.astype(np.float32) / 255.0,
                 )
+        self.ecc_records.append(ecc_info)
         result = self.acc.add(prob)
         if (
             result["confirmed_changed"]
@@ -450,17 +459,14 @@ class ReplayWorker:
         keep_page = False
         recall = None
         containment = None
+        self._identity_candidate = None
+        self._identity_ecc = None
         if reference is not None:
-            candidate = prob
-            if reference_corners is not None and corners is not None:
-                matrix = _ink._registration_matrix(
-                    reference_corners, corners, prob.shape
-                )
-                if not _ink._registration_is_identity(matrix):
-                    candidate = cv2.warpPerspective(
-                        prob, matrix, (prob.shape[1], prob.shape[0]),
-                        flags=cv2.INTER_LINEAR, borderValue=0.0,
-                    )
+            confirmed = self.acc._confirmed
+            candidate, _visible, self._identity_ecc = _ink._register_ink_probability(
+                prob, reference_corners, corners,
+                None if confirmed is None else confirmed.astype(np.float32) / 255.0,
+            )
             prior = reference > 0
             prior_px = int(np.count_nonzero(prior))
             seen = candidate > self.acc.threshold
@@ -489,6 +495,8 @@ class ReplayWorker:
                     recall >= _ink._PAGE_IDENTITY_MIN_RECALL
                     and containment >= _ink._PAGE_IDENTITY_MIN_CONTAINMENT
                 )
+            if keep_page:
+                self._identity_candidate = candidate
         if requested:
             self.identity_events.append({
                 "generation": generation,
@@ -498,6 +506,7 @@ class ReplayWorker:
                     None if containment is None
                     else round(float(containment), 4)
                 ),
+                **(self._identity_ecc or {}),
             })
         return keep_page
 
@@ -935,9 +944,14 @@ class Episode:
             app.last_warp_corners - true_after, axis=1
         )))
         identity = app.worker.identity_events[self.identity_before:]
+        ecc_records = app.worker.ecc_records[self.passes_before:]
+        ecc_ms = [record["ecc_ms"] for record in ecc_records]
         same_page = sum(1 for e in identity if e["decision"] == "same_page")
         return {
             **comparison,
+            "ecc_records": ecc_records,
+            "ecc_ms_median": float(np.median(ecc_ms)) if ecc_ms else None,
+            "ecc_ms_p95": float(np.percentile(ecc_ms, 95)) if ecc_ms else None,
             "generations_created": generations,
             # Reabertura que a identidade reconheceu como a mesma
             # página não é virada: a geração sobe, o canvas fica.
