@@ -252,6 +252,45 @@ def _ecc_refinement_enabled():
     return value in {"1", "true", "yes", "on"}
 
 
+_IDENTITY_CHAMFER_ENV = "DRAW_IDENTITY_CHAMFER"
+_IDENTITY_CHAMFER_RADII = (2, 4, 8, 16)
+
+
+def _identity_chamfer_enabled():
+    value = os.environ.get(_IDENTITY_CHAMFER_ENV, "0").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _identity_chamfer_fields(seen, reference, decision, ecc_info):
+    """Diagnostico apenas: distancias euclidianas na grade da ancora."""
+    fields = {
+        "ecc_refine_enabled": int(_ecc_refinement_enabled()),
+        "shadow_decision": "defer" if ecc_info.get("ecc_rejected") else decision,
+    }
+    for direction, source, target in (
+        ("seen_to_reference", seen, reference),
+        ("reference_to_seen", reference, seen),
+    ):
+        distances = None
+        if (source is not None and target is not None
+                and np.any(source) and np.any(target)):
+            distance_map = cv2.distanceTransform(
+                (~target).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE,
+            )
+            distances = distance_map[source]
+        prefix = f"chamfer_{direction}"
+        fields[f"{prefix}_median_px"] = (
+            None if distances is None else float(np.median(distances))
+        )
+        for radius in _IDENTITY_CHAMFER_RADII:
+            fields[f"{prefix}_coverage_{radius}px"] = (
+                float(np.mean(distances <= radius)) if distances is not None
+                else 0.0 if (source is not None and np.any(source)
+                             and target is not None) else None
+            )
+    return fields
+
+
 # Oclusao na decisao de identidade: o recall so julga a tinta
 # anterior que a passada consegue VER (a mao sobre a pagina nao e
 # evidencia de pagina nova). Abaixo deste minimo de tinta anterior
@@ -1026,6 +1065,7 @@ class _PageCleanWorker:
             identity_visible_reference_px = None
             identity_deferred = False
             identity_geometry_registered = False
+            identity_chamfer = {}
             ecc_info = {
                 "ecc_ms": 0.0,
                 "ecc_rejected": False,
@@ -1199,6 +1239,18 @@ class _PageCleanWorker:
                             identity_decision = (
                                 "same_page" if keep_page else "new_page"
                             )
+                        if _identity_chamfer_enabled():
+                            metric_seen = metric_reference = None
+                            if identity_reference is not None:
+                                metric_seen = candidate > self._accumulator.threshold
+                                metric_reference = (
+                                    prior if identity_visible is None
+                                    else prior & identity_visible
+                                )
+                            identity_chamfer = _identity_chamfer_fields(
+                                metric_seen, metric_reference,
+                                identity_decision, ecc_info,
+                            )
                         self._identity_events.append({
                             "generation": generation,
                             "decision": identity_decision,
@@ -1216,6 +1268,7 @@ class _PageCleanWorker:
                                 _PAGE_IDENTITY_MIN_CONTAINMENT
                             ),
                             **ecc_info,
+                            **identity_chamfer,
                         })
                     if identity_deferred:
                         # A referencia NAO e consumida: a proxima
@@ -1308,6 +1361,7 @@ class _PageCleanWorker:
                     self._telemetry_publishes += 1
                 self._telemetry_records.append({
                     **ecc_info,
+                    **identity_chamfer,
                     "generation": generation,
                     "version": self._version,
                     "page_identity_decision": identity_decision,
