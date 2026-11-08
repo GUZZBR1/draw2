@@ -51,8 +51,12 @@ def test_temporal_settings_validation():
 def test_night_configs_temporal_blocks():
     a = T.temporal_settings(T.load_config("training/configs/t8-night-a.json"))
     b = T.temporal_settings(T.load_config("training/configs/t8-night-b.json"))
-    assert a == {"enabled": True, "pair_fraction": 0.25, "consistency_weight": 1.0}
-    assert b == {"enabled": True, "pair_fraction": 0.25, "consistency_weight": 0.0}
+    # Rodada 3: o dict ganhou mode/trim/area_weight com defaults que
+    # reproduzem o comportamento histórico (mse, sem trim, área off) —
+    # as configs da noite não os declaram e seguem valendo o mesmo.
+    historical = {"mode": "mse", "trim": 0.0, "area_weight": 0.0}
+    assert a == {"enabled": True, "pair_fraction": 0.25, "consistency_weight": 1.0, **historical}
+    assert b == {"enabled": True, "pair_fraction": 0.25, "consistency_weight": 0.0, **historical}
 
 
 # ------------------------------------------------- perda de consistência
