@@ -74,6 +74,31 @@ _MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 _STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 _NORM_SCALE = (1.0 / (255.0 * _STD)).astype(np.float32)
 _NORM_BIAS = (-_MEAN / _STD).astype(np.float32)
+
+
+def _frame_to_tensor(frame, size):
+    """Pré-processo ÚNICO frame→tensor do detector de folha.
+
+    Contrato: resize INTER_LINEAR para (largura, altura) de `size`
+    (par (altura, largura) do contrato do modelo), BGR→RGB, /255 e
+    normalização ImageNet (média/desvio acima). Treino
+    (training/train.py) e produção leem o MESMO contrato; qualquer
+    ferramenta externa (bancada de julgamento, sondas) deve importar
+    esta função em vez de reimplementar o pré-processo — a divergência
+    silenciosa BGR-sem-normalização da bancada (2026-11-08) é o motivo
+    desta extração. Reduzir ANTES de converter: o resize é linear por
+    canal e a conversão é uma permutação exata de canais; as operações
+    comutam e a conversão roda sobre a imagem já reduzida.
+    """
+    input_h, input_w = size
+    small = cv2.resize(
+        frame,
+        (input_w, input_h),
+        interpolation=cv2.INTER_LINEAR,
+    )
+    resized = cv2.cvtColor(small, cv2.COLOR_BGR2RGB).astype(np.float32)
+    tensor = (resized * _NORM_SCALE + _NORM_BIAS).transpose(2, 0, 1)
+    return tensor[None].astype(np.float32)
 _MASK_THRESHOLD = 0.5
 _LOGIT_MARGIN = float(np.log(_MASK_THRESHOLD / (1.0 - _MASK_THRESHOLD)))
 _MIN_CONTOUR_AREA_RATIO = 0.01
@@ -783,21 +808,8 @@ class NeuralSheetDetector:
         """
         session = self._get_session()
         contract = self.contract()
-        input_h, input_w = contract.size
         frame_h, frame_w = frame.shape[:2]
-        # Reduzir ANTES de converter: o resize e linear por canal e
-        # a conversao BGR->RGB e uma permutacao exata de canais, as
-        # duas operacoes comutam — o tensor e identico, mas a
-        # conversao roda sobre 384x384 em vez do frame 720p inteiro
-        # (~6,5x menos pixels; pesquisa de performance 2026-11-03).
-        small = cv2.resize(
-            frame,
-            (input_w, input_h),
-            interpolation=cv2.INTER_LINEAR,
-        )
-        resized = cv2.cvtColor(small, cv2.COLOR_BGR2RGB).astype(np.float32)
-        tensor = (resized * _NORM_SCALE + _NORM_BIAS).transpose(2, 0, 1)
-        tensor = tensor[None].astype(np.float32)
+        tensor = _frame_to_tensor(frame, contract.size)
         output_names = list(contract.outputs)
         outputs = session.run(output_names, {contract.input_name: tensor})
         by_name = dict(zip(output_names, outputs))

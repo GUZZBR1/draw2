@@ -322,8 +322,14 @@ def _export_scale(img_w, img_h, paper_w_mm, paper_h_mm, scale=None):
         return scale
     for name, dimensions in config.FORMATS.items():
         if dimensions == (paper_w_mm, paper_h_mm):
-            unit = config.mm_per_px(name)
-            return unit, unit
+            # A escala uniforme do formato so vale na grade canonica dele:
+            # mm_per_px e definido como altura_mm/1200 sobre a grade, nao
+            # sobre a imagem. Fora da grade, inferir por (mm, mm) aplicava
+            # 0,2475 em x tambem a imagens cuja largura nao e a da grade
+            # (erro silencioso de ate +17,9% em x; adendo da auditoria #47).
+            if (img_w, img_h) == config.paper_grid(name):
+                unit = config.mm_per_px(name)
+                return unit, unit
     return paper_w_mm / img_w, paper_h_mm / img_h
 
 
@@ -483,7 +489,11 @@ def export_vectors(bgr, mask_source="model", onnx_path=None, epsilon=1.5,
     img_h, img_w = bgr.shape[:2]
     if paper_mm is None:
         paper_w_mm, paper_h_mm = config.FORMATS[paper_format]
-        sx = sy = config.mm_per_px(paper_format)
+        # Mesma regra de _export_scale: a escala uniforme do formato so
+        # vale na grade canonica dele; fora da grade, por eixo a partir
+        # das dimensoes do formato (antes: uniforme incondicional — o
+        # mesmo erro silencioso de escala, um nivel acima).
+        sx, sy = _export_scale(img_w, img_h, paper_w_mm, paper_h_mm)
     else:
         # --paper-mm explicito preserva a API anterior de dimensoes livres.
         paper_w_mm, paper_h_mm = paper_mm
