@@ -488,7 +488,9 @@ def _draw_strokes(rng: np.random.Generator, canvas: np.ndarray, ink: np.ndarray)
         _apply_stroke(canvas, ink, spec)
 
 
-def _paper_base(rng: np.random.Generator, style: str) -> tuple[np.ndarray, int, int]:
+def _paper_base(
+    rng: np.random.Generator, style: str, size_idx: int | None = None
+) -> tuple[np.ndarray, int, int]:
     """Canvas do papel SEM traços: RGB (fundo/textura/linhas) e tamanho."""
     # Proporções: A4 retrato, A4 paisagem, carta, quadrado, caderno.
     w, h = [
@@ -497,7 +499,7 @@ def _paper_base(rng: np.random.Generator, style: str) -> tuple[np.ndarray, int, 
         (380, 490),
         (420, 420),
         (340, 480),
-    ][int(rng.integers(5))]
+    ][int(rng.integers(5)) if size_idx is None else size_idx]
     base = {
         "white": (250, 250, 250),
         "yellowed": (210, 225, 245),
@@ -746,6 +748,131 @@ def _warp_to_scene(
     return rgb_w, paper_mask, ink_w, dst, paper_cov, ink_cov
 
 
+def _spread_pages(
+    rng: np.random.Generator, style: str
+) -> tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray]]:
+    """As duas páginas de um caderno aberto: MESMO tamanho (sorteado
+    uma vez), conteúdo independente — página em branco com prob. 0,3
+    por página, como no uso real (esquerda em branco, direita
+    desenhada). Devolve ((rgb, ink), (rgb, ink))."""
+    size_idx = int(rng.choice([0, 4]))  # A4 retrato ou caderno
+    pages = []
+    for _ in range(2):
+        canvas, w, h = _paper_base(rng, style, size_idx=size_idx)
+        ink = np.zeros((h, w), dtype=np.uint8)
+        if float(rng.random()) >= 0.3:
+            _draw_strokes(rng, canvas, ink)
+        pages.append((canvas, ink))
+    return pages[0], pages[1]
+
+
+def _warp_spread(
+    rng: np.random.Generator,
+    pages: tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray]],
+    placement: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Warp do caderno aberto pra cena: DOIS quads, um por página,
+    compartilhando a aresta da lombada — a quebra do plano único é o
+    ponto (medido em 2026-11-08: o teacher fragmenta a máscara de
+    caderno aberto porque só aprendeu folha plana; fill 0,50).
+
+    Geometria: o quad do spread inteiro sai dos amostradores
+    históricos com o aspecto do spread (2w × h); a lombada é o
+    segmento entre os pontos médios das arestas superior/inferior.
+    Cada página ganha jitter independente nas arestas externas e
+    ganho fotométrico próprio; uma página pode levantar (diedro de
+    0–25°, foreshortening por cosseno em direção à lombada). O vale é
+    pintado em espaço de cena: faixa suave de sombra ao longo da
+    lombada (queda de 15–35%) + anéis da espiral (passo ~24 por
+    altura de página, alfa 0,15–0,5). A máscara-verdade é a UNIÃO das
+    duas páginas, faixa da lombada incluída.
+
+    Devolve (rgb_warp, paper_mask, ink_warp, quad_externo, paper_cov,
+    ink_cov) — mesma assinatura de ``_warp_to_scene``.
+    """
+    (pl, il), (pr, ir) = pages
+    h, w = pl.shape[:2]
+    if placement == "loguniform":
+        base = _sample_loguniform_quad(rng, 2 * w, h)
+    else:
+        base = _sample_normal_quad(rng, 2 * w, h)
+    tl, tr, br, bl = base
+    spine_top = (tl + tr) / 2
+    spine_bot = (bl + br) / 2
+
+    def jitter(p: np.ndarray) -> np.ndarray:
+        return p + rng.normal(0, 0.015 * SIZE, size=2).astype(np.float32)
+
+    left_dst = np.array(
+        [jitter(tl), spine_top, spine_bot, jitter(bl)], dtype=np.float32
+    )
+    right_dst = np.array(
+        [spine_top, jitter(tr), jitter(br), spine_bot], dtype=np.float32
+    )
+    # Diedro: uma das páginas levanta; a aresta externa dela encolhe
+    # em direção à lombada pelo cosseno do ângulo.
+    theta = math.radians(float(rng.uniform(0, 25)))
+    shrink = 1.0 - math.cos(theta)
+    if float(rng.random()) < 0.5:
+        left_dst[0] += (spine_top - left_dst[0]) * shrink
+        left_dst[3] += (spine_bot - left_dst[3]) * shrink
+    else:
+        right_dst[1] += (spine_top - right_dst[1]) * shrink
+        right_dst[2] += (spine_bot - right_dst[2]) * shrink
+
+    rgb_l, mask_l, ink_l, cov_l, icov_l = _warp_paper(pl, il, left_dst)
+    rgb_r, mask_r, ink_r, cov_r, icov_r = _warp_paper(pr, ir, right_dst)
+    # Ganho fotométrico por página: páginas fora do plano apanham a
+    # luz diferente — diferença sutil, coerente por página inteira.
+    gain_l = float(rng.uniform(0.94, 1.03))
+    gain_r = float(rng.uniform(0.94, 1.03))
+    rgb_l = np.clip(rgb_l.astype(np.float32) * gain_l, 0, 255).astype(np.uint8)
+    rgb_r = np.clip(rgb_r.astype(np.float32) * gain_r, 0, 255).astype(np.uint8)
+
+    rgb_w = np.where((mask_r > 0)[..., None], rgb_r, rgb_l)
+    paper_mask = np.maximum(mask_l, mask_r)
+    ink_w = np.maximum(ink_l, ink_r)
+    paper_cov = np.clip(cov_l + cov_r, 0.0, 1.0)
+    ink_cov = np.clip(icov_l + icov_r, 0.0, 1.0)
+
+    # Vale + espiral em espaço de cena, só sobre o papel.
+    on_paper = paper_mask > 0
+    if on_paper.any():
+        line = np.zeros((SIZE, SIZE), dtype=np.uint8)
+        cv2.line(line, tuple(spine_top.astype(int)), tuple(spine_bot.astype(int)), 255, 1)
+        dist = cv2.distanceTransform(255 - line, cv2.DIST_L2, 3)
+        spread_w = float(np.linalg.norm(tr - tl))
+        band = np.clip(1.0 - dist / max(6.0, 0.022 * spread_w), 0.0, 1.0)
+        dip = float(rng.uniform(0.15, 0.35))
+        shade = (1.0 - dip * band * band).astype(np.float32)
+        rgb_w = np.where(
+            on_paper[..., None],
+            np.clip(rgb_w.astype(np.float32) * shade[..., None], 0, 255).astype(np.uint8),
+            rgb_w,
+        )
+        n_rings = 24
+        alpha = float(rng.uniform(0.15, 0.5))
+        overlay = rgb_w.copy()
+        across = (tr - tl) / max(1.0, spread_w)
+        half = 0.028 * spread_w
+        for k in range(n_rings):
+            t = (k + 0.5) / n_rings
+            c = spine_top + (spine_bot - spine_top) * t
+            p1 = (c - across * half).astype(int)
+            p2 = (c + across * half).astype(int)
+            cv2.line(overlay, tuple(p1), tuple(p2), (55, 55, 55), 2)
+        rings = np.zeros((SIZE, SIZE), dtype=np.uint8)
+        cv2.line(rings, tuple(spine_top.astype(int)), tuple(spine_bot.astype(int)), 255, int(2 * half) + 4)
+        ring_zone = (rings > 0) & on_paper
+        rgb_w = np.where(
+            ring_zone[..., None],
+            np.clip(overlay.astype(np.float32) * alpha
+                    + rgb_w.astype(np.float32) * (1 - alpha), 0, 255).astype(np.uint8),
+            rgb_w,
+        )
+    return rgb_w, paper_mask, ink_w, base, paper_cov, ink_cov
+
+
 def _transform_hand(
     rng: np.random.Generator, hand: HandSource, scale: float
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -919,7 +1046,9 @@ def compose_scene(
     """Compõe UMA cena. Devolve rgb, mask, ink_full e info.
 
     scene_type: normal | empty_table | hand_no_sheet | white_object |
-    tiny_sheet | sheet_out. hand_placement: None (sorteado) ou um dos
+    tiny_sheet | sheet_out | notebook_spread (caderno aberto: dois
+    quads com lombada, vale e espiral — ver ``_warp_spread``).
+    hand_placement: None (sorteado) ou um dos
     off_sheet | entering | edge | corner | center | over_stroke |
     covering_much | partial_out.
 
@@ -991,10 +1120,17 @@ def compose_scene(
                 "loguniform" if sheet_scale == "loguniform" else "normal"
             )
         )
-        paper, ink, _, _ = _paper_canvas(rng, paper_style)
-        rgb_w, paper_mask, ink_w, paper_quad, paper_cov, ink_cov = _warp_to_scene(
-            rng, paper, ink, placement
-        )
+        if scene_type == "notebook_spread":
+            pages = _spread_pages(rng, paper_style)
+            rgb_w, paper_mask, ink_w, paper_quad, paper_cov, ink_cov = (
+                _warp_spread(rng, pages, placement)
+            )
+            info["notebook_spread"] = True
+        else:
+            paper, ink, _, _ = _paper_canvas(rng, paper_style)
+            rgb_w, paper_mask, ink_w, paper_quad, paper_cov, ink_cov = (
+                _warp_to_scene(rng, paper, ink, placement)
+            )
         on_paper = paper_mask > 0
         rgb[on_paper] = rgb_w[on_paper]
         mask[on_paper] = PAPER
@@ -1195,6 +1331,7 @@ def generate_dataset(
     bg_smooth_fraction: float = 0.0,
     sheet_scale: str = "legacy",
     no_paper_fraction: float = 0.0,
+    notebook_fraction: float = 0.0,
 ) -> dict:
     """Gera o dataset completo com split por fonte + manifest.json.
 
@@ -1204,12 +1341,16 @@ def generate_dataset(
     ``bg_smooth_fraction`` — fração com fundo liso de campo suave;
     ``sheet_scale="loguniform"`` — área da folha 5–70% uniforme no
     log; ``no_paper_fraction`` — fração de cenas SEM folha,
-    substituindo o ciclo histórico de negativos.
+    substituindo o ciclo histórico de negativos;
+    ``notebook_fraction`` — fração das cenas COM papel que viram
+    caderno aberto (dois quads + lombada), a classe geométrica que
+    faltava (smoke do Colab, 2026-11-08).
     """
     for name, frac in (
         ("bg_real_fraction", bg_real_fraction),
         ("bg_smooth_fraction", bg_smooth_fraction),
         ("no_paper_fraction", no_paper_fraction),
+        ("notebook_fraction", notebook_fraction),
     ):
         if not 0.0 <= frac <= 1.0:
             raise ValueError(f"{name} precisa estar em [0, 1]: {frac}")
@@ -1263,6 +1404,7 @@ def generate_dataset(
     if (
         bg_dir or bg_real_fraction > 0 or bg_smooth_fraction > 0
         or sheet_scale != "legacy" or no_paper_fraction > 0
+        or notebook_fraction > 0
     ):
         manifest["diet"] = {
             "bg_real_fraction": bg_real_fraction,
@@ -1273,6 +1415,7 @@ def generate_dataset(
                 [0.05, 0.70] if sheet_scale == "loguniform" else None
             ),
             "no_paper_fraction": no_paper_fraction,
+            "notebook_fraction": notebook_fraction,
             "smooth_background_bases": sorted(SMOOTH_BACKGROUND_BASES),
             "notes": (
                 "Diet opt-ins (frente dieta 2026-11-05): smooth = "
@@ -1361,6 +1504,12 @@ def generate_dataset(
                 scene_type = negative_cycle[(i // 5) % len(negative_cycle)]
             else:
                 scene_type = "normal"
+            if (
+                scene_type == "normal"
+                and notebook_fraction > 0
+                and float(rng.random()) < notebook_fraction
+            ):
+                scene_type = "notebook_spread"
             second = None
             if two_hands and hand_id and len(hand_pool) > 1:
                 second_id = [h for h in hand_pool if h != hand_id][int(rng.integers(len(hand_pool) - 1))]
@@ -1454,6 +1603,9 @@ def main() -> int:
     parser.add_argument("--no-paper-fraction", type=float, default=0.0,
                         help="Fração das cenas SEM folha (0 a 1; default 0 = "
                              "ciclo histórico de negativos)")
+    parser.add_argument("--notebook-fraction", type=float, default=0.0,
+                        help="Fração das cenas COM papel que viram caderno "
+                             "aberto (dois quads + lombada; 0 a 1; default 0)")
     args = parser.parse_args()
     temporal_counts = None
     if args.temporal_train > 0 or args.temporal_val > 0:
@@ -1466,6 +1618,7 @@ def main() -> int:
         bg_dir=args.bg_dir, bg_real_fraction=args.bg_real_fraction,
         bg_smooth_fraction=args.bg_smooth_fraction,
         sheet_scale=args.sheet_scale, no_paper_fraction=args.no_paper_fraction,
+        notebook_fraction=args.notebook_fraction,
     )
     n = len(manifest["scenes"])
     print(f"{n} cenas em {args.out} (seed {args.seed})")
@@ -1478,7 +1631,8 @@ def main() -> int:
         d = manifest["diet"]
         print(f"  dieta: foto-real={d['bg_real_fraction']} "
               f"liso={d['bg_smooth_fraction']} escala={d['sheet_scale']} "
-              f"sem-papel={d['no_paper_fraction']}")
+              f"sem-papel={d['no_paper_fraction']} "
+              f"caderno={d.get('notebook_fraction', 0.0)}")
     return 0
 
 
