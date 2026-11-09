@@ -26,6 +26,7 @@ jobs:
       suite: ${{ steps.filtro.outputs.suite }}
       treino: ${{ steps.filtro.outputs.treino }}
       site: ${{ steps.filtro.outputs.site }}
+      cad: ${{ steps.filtro.outputs.cad }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -62,6 +63,9 @@ jobs:
               - '.github/workflows/**'
             site:
               - 'site/**'
+              - '.github/workflows/**'
+            cad:
+              - 'cad/**'
               - '.github/workflows/**'
 
   rapido:
@@ -163,6 +167,25 @@ jobs:
           cache-dependency-path: site/package-lock.json
       - run: npm ci
       - run: npm run build
+
+  cad:
+    needs: mudancas
+    if: needs.mudancas.outputs.cad == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: cad
+    steps:
+      - uses: actions/checkout@v4
+      # Node 22: os testes rodam os .ts direto (type stripping nativo).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: cad/package-lock.json
+      - run: npm ci
+      - run: npm run check
 
   noturno:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'

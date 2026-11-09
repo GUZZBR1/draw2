@@ -60,6 +60,7 @@ from . import session_report as session_report_module
 from . import telemetry as telemetry_module
 from .view import _blank_sheet, _compose_view, _dead_source_view, _error_view
 
+from . import cad_server as cad_server_module
 from . import capture as capture_module
 from .sheet_track import (
     _SHEET_NEAR_LIMIT_PX as _SHEET_NEAR_LIMIT_PX,
@@ -407,6 +408,8 @@ def run(
     session_baseline=False,
     page_clean_model=None,
     legacy_ink=False,
+    cad=False,
+    cad_port=None,
 ):
     _apply_opencv_thread_cap()
     # A pilha antiga de tinta so existe atras do legado. Pedir
@@ -634,6 +637,9 @@ def run(
     # Geracao do gravador no caminho legado (sem worker, a geracao
     # e local: abre na folha nova e na tecla C).
     legacy_generation = 0
+    # Geracao da ponte do CAD no legado: sobe a cada folha nova e na
+    # tecla C, com ou sem gravador (a do gravador so sobe com ele).
+    cad_legacy_generation = 0
     if markers_mode:
         print("Draw v0 rodando. Mostre a folha-modelo para a camera.")
     else:
@@ -726,6 +732,19 @@ def run(
         dtype=np.uint8,
     )
     view_canvas_buffer = np.empty_like(canvas_buffer)
+    # CAD ao vivo (--cad): a camada confirmada vira traco vetorial no
+    # CAD do navegador. Falha ao subir o servidor e aviso, nao queda.
+    cad_live_server = None
+    cad_live_bridge = None
+    if cad:
+        try:
+            cad_live_server, cad_live_bridge = (
+                cad_server_module.start_live_cad(
+                    port=cad_port or cad_server_module.DEFAULT_PORT
+                )
+            )
+        except OSError as error:
+            print(f"Aviso: CAD ao vivo nao iniciou ({error}); segue sem.")
     frame_number = 0
     last_seq = 0
     last_det_seq = 0
@@ -952,6 +971,7 @@ def run(
                             freeze_pending = False
                         corner_history.clear()
                         ink_session_open = True
+                        cad_legacy_generation += 1
                         if (
                             session_recorder is not None
                             and page_clean is None
@@ -965,6 +985,7 @@ def run(
                         # redefine o que conta como traco desta sessao.
                         # A geometria congela nos cantos deste momento.
                         restart_reference = False
+                        cad_legacy_generation += 1
                         ink_accumulator.reset()
                         session_ink.reset()
                         baseline_armed = True
@@ -1044,13 +1065,17 @@ def run(
                                     ink_warped, visible)
                         else:
                             observed = ink_source(ink_warped)
+                        accumulated_mask = ink_accumulator.update(
+                            observed, visible,
+                            t_capture_ms=frame_capture_ms
+                        )
                         accumulated_canvas = ink_module.render_canvas(
-                            ink_accumulator.update(
-                                observed, visible,
-                                t_capture_ms=frame_capture_ms
-                            ),
+                            accumulated_mask,
                             out=canvas_buffer,
                         )
+                        if cad_live_bridge is not None:
+                            cad_live_bridge.submit(
+                                cad_legacy_generation, accumulated_mask)
                         if session_recorder is not None:
                             session_recorder.note_warp(
                                 legacy_generation, ink_warped)
@@ -1078,6 +1103,9 @@ def run(
                             clean_provisional_mask,
                             out=canvas_buffer,
                         )
+                        if cad_live_bridge is not None:
+                            cad_live_bridge.submit(
+                                clean_generation, clean_mask)
                         if session_recorder is not None:
                             session_recorder.note_canvas(
                                 clean_generation, accumulated_canvas)
@@ -1103,6 +1131,9 @@ def run(
                                     f"Pagina anterior salva em {path}"
                                 ),
                             )
+                        if cad_live_bridge is not None:
+                            cad_live_bridge.new_page(
+                                clean_generation, turn_canvas)
                         clean_generation = ink_worker.new_generation()
                         clean_display_version = 0
                         clean_provisional_mask = None
@@ -1264,6 +1295,10 @@ def run(
             hand_presence_worker.stop()
         if ink_worker is not None:
             ink_worker.stop()
+        if cad_live_bridge is not None:
+            cad_live_bridge.stop()
+        if cad_live_server is not None:
+            cad_live_server.stop()
         if session_recorder is not None:
             # O manifesto fecha a sessao do loop: pares
             # antes/depois, shas dos modelos, teclas e o retrato
@@ -1385,6 +1420,15 @@ def main():
     )
     parser.add_argument("--save-dir", default="captures")
     parser.add_argument(
+        "--cad", action="store_true",
+        help="CAD ao vivo: o traco confirmado no papel vira desenho "
+        "vetorial no CAD do navegador (http://127.0.0.1:8770/)",
+    )
+    parser.add_argument(
+        "--cad-port", type=int, default=None,
+        help="porta local do CAD ao vivo (padrao 8770)",
+    )
+    parser.add_argument(
         "--format", choices=list(config.FORMATS), default=None,
         help="formato da sessao em retrato (flag > DRAW_FORMAT > a4)",
     )
@@ -1438,6 +1482,11 @@ def main():
                 "--ink-model sem caminho: passe o arquivo .onnx ou "
                 "defina a variavel DRAW_INK_MODEL"
             )
+    if args.cad and args.markers:
+        parser.error(
+            "--cad nao combina com --markers: o CAD le a camada "
+            "confirmada, que o modo de marcadores nao acumula"
+        )
     if args.session_baseline and args.markers:
         parser.error("--session-baseline nao combina com --markers")
     hand_model = None
@@ -1458,6 +1507,8 @@ def main():
             session_baseline=args.session_baseline,
             page_clean_model=page_clean_model,
             legacy_ink=args.legacy_ink,
+            cad=args.cad,
+            cad_port=args.cad_port,
         )
     except (RuntimeError, FileNotFoundError) as error:
         print(f"Erro: {error}")

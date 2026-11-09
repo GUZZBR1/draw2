@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Draw CAD</title>
+  </head>
+  <body>
+    <header class="toolbar" role="toolbar" aria-label="Ferramentas">
+      <strong class="brand">Draw CAD</strong>
+      <div class="group" id="tools"></div>
+      <div class="group">
+        <button id="undo" title="Desfazer (Ctrl+Z)">Desfazer</button>
+        <button id="redo" title="Refazer (Ctrl+Shift+Z)">Refazer</button>
+        <button id="delete" title="Apagar seleção (Delete)">Apagar</button>
+        <button id="fit" title="Enquadrar (F)">Enquadrar</button>
+        <label class="toggle"><input type="checkbox" id="snap" checked /> Snap</label>
+      </div>
+      <div class="group">
+        <button id="new">Novo</button>
+        <button id="open">Abrir</button>
+        <button id="save">Salvar</button>
+        <button id="export-dxf">DXF</button>
+        <button id="export-svg">SVG</button>
+        <input type="file" id="file" accept=".json,application/json" hidden />
+      </div>
+    </header>
+    <main class="workspace">
+      <canvas id="view" tabindex="0" aria-label="Área de desenho"></canvas>
+      <aside class="side">
+        <section>
+          <h2>Papel ao vivo</h2>
+          <p id="live" class="live off">Desconectado</p>
+        </section>
+        <section>
+          <h2>Camadas</h2>
+          <ul id="layers"></ul>
+          <button id="add-layer">Nova camada</button>
+        </section>
+        <section>
+          <h2>Propriedades</h2>
+          <div id="props"><p class="muted">Nada selecionado</p></div>
+        </section>
+      </aside>
+    </main>
+    <footer class="status"><span id="coords">x 0,00 · y 0,00 mm</span><span id="hint"></span><span id="zoom"></span></footer>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

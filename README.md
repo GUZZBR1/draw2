@@ -98,6 +98,8 @@ diagnostics, experiments, and custom models.
 | `--markers` | Printed template sheet with ArUco markers, instead of markerless detection |
 | `--check` | Validate the camera step by step and exit |
 | `--save-dir folder` | Captures folder (default `captures`) |
+| `--cad` | Live CAD: confirmed strokes on paper appear as vector entities in the Draw CAD at `http://127.0.0.1:8770/` (see below) |
+| `--cad-port N` | Local port of the live CAD (default 8770) |
 
 Keys inside the app:
 
@@ -133,6 +135,38 @@ The format-aware bridge reads its uniform mm/px from `draw.config`.
 Explicit `--paper-mm W H` remains a mutually exclusive legacy custom-size
 override. `tools/vectorize.py` is legacy and still has its own A4 constants;
 it is not format-aware and is unchanged.
+
+### Live CAD (`--cad`)
+
+Draw ships its own 2D CAD, a browser app in `cad/`. Build it once
+(Node 22+), then run the app with `--cad`:
+
+```bash
+cd cad && npm ci && npm run build && cd ..
+python main.py --cad
+```
+
+The CAD opens at `http://127.0.0.1:8770/` (local only). While you draw,
+the confirmed layer — the same canvas `s` saves, never the provisional
+gray ink — is vectorized about twice a second and mirrored into the
+**Papel (ao vivo)** layer as lines, circles and polylines in mm. A stroke
+that grows keeps its identity, so the CAD updates it instead of
+duplicating it. On a page turn the previous page is frozen into its own
+layer (**Papel — página N**) and the live layer starts empty.
+
+In the CAD you can draw lines, polylines, rectangles and circles with
+grid/endpoint snap, select, move, delete, edit coordinates, manage
+layers, undo/redo, and export **DXF** (R12, mm, opens in AutoCAD and
+LibreCAD) or **SVG**, or save/open the drawing as JSON. Editing or
+deleting a stroke that came from paper detaches it from the live layer,
+so the next update does not bring it back. The drawing autosaves in the
+browser.
+
+Without a camera, open saved canvases as pages:
+
+```bash
+python -m draw.cad_server --png captures/canvas_1730000000.png
+```
 
 Environment variables set model paths (`DRAW_NEURAL_MODEL`,
 `DRAW_PAGE_CLEAN_MODEL`, `DRAW_INK_MODEL`, `DRAW_HAND_MODEL`) and
@@ -246,6 +280,9 @@ in private datasets and never enter this repository.
   Experimental; the app does not use it yet.
 - `tests/` — the webcam-free suite. `pytest` runs everything,
   including `tools/runner/tests/`.
+- `cad/` — the Draw CAD (TypeScript, Canvas 2D, no runtime
+  dependencies); served by `draw/cad_server.py`, fed live by
+  `draw/cad_bridge.py`. See [cad/README.md](cad/README.md).
 - `site/` — the project website (React/TypeScript). Its design rules
   are in `design.md` and `AGENTS.md`.
 - `docs/` — [docs/SETUP_WINDOWS.md](docs/SETUP_WINDOWS.md) and
@@ -286,7 +323,10 @@ In progress: the external test set for generalization; ink quality — a
 three-class ink/print candidate intended to separate handwriting from
 printed content. No such candidate is promoted to the production path.
 
-Planned: vector strokes (order, path, smoothing); interpretation of
-shapes, letters, and diagrams; integration with a first target system
-(CAD or simulator); real-time simulation feedback. See
+First target system: the live CAD (`--cad`) mirrors confirmed strokes
+as vector entities and exports DXF/SVG.
+
+Planned: better vector strokes (order, path, smoothing); interpretation of
+shapes, letters, and diagrams; erasure on paper propagated to the CAD;
+real-time simulation feedback. See
 [VISION.md](VISION.md).
