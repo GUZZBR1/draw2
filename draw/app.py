@@ -637,6 +637,9 @@ def run(
     # Geracao do gravador no caminho legado (sem worker, a geracao
     # e local: abre na folha nova e na tecla C).
     legacy_generation = 0
+    # Geracao da ponte do CAD no legado: sobe a cada folha nova e na
+    # tecla C, com ou sem gravador (a do gravador so sobe com ele).
+    cad_legacy_generation = 0
     if markers_mode:
         print("Draw v0 rodando. Mostre a folha-modelo para a camera.")
     else:
@@ -968,6 +971,7 @@ def run(
                             freeze_pending = False
                         corner_history.clear()
                         ink_session_open = True
+                        cad_legacy_generation += 1
                         if (
                             session_recorder is not None
                             and page_clean is None
@@ -981,6 +985,7 @@ def run(
                         # redefine o que conta como traco desta sessao.
                         # A geometria congela nos cantos deste momento.
                         restart_reference = False
+                        cad_legacy_generation += 1
                         ink_accumulator.reset()
                         session_ink.reset()
                         baseline_armed = True
@@ -1070,7 +1075,7 @@ def run(
                         )
                         if cad_live_bridge is not None:
                             cad_live_bridge.submit(
-                                legacy_generation, accumulated_mask)
+                                cad_legacy_generation, accumulated_mask)
                         if session_recorder is not None:
                             session_recorder.note_warp(
                                 legacy_generation, ink_warped)
