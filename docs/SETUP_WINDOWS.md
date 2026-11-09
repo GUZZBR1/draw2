@@ -16,7 +16,7 @@ a specific machine, camera, or manufacturer.
 From inside WSL, at the project root:
 
 ```bash
-./scripts/setup_camera_wsl.sh
+bash scripts/setup_camera_wsl.sh
 ```
 
 That is all. The script asks for Windows administrator
@@ -25,9 +25,9 @@ the end, it runs Draw's own acceptance test and prints the verdict.
 
 Useful options:
 
-- `./scripts/setup_camera_wsl.sh --busid 1-4` points to a
+- `bash scripts/setup_camera_wsl.sh --busid 1-4` points to a
   specific camera by its BUSID in `usbipd list`.
-- `./scripts/setup_camera_wsl.sh --dry-run` only shows what the
+- `bash scripts/setup_camera_wsl.sh --dry-run` only shows what the
   script would do, without executing anything.
 
 After restarting WSL, run the script again. Only the attach
@@ -90,13 +90,12 @@ Then:
 | Permission denied when opening the camera in Draw | Your WSL user is not yet in the `video` group in this session | The script already adds the user to the group. In the current session, run `sg video -c "python3 main.py"`. In later sessions, the permission already applies. |
 | The camera opens, but delivers no frames | Video format too heavy for virtual USB | Update the repository (`git pull`). Current Draw already requests MJPEG at 1280x720 for the local camera, which is the format that works well over usbipd. |
 | Windows left without sound after setup | Audio services were stopped during attach and did not return | In PowerShell as administrator: `Start-Service Audiosrv`. The script turns audio back on by itself when it was the one that stopped it. If turning audio back on drops the camera, run the script again. |
-| `vhci_hcd` or `uvcvideo` module error missing | Old WSL kernel or one without camera support | Run `wsl --update` in PowerShell, restart WSL, and try again. If it persists, use the fallback route below. |
+| `vhci_hcd` or `uvcvideo` module error missing | Old WSL kernel or one without camera support | Run `wsl --update` in PowerShell, restart WSL, and try again. If it persists, save the script's diagnostic block for support. |
 
-## Fallback route
+## No bundled capture fallback
 
-If usbipd does not work on your machine for any reason, the
-[`bridge/`](../bridge/) folder provides the capture bridge: an
-`ffmpeg.exe` on Windows serves the webcam as an MJPEG stream and Draw,
-in WSL, consumes that stream with `--source`. No USB device
-is moved between the systems. See `bridge/README.md` for the step
-by step.
+The untested ffmpeg capture fallback was removed; usbipd is the supported
+Windows/WSL route. [`bridge/`](../bridge/) contains an experimental
+timestamped helper protocol, not a working alternative capture setup.
+Draw still accepts an existing MJPEG stream with `--source URL`, but the
+repository does not provide a Windows stream server.

@@ -28,7 +28,10 @@ VRAM; em TPU, cada adaptador mantém seu dimensionamento próprio.
 
 - **Configs por experimento** em `training/configs/` (ver o README de lá):
   experimento novo = config nova, nunca corpo novo. Sem `--config`, vale
-  o default histórico `training/config.json`.
+  o default `training/configs/base.json` em `training/run.py`;
+  `training/train.py` direto mantém `training/config.json`.
+  O dispatcher só repassa `--config` a CUDA/CPU: os adaptadores TPU
+  leem `training/config.json` e aplicam os overrides T7 próprios.
 - **Lançadores finos** em `training/launchers/` (`kaggle.ipynb`,
   `colab.ipynb`): clonar/puxar o repo, instalar
   `training/requirements.txt`, smoke + corrida por `training/run.py`.
@@ -51,8 +54,9 @@ VRAM; em TPU, cada adaptador mantém seu dimensionamento próprio.
   instalado — mesmo espírito do `receipt.json` do `train_tpu.py`.
   Treino que subutiliza o hardware é defeito: confira o recibo antes de
   deixar a corrida seguir.
-- **TPU** continua no adapter `training/train_tpu.py`, que reusa este
-  corpo (não é um segundo corpo).
+- **TPU**: `training/train_tpu.py` atende XLA e
+  `training/train_torchtpu.py`, via `training/run_t7.py`, atende TorchTPU.
+  Ambos reusam componentes de `training/train.py`.
 
 ### Corpo 3 classes (tinta × impresso): migrado (2026-11-05)
 
