@@ -15,10 +15,12 @@ metrics and the exported model contract.
 - CUDA baseline: BF16 where supported, otherwise FP16 with GradScaler;
   `num_workers=4`, pinned memory, persistent workers and prefetching are already
   enabled by `training/train.py`.
-- The CUDA adapter does not currently enable `torch.compile` or
-  `channels_last`. Both are experiments to benchmark, not assumed wins. The
-  TPU adapter has a separate compile path; compilation previously failed in the
-  TorchTPU runtime, so it must remain behind a smoke/benchmark gate.
+- The CUDA/CPU adapter supports opt-in `torch.compile` via
+  `training.compile` or `--compile` / `--no-compile`; it is off in the base
+  config. `channels_last` is not enabled. Both still require benchmarking,
+  not assumed wins. The TorchTPU body has a separate compile path; its
+  `run_t7.py` launcher gates training on a smoke, then tries compilation
+  with scoped-VMEM retries and an eager fallback for E1001 failures.
 - The universal launcher can select CUDA with `--backend auto` or `--backend
   cuda`; on CUDA, `--batch-size auto` passes the real forward/loss/backward
   probe to choose a batch from available VRAM.
@@ -102,9 +104,11 @@ python training/run.py \
 
 `--data-dir` must point to a directory containing `train/`, `val/` and `test/`
 with the paired image/mask layout described in `training/configs/README.md`;
-adjust it if the Kaggle dataset has an extra wrapping directory. Kaggle's
-documented run ceilings are 12 hours for GPU and 9 hours for TPU notebooks, so
-save the first-epoch projection and checkpoints to persistent output.
+adjust it if the Kaggle dataset has an extra wrapping directory. This command's
+`--config` is forwarded only on CUDA/CPU; TPU adapters read
+`training/config.json` with their own T7 overrides and generate data in-session.
+Kaggle's documented run ceilings are 12 hours for GPU and 9 hours for TPU
+notebooks, so save the first-epoch projection and checkpoints to persistent output.
 
 Use Kaggle's actual runtime device printout to confirm which GPU was assigned;
 requesting an A100 in metadata does not guarantee that the account/runtime has
@@ -128,7 +132,8 @@ can preserve them.
 - Benchmark `channels_last` with BF16 as a separate experiment because the
   model is convolution-heavy. Check output parity and class metrics before
   adopting it.
-- Benchmark `torch.compile` only after eager baseline is healthy. Include
+- Benchmark `torch.compile` (`--compile`, or `training.compile` in the config)
+  only after eager baseline is healthy. Include
   compilation startup in total wall time and reuse a fixed shape to avoid
   recompilation. Keep eager as fallback if the compile gains do not repay
   startup or if compilation fails.
@@ -145,10 +150,11 @@ can preserve them.
 - Profile step time, input stalls, MXU utilization and HBM. The Kaggle v5e-8
   kernel and Colab v6e-1 runtime are different topologies and software stacks;
   transfer throughput settings only after a short run on the target runtime.
-- Keep the TPU compile path opt-in until its smoke and full forward/backward
-  probe pass on the exact runtime image. The earlier TorchTPU materialization
-  failure and later compiler failure show why TPU compilation cannot be
-  presumed healthy from a successful model load.
+- Use the TorchTPU launcher's smoke gate before its compiled run; direct
+  `train_torchtpu.py` keeps compilation behind `--compile`. Validate the full
+  forward/backward path on the exact runtime image. The earlier TorchTPU
+  materialization failure and later compiler failure show why TPU compilation
+  cannot be presumed healthy from a successful model load.
 
 ## Quality improvements with higher expected value than using more memory
 

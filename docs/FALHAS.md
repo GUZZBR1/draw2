@@ -30,7 +30,7 @@ Convenções:
 | F-01 | Tinta repassada/reimpressa em camadas | acumulador/orquestração | bloqueante | parcial — ver F-01 |
 | F-02 | Traço fino/fraco apagado (nunca chega ao canvas) | tinta | bloqueante | sim |
 | F-03 | Mão confundida com papel | folha/cena | maior | sem régua dedicada |
-| F-04 | Mão cobrindo o desenho: conteúdo some, atrasa ou duplica | cena/acumulador | maior | sem régua ainda |
+| F-04 | Mão cobrindo o desenho: conteúdo some, atrasa ou duplica | cena/acumulador | maior | parcial — testes sintéticos, sem replay real |
 | F-05 | Tinta fantasma em página vazia | tinta | maior | sim |
 | F-06 | Impresso vazando como tinta | tinta | maior | sim |
 | F-07 | Canvas muda sem tinta nova (invariância violada) | orquestração | bloqueante | parcial — ver F-07 |
@@ -176,23 +176,28 @@ trechos somem, voltam atrasados ou aparecem duplicados/deslocados.
   — por desenho, o conteúdo sob a mão é preservado. Mas se a máscara
   de mão erra (mão não detectada), o pixel é julgado como visível sem
   tinta e pode ser **apagado** pela histerese (fração cai a `exit`).
-- No caminho page-clean **não há máscara de visibilidade**: a
-  trabalhadora recebe o warp cru, com a mão dentro
-  (`draw/ink_layers.py`, `_PageCleanWorker`); a tinta confirmada não
-  sai (camada monotônica na geração), mas tinta **nova** desenhada
-  sob/perto da mão entra no voto com prob ~0 nas passadas cobertas —
-  confirma tarde, ou só como provisória que retrata (some da tela) e
-  volta quando a mão sai: o "duplica/atrasa" que o usuário vê.
+- No caminho page-clean, a máscara de visibilidade **já está integrada**
+  (`draw/ink_layers.py`, `_PageCleanWorker`): com MediaPipe e o modelo
+  de mão disponíveis, a trabalhadora obtém a máscara no warp e a
+  registra junto com as probabilidades. Pixel coberto não vota e a
+  provisória fica preservada sob a mão; a confirmada continua monotônica
+  na geração. O modelo ainda recebe o warp cru. Sem máscara disponível,
+  ou quando ela erra, pixels ocultos continuam entrando como visíveis,
+  com risco de atraso, retração da provisória e falsa tinta.
 - Se a mão cobre a borda da folha e o tracker perde a folha, vale
-  F-09: geração nova e a página inteira é republicada.
+  F-09: a reabertura pede recuperação de identidade. O canvas é preservado
+  se a tinta visível reencontra a referência; pouca visibilidade adia a
+  decisão. Uma decisão errada de página nova ainda pode zerá-lo.
 
 **Severidade: maior.** Desenhar é, por definição, mão sobre o desenho
 metade do tempo.
 
-**Como se mede — SEM RÉGUA AINDA.** Nenhuma régua atual injeta
-oclusão de pixels da mão: os quatro regimes de mão da régua de
-re-registro são sinais de presença/movimento, não uma mão no warp.
-Régua que falta: replay de sequência real/sintética em que
+**Como se mede — régua parcial.** `tests/test_ink_occlusion.py` injeta
+visibilidade sintética e verifica abstenção de pixels ocultos, preservação
+da provisória e recuperação de identidade só pela tinta visível (ou
+adiamento quando quase toda a referência está coberta). Os quatro regimes
+de mão da régua de re-registro continuam sendo sinais de presença/movimento,
+não uma mão no warp. Régua que falta: replay de sequência real/sintética em que
 uma mão (real, de vídeo; ou máscara recortada) cruza uma página já
 desenhada; medir (a) px confirmados antes × depois da oclusão
 (perda = qualquer queda), (b) atraso até tinta nova sob a mão
@@ -201,16 +206,14 @@ nova no GT. A infraestrutura de replay do app existe
 (`tools/replay_orchestration.py`); falta o corpus de oclusão e o
 gabarito.
 
-**Ataque de oclusão pendente (frente separada):** tratar evidência
-oculta como desconhecida, em vez de voto negativo, e transportar a
-visibilidade na mesma geometria da probabilidade. O patch foi
-reportado em outra worktree, mas não está integrado nesta `main`;
-testes relatados ali não são prova de integração aqui. Cobrar perda
+**Ataque de oclusão integrado; validação real pendente (frente separada):**
+a evidência oculta já é tratada como desconhecida e a visibilidade
+acompanha a geometria da probabilidade em `main`. Ainda falta cobrar perda
 zero de confirmado, nenhuma cópia depois da desoclusão e atraso de
 tinta nova sob a mão em passadas, incluindo erro/ausência do sinal
 de mão. Isso não corrige o recall de F-11: o desencontro de níveis
 de comparação acontece também sem oclusão. O experimento de tremor
-abaixo não implementa nem presume esse patch.
+abaixo não é validação de oclusão.
 
 ## F-05 — Tinta fantasma
 
@@ -869,7 +872,8 @@ F-11 com portão na régua de re-registro, mas ainda sem vídeo real),
 **F-08** (componentes medidos, sem orçamento de ponta a ponta),
 **F-11** (replay de identidade e balanço de 314 px com página real,
 sem vídeo real) e **F-09** (quedas contadas
-sem limiar). Sem régua dedicada: **F-03, F-04 e F-10** — falhas de
+sem limiar); **F-04** tem testes de visibilidade sintética, ainda sem
+corpus de oclusão real. Sem régua dedicada: **F-03 e F-10** — falhas de
 cena/acumulador, não de modelo isolado.
 
 O "moveu = mesmo canvas" de F-07/F-09 deixou de ser buraco de

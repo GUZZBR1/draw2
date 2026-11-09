@@ -90,7 +90,7 @@ diagnostics, experiments, and custom models.
 | `--source N` or URL | Local webcam by index (default 0) or MJPEG stream by URL |
 | `--format a4\|a5\|a3\|carta\|caderno` | Portrait paper format, fixed for this session (`--format` > `DRAW_FORMAT` > `a4`) |
 | `--neural [model.onnx]` | Neural sheet detector with a custom model. Default: `models/draw_seg_v3_dyn.onnx` when present, else `DRAW_NEURAL_MODEL` |
-| `--page-clean [model.onnx]` | Page-clean ink model. Default: `models/page_clean_unet.onnx` when present, else `DRAW_PAGE_CLEAN_MODEL` |
+| `--page-clean [model.onnx]` | Page-clean ink model. Default: `DRAW_PAGE_CLEAN_MODEL` or `models/page_clean_unet.onnx` |
 | `--legacy-ink` | The pre-neural ink stack (adaptive threshold heuristic, `--ink-model`, `--session-baseline`, `--hand-model`) instead of the page-clean model |
 | `--ink-model [model.onnx]` | Learned ink model inside the legacy stack, replacing the heuristic |
 | `--hand-model [model.task]` | MediaPipe hand model for the legacy stack. Default: `DRAW_HAND_MODEL` or `models/hand_landmarker.task` |
@@ -147,9 +147,10 @@ exit.
 
 Per frame: the camera delivers a frame; a detector finds the sheet and
 returns its four corners; a homography rectifies the page to a top view
-of 850 × 1200 px; the ink stage separates stroke from paper in that
-view and updates the digital canvas. Detection and ink run on worker
-threads (latest-wins); the main loop never waits for a model pass.
+of 850 × 1200 px by default (other formats use the grid above); the ink
+stage separates stroke from paper in that view and updates the digital
+canvas. Detection and ink run on worker threads (latest-wins); the main
+loop never waits for a model pass.
 
 ### Sheet detection
 
@@ -171,15 +172,21 @@ does not reliably distinguish handwriting from printed content. New ink
 appears immediately as a provisional layer; the confirmed canvas is
 what a multi-pass vote ratifies, with a frontier gate that keeps
 sub-threshold borders from accumulating into strokes no single pass
-saw. Only real change moves the canvas: when the page is settled and
-nothing is being drawn, the ink worker rests at zero passes — moving
-the notebook re-registers geometry without touching the drawing.
+saw. With a hand-presence signal, the ink worker rests at zero passes
+once the confirmed output is quiet and the hand is absent or still.
+Without that signal, it slows to a 1 Hz probe instead. Notebook movement
+re-registers geometry before voting, but canvas invariance during movement
+remains an open failure (F-07/F-09 in `docs/FALHAS.md`).
 
 Hand presence comes from MediaPipe landmarks, sampled asynchronously.
-In the current page-clean path, presence controls the ink worker's
-cadence and rest behavior; the page-clean model still receives the
-unmasked warp, so pixels covered by the hand are not yet treated as
-unknown evidence. Occlusion-aware ink is an open issue.
+In the page-clean path, presence controls cadence and rest behavior.
+When the hand model and MediaPipe are available, a per-pass hand mask
+also marks covered pixels as unknown evidence: they do not vote,
+provisional ink is preserved under the hand, and page identity uses
+only visible reference ink (or defers when too little is visible).
+The model still receives the unmasked warp; visibility follows the
+same registration as its probabilities. Without the mask, this
+protection is unavailable; real occlusion reliability remains unproven.
 
 ### Fallbacks
 
@@ -206,12 +213,14 @@ same pass times.
 
 ## Models and training
 
-All training runs on Kaggle (GPU). The author's real desk frames live
-in private datasets and never enter this repository.
+Training runs through versioned GPU/TPU adapters launched from Kaggle
+or Colab. The author's real desk frames live in private datasets and
+never enter this repository.
 
-- The sheet detector is trained by `training/train.py`, driven on
-  Kaggle by `notebooks/train_segformer_kaggle.ipynb`, from public
-  document datasets (MIDV-2020, SmartDoc, school-notebooks) plus the
+- `training/run.py` routes CUDA/CPU to `training/train.py`, XLA to
+  `training/train_tpu.py`, and TorchTPU to `training/run_t7.py`.
+  Thin launchers live in `training/launchers/`. Detector data comes from
+  public document datasets (MIDV-2020, SmartDoc, school-notebooks) plus the
   author's labeled desk frames.
 - A model is judged before it is promoted: the gate is the sealed real
   replay and the live desk test, never a synthetic score alone.
@@ -224,7 +233,10 @@ in private datasets and never enter this repository.
 
 ## Repository layout
 
-- `draw/` — the application: `app.py` (main loop, camera), `neural.py`
+- `draw/` — the application: `app.py` (main loop), `capture.py`
+  (camera and asynchronous I/O), `sheet_track.py` (sheet tracking),
+  `hand_presence.py` (presence worker), `ink_layers.py` (ink worker,
+  registration and layered canvas), `neural.py`
   (sheet detector), `paper.py` (classic detector and homography),
   `page_clean.py` (ink model), `ink.py` (legacy ink stack),
   `hand.py` (hand tracking), `view.py` (window composition),
@@ -235,7 +247,8 @@ in private datasets and never enter this repository.
 - `tools/` — operator tools: `fetch_models.py`, `eval_real_frames.py`,
   `label_frames.py`, `judge.py`, and the experiment runner in
   `tools/runner/`.
-- `training/`, `notebooks/` — the detector training route (Kaggle).
+- `training/` — versioned training bodies, configs and Kaggle/Colab
+  launchers; `notebooks/` retains the earlier Kaggle detector notebook.
   [The training guide](docs/TREINO.md) covers dataset integrity, the
   U-Net holdout contract, ONNX delivery gates, and same-checkpoint
   384/256 evaluation.
@@ -260,8 +273,11 @@ pytest                                 # full suite
 python tests/selftest.py               # synthetic-scene pipeline check
 ```
 
-CI (`.github/workflows/tests.yml`) runs ruff, the suite, and the
-selftest on Python 3.11 and 3.12.
+CI (`.github/workflows/ci.yml`) always runs ruff and lightweight contracts
+on pushes/PRs (Python 3.12); path filters select the full suite/selftest,
+CPU training contracts and site build. Nightly/manual runs check the full
+suite and selftest on Python 3.11 and 3.12, plus a report-only synthetic
+re-registration replay.
 
 ## Limitations
 
