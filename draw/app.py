@@ -1126,9 +1126,10 @@ def run(
                                     f"Pagina anterior salva em {path}"
                                 ),
                             )
-                        clean_generation = ink_worker.new_generation()
                         if cad_live_bridge is not None:
-                            cad_live_bridge.new_page()
+                            cad_live_bridge.new_page(
+                                clean_generation, turn_canvas)
+                        clean_generation = ink_worker.new_generation()
                         clean_display_version = 0
                         clean_provisional_mask = None
                         clean_mask = None

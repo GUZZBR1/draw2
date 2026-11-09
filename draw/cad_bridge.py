@@ -368,6 +368,7 @@ class CadBridge:
         self._condition = threading.Condition()
         self._pending = None
         self._page_turn = False
+        self._turn_job = None
         self._stopped = False
         self._thread = None
         self.last_error = None
@@ -386,8 +387,18 @@ class CadBridge:
             self._pending = (generation, np.array(mask, copy=True))
             self._condition.notify_all()
 
-    def new_page(self):
+    def new_page(self, generation=None, final_mask=None):
+        """Fecha a página: a última máscara dela entra antes da virada.
+
+        final_mask (a página que saiu, se o app tiver) vence a máscara
+        pendente; sem ela, a pendente ainda não vetorizada é a última
+        passada da página e não pode se perder.
+        """
         with self._condition:
+            job = self._pending
+            if final_mask is not None:
+                job = (generation, np.array(final_mask, copy=True))
+            self._turn_job = job
             self._pending = None
             self._page_turn = True
             self._condition.notify_all()
@@ -430,16 +441,21 @@ class CadBridge:
                 if self._page_turn:
                     self._page_turn = False
                     turn = True
+                    job = self._turn_job
+                    self._turn_job = None
                 else:
                     turn = False
-                wait_s = last_pass + self._min_interval_s - self._clock()
-                if not turn and wait_s > 0:
-                    self._condition.wait(timeout=wait_s)
-                    continue
-                job = None if turn else self._pending
-                self._pending = None
+                    wait_s = (
+                        last_pass + self._min_interval_s - self._clock())
+                    if wait_s > 0:
+                        self._condition.wait(timeout=wait_s)
+                        continue
+                    job = self._pending
+                    self._pending = None
             try:
                 if turn:
+                    if job is not None:
+                        self.process(*job)
                     self.turn_page()
                 else:
                     last_pass = self._clock()

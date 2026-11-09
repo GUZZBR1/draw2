@@ -165,6 +165,31 @@ def test_worker_thread_publishes_and_survives_errors(monkeypatch):
         bridge.stop()
 
 
+def test_page_turn_flushes_last_mask_of_the_page():
+    hub = _Hub()
+    bridge = cb.CadBridge(hub, min_interval_s=60.0)
+    bridge.start()
+    try:
+        first = _canvas()
+        cv2.line(first, (100, 300), (300, 300), 255, 6)
+        bridge.submit(1, first)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not hub.last["strokes"]:
+            time.sleep(0.02)
+        final = first.copy()
+        cv2.circle(final, (425, 800), 100, 255, 6)
+        bridge.submit(1, final)  # ainda no intervalo: fica pendente
+        bridge.new_page()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and hub.last["page"] != 2:
+            time.sleep(0.02)
+        assert hub.last["page"] == 2
+        kinds = sorted(s["kind"] for s in hub.last["history"][0]["strokes"])
+        assert kinds == ["circle", "line"]
+    finally:
+        bridge.stop()
+
+
 @pytest.fixture
 def server(tmp_path):
     (tmp_path / "index.html").write_text("<h1>cad</h1>", encoding="utf-8")
