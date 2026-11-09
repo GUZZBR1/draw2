@@ -408,7 +408,8 @@ canvas.addEventListener('pointerdown', (ev) => {
       finishDraft();
       return;
     }
-    draft.push(point);
+    const last = draft[draft.length - 1];
+    if (!last || dist(last, point) > 1e-6) draft.push(point);
   } else if (!draft.length) {
     draft = [point];
   } else {

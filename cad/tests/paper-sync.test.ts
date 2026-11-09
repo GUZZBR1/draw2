@@ -67,3 +67,13 @@ test('cliente que chega atrasado importa o histórico e a sessão nova congela o
   assert.equal(other.entities.filter((e) => e.layer === LIVE_LAYER).length, 0);
   assert.equal(other.entities.length, 2);
 });
+
+test('item do papel editado no CAD sobrevive à virada de página', () => {
+  const doc = newDoc();
+  applyPaperState(doc, state());
+  const line = doc.entities.find((e) => e.kind === 'line')!;
+  detachFromPaper(doc, line);
+  line.points[1] = { x: 70, y: 10 };
+  applyPaperState(doc, state({ page: 2, strokes: [], history: [] }));
+  assert.ok(doc.entities.some((e) => e.id === line.id && e.points[1].x === 70));
+});

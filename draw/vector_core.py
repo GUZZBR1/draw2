@@ -123,8 +123,17 @@ def trace_polylines(skel):
 
     anchors = {}
     node_pixels = {}
+    # Pixels agrupados por nó numa ordenação só (estável, mantém a
+    # ordem de varredura): labels == nid por nó era O(nós x pixels).
+    all_ys, all_xs = np.nonzero(labels)
+    order = np.argsort(labels[all_ys, all_xs], kind="stable")
+    all_ys, all_xs = all_ys[order], all_xs[order]
+    bounds = np.searchsorted(
+        labels[all_ys, all_xs], np.arange(1, n_nodes + 1)
+    )
     for nid in range(1, n_nodes):
-        ys, xs = np.nonzero(labels == nid)
+        ys = all_ys[bounds[nid - 1]:bounds[nid]]
+        xs = all_xs[bounds[nid - 1]:bounds[nid]]
         if len(xs) == 0:
             continue
         anchors[nid] = (float(xs.mean()), float(ys.mean()))

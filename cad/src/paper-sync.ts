@@ -53,11 +53,11 @@ export function applyPaperState(doc: Doc, state: PaperState): boolean {
     doc.paper = { session: state.session, page: state.page, importedPages: [], suppressed: [] };
     changed = true;
   } else if (state.page !== doc.paper.page) {
-    if (!doc.paper.importedPages.includes(doc.paper.page) && state.history.some((h) => h.page === doc.paper.page)) {
+    if (!doc.paper.importedPages.includes(doc.paper.page)) {
       freezeLive(doc, `Papel — página ${doc.paper.page}`);
       doc.paper.importedPages.push(doc.paper.page);
     } else {
-      doc.entities = doc.entities.filter((e) => e.layer !== LIVE_LAYER);
+      doc.entities = doc.entities.filter((e) => e.layer !== LIVE_LAYER || !e.paperId);
     }
     doc.paper.page = state.page;
     changed = true;

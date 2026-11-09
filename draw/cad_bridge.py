@@ -57,68 +57,86 @@ def join_polylines(polylines, tolerance_px=JOIN_TOLERANCE_PX):
     liga exatamente duas pontas (canto de retângulo, junção residual),
     as duas polilinhas são o mesmo risco e viram uma só. Ponta
     compartilhada por três ou mais é cruzamento de verdade e fica.
+    Agrupa as pontas numa grade de células do tamanho da tolerância,
+    para a página densa não virar O(n²).
     """
     lines = [
         {"points": np.asarray(p["points"], dtype=np.float64),
          "closed": bool(p["closed"])}
         for p in polylines
     ]
-    changed = True
-    while changed:
-        changed = False
-        ends = []
-        for i, line in enumerate(lines):
-            if line["closed"] or len(line["points"]) < 2:
-                continue
+    ends = []
+    for i, line in enumerate(lines):
+        if not line["closed"] and len(line["points"]) >= 2:
             ends.append((i, 0, line["points"][0]))
             ends.append((i, 1, line["points"][-1]))
-        for a in range(len(ends)):
-            i, side_i, point_i = ends[a]
-            near = [
-                (j, side_j)
-                for j, side_j, point_j in ends
-                if (j, side_j) != (i, side_i)
-                and np.hypot(*(point_j - point_i)) <= tolerance_px
-            ]
-            if len(near) != 1:
-                continue
-            j, side_j = near[0]
-            others = [
-                (k, side_k)
-                for k, side_k, point_k in ends
-                if (k, side_k) not in ((i, side_i), (j, side_j))
-                and np.hypot(*(point_k - ends_point(lines, j, side_j)))
-                <= tolerance_px
-            ]
-            if others:
-                continue
-            first = lines[i]["points"]
-            if side_i == 0:
-                first = first[::-1]
-            if i == j:
-                lines[i] = {"points": first[:-1] if len(first) > 3 else first,
-                            "closed": len(first) > 3}
-            else:
-                second = lines[j]["points"]
-                if side_j == 1:
-                    second = second[::-1]
-                merged = np.vstack([first, second[1:]])
-                closed = (
-                    len(merged) > 3
-                    and np.hypot(*(merged[0] - merged[-1])) <= tolerance_px
-                )
-                if closed:
-                    merged = merged[:-1]
-                lines[i] = {"points": merged, "closed": bool(closed)}
-                del lines[j]
-            changed = True
-            break
-    return lines
+    parent = list(range(len(ends)))
 
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
 
-def ends_point(lines, index, side):
-    points = lines[index]["points"]
-    return points[0] if side == 0 else points[-1]
+    cell = max(float(tolerance_px), 1e-6)
+    grid = {}
+    for k, (_i, _s, point) in enumerate(ends):
+        gx, gy = int(point[0] // cell), int(point[1] // cell)
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for other in grid.get((gx + dx, gy + dy), ()):
+                    if np.hypot(*(ends[other][2] - point)) <= tolerance_px:
+                        parent[find(k)] = find(other)
+        grid.setdefault((gx, gy), []).append(k)
+    clusters = {}
+    for k in range(len(ends)):
+        clusters.setdefault(find(k), []).append(k)
+    link = {}
+    for members in clusters.values():
+        if len(members) == 2:
+            a, b = (ends[m][:2] for m in members)
+            link[a] = b
+            link[b] = a
+
+    used = [False] * len(lines)
+    out = []
+
+    def oriented(index, entry_side):
+        pts = lines[index]["points"]
+        return pts if entry_side == 0 else pts[::-1]
+
+    def chain(index, entry_side):
+        pts = [oriented(index, entry_side)]
+        used[index] = True
+        exit_end = (index, 1 - entry_side)
+        while exit_end in link:
+            nxt, nxt_side = link[exit_end]
+            if used[nxt]:
+                break
+            used[nxt] = True
+            pts.append(oriented(nxt, nxt_side)[1:])
+            exit_end = (nxt, 1 - nxt_side)
+        return np.vstack(pts), link.get(exit_end) == (index, entry_side)
+
+    for i, line in enumerate(lines):
+        if used[i] or line["closed"] or len(line["points"]) < 2:
+            continue
+        for side in (0, 1):
+            if (i, side) not in link:
+                merged, _ = chain(i, side)
+                out.append({"points": merged, "closed": False})
+                break
+    for i, line in enumerate(lines):
+        if used[i]:
+            continue
+        if line["closed"] or len(line["points"]) < 2:
+            out.append(line)
+            continue
+        merged, cyclic = chain(i, 0)
+        closed = cyclic and len(merged) > 3
+        out.append({"points": merged[:-1] if closed else merged,
+                    "closed": closed})
+    return out
 
 
 def polyline_length(points, closed=False):
@@ -326,8 +344,8 @@ class CadPageTracker:
     def snapshot(self):
         return {
             "page": self.page,
-            "strokes": self.strokes,
-            "history": self.history,
+            "strokes": list(self.strokes),
+            "history": list(self.history),
         }
 
 
