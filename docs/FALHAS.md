@@ -315,6 +315,21 @@ pode confiar nele.
   obrigatória. Ainda não há limiar pré-registrado em `tools/judge.py`;
   o modo hold com balanço realista segue fora da bancada e falta
   vídeo real de caderno movido, não a página real no replay.
+- **Re-baseline v2 do ECC / #46 (2026-11-09):**
+  `tools/replay_reregister_v2.py`, pré-inscrição congelada antes das páginas
+  em `docs/F07_REPLAY_V2_A_R1_2026-11-09.json`, guarda em
+  `tests/test_replay_reregister_v2.py`. Modo A: âncora fixa em `same_page`,
+  helpers produtivos sem mudança; mapas já retificados expressos na base da
+  passada antes do registro, sem injetar movimento físico duas vezes.
+  Quads consecutivos são só diagnóstico. Uma página real f01–f30, mesmos
+  inputs nos braços explícitos `DRAW_ECC_REFINE=0` e `1`, sem pooling.
+  F-07 OFF: **12/15 decisivos**, 3 falhas, 5 vacuosos. ON: **20 adiados,
+  denominador zero**, não «0/20 falhas»: todos os baselines tiveram rejeições
+  ECC e o protocolo exclui episódios com baseline afetado de todos os votos.
+  Rejeição nunca é voto de página nova. Números, hashes e limitações em
+  `docs/F07_REPLAY_V2_A_R1_RESULTADOS_2026-11-09.md`. É régua de contrato sobre
+  mapas, não replay físico nem recomendação sobre a flag; faltam as outras
+  três páginas e frames brutos. A baseline v1 fica histórica, não comparável.
 
 **Registro já ativo; o que falta é o portão.** Em
 `draw/ink_layers.py`, `_PageCleanWorker._work` recalcula
