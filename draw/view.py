@@ -2,7 +2,7 @@
 
 Monta a interface com:
 - Barra superior Studio (logo DRAW, indicador de captura ao vivo e ponte CAD).
-- Barra vertical lateral a esquerda da camera com atalhos de teclado ([S], [C], [F], [Q]).
+- Barra vertical compacta de atalhos a esquerda da camera ([S], [C], [F], [Q]).
 - Painel central com a visao da camera.
 - Painel direito com a folha ao vivo enquadrada em moldura de papel.
 - Rodape sutil com informacoes de formato e identidade.
@@ -185,15 +185,15 @@ def _compose_view(camera_img, canvas_img):
     cv2.line(studio, (split_x, target_h - footer_h), (target_w, target_h - footer_h), COLOR_PAPER_BORDER, 1, cv2.LINE_AA)
     cv2.putText(studio, "A4 850x1200", (split_x + 20, target_h - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.36, COLOR_PAPER_TEXT_MUTED, 1, cv2.LINE_AA)
 
-    # 3. Barra Vertical de Botoes (lado esquerdo da camera)
+    # 3. Barra Vertical Compacta de Botoes (lado esquerdo da camera)
     panel_h = target_h - header_h - footer_h - 16  # 544px
     panel_y = header_h + 8
-    toolbar_x = 16
-    toolbar_w = 96
+    toolbar_x = 12
+    toolbar_w = 56
 
-    _draw_pill(studio, toolbar_x, panel_y, toolbar_w, panel_h, (26, 28, 26), COLOR_BORDER_SUBTLE, radius=8, alpha=0.9)
-    cv2.putText(studio, "ATALHOS", (toolbar_x + 22, panel_y + 26), cv2.FONT_HERSHEY_SIMPLEX, 0.32, COLOR_TEXT_MUTED, 1, cv2.LINE_AA)
-    cv2.line(studio, (toolbar_x + 12, panel_y + 36), (toolbar_x + toolbar_w - 12, panel_y + 36), COLOR_BORDER_SUBTLE, 1, cv2.LINE_AA)
+    _draw_pill(studio, toolbar_x, panel_y, toolbar_w, panel_h, (26, 28, 26), COLOR_BORDER_SUBTLE, radius=6, alpha=0.9)
+    cv2.putText(studio, "KEY", (toolbar_x + 16, panel_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.26, COLOR_TEXT_MUTED, 1, cv2.LINE_AA)
+    cv2.line(studio, (toolbar_x + 8, panel_y + 24), (toolbar_x + toolbar_w - 8, panel_y + 24), COLOR_BORDER_SUBTLE, 1, cv2.LINE_AA)
 
     buttons = [
         ("[S]", "Salvar"),
@@ -201,15 +201,18 @@ def _compose_view(camera_img, canvas_img):
         ("[F]", "Frame"),
         ("[Q]", "Sair"),
     ]
-    btn_y = panel_y + 48
+    btn_y = panel_y + 32
     for key, label in buttons:
-        _draw_pill(studio, toolbar_x + 10, btn_y, toolbar_w - 20, 44, (35, 38, 36), (58, 64, 61), radius=6, alpha=1.0)
-        cv2.putText(studio, key, (toolbar_x + 20, btn_y + 19), cv2.FONT_HERSHEY_DUPLEX, 0.42, COLOR_ACCENT_YELLOW, 1, cv2.LINE_AA)
-        cv2.putText(studio, label, (toolbar_x + 20, btn_y + 34), cv2.FONT_HERSHEY_SIMPLEX, 0.34, COLOR_TEXT_SOFT, 1, cv2.LINE_AA)
-        btn_y += 56
+        bx = toolbar_x + 6
+        bw = toolbar_w - 12
+        bh = 28
+        _draw_pill(studio, bx, btn_y, bw, bh, (35, 38, 36), (58, 64, 61), radius=4, alpha=1.0)
+        cv2.putText(studio, key, (bx + 7, btn_y + 13), cv2.FONT_HERSHEY_DUPLEX, 0.34, COLOR_ACCENT_YELLOW, 1, cv2.LINE_AA)
+        cv2.putText(studio, label, (bx + 5, btn_y + 23), cv2.FONT_HERSHEY_SIMPLEX, 0.26, COLOR_TEXT_SOFT, 1, cv2.LINE_AA)
+        btn_y += 34
 
     # 4. Painel da Camera (a direita da barra de botoes)
-    cam_area_x = toolbar_x + toolbar_w + 12
+    cam_area_x = toolbar_x + toolbar_w + 10
     cam_area_w = split_x - cam_area_x - 12
     cam_h, cam_w = camera_img.shape[:2]
     aspect_cam = cam_w / max(1, cam_h)
