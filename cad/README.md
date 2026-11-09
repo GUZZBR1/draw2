@@ -35,6 +35,8 @@ executa os `.ts` direto; exige Node 22.18+).
 | `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y` | Desfazer / refazer |
 | `Ctrl+A` / `Ctrl+S` | Selecionar tudo / salvar JSON |
 
+O botão **Tema** alterna entre Sistema, Claro e Escuro, e a escolha fica salva no navegador. No escuro, a folha e a grade ficam escuras e o traço quase preto aparece em branco, como a cor 7 do AutoCAD. Só a tela muda: o DXF, o SVG e o JSON mantêm as cores originais.
+
 As coordenadas ficam em mm. O modelo usa o sistema do papel (origem no
 topo, y para baixo). A barra de status, os campos de propriedade e o
 DXF usam y para cima, como no CAD.

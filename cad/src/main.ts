@@ -18,6 +18,7 @@ import { addLayer, cloneDoc, DRAW_LAYER, layerOf, LIVE_LAYER, newDoc, newId, par
 import { applyPaperState, detachFromPaper } from './paper-sync.ts';
 import { toDxf } from './dxf.ts';
 import { toSvg } from './svg.ts';
+import { displayColor, nextTheme, parseTheme, THEME_KEY, THEME_LABEL, type ThemeChoice } from './theme.ts';
 
 type Tool = 'select' | 'line' | 'polyline' | 'rect' | 'circle' | 'pan';
 type Drag =
@@ -54,6 +55,29 @@ let draft: Pt[] = [];
 let drag: Drag | null = null;
 let hover: string | null = null;
 let spaceDown = false;
+let theme: ThemeChoice = parseTheme(safeGet(THEME_KEY));
+const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+function safeGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+const isDark = () => theme === 'dark' || (theme === 'system' && darkQuery.matches);
+const cssVar = (name: string, fallback: string) =>
+  getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+const layerColor = (id: string) => displayColor(layerOf(doc, id)?.color ?? '#000000', isDark());
+
+function applyTheme(): void {
+  if (theme === 'system') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = theme;
+  const button = document.getElementById('theme');
+  if (button) button.textContent = `Tema: ${THEME_LABEL[theme]}`;
+  render();
+}
 
 function loadDoc(): Doc {
   try {
@@ -240,20 +264,20 @@ function previewEntity(): Entity | null {
 function render(): void {
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
-  ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--canvas-bg') || '#dee2e6';
+  ctx.fillStyle = cssVar('--canvas-bg', '#dee2e6');
   ctx.fillRect(0, 0, w, h);
 
   const a = toScreen({ x: 0, y: 0 });
   const b = toScreen({ x: doc.sheet.width, y: doc.sheet.height });
-  ctx.fillStyle = '#ffffff';
-  ctx.shadowColor = 'rgba(0,0,0,0.18)';
+  ctx.fillStyle = cssVar('--sheet', '#ffffff');
+  ctx.shadowColor = cssVar('--sheet-shadow', 'rgba(0,0,0,0.18)');
   ctx.shadowBlur = 12;
   ctx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
   ctx.shadowBlur = 0;
 
   for (const step of [5, 10]) {
     if (step * view.scale < 7) continue;
-    ctx.strokeStyle = step === 10 ? '#e3e8ee' : '#f1f3f5';
+    ctx.strokeStyle = step === 10 ? cssVar('--grid-major', '#e3e8ee') : cssVar('--grid-minor', '#f1f3f5');
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (let x = step; x < doc.sheet.width; x += step) {
@@ -268,19 +292,19 @@ function render(): void {
     }
     ctx.stroke();
   }
-  ctx.strokeStyle = '#adb5bd';
+  ctx.strokeStyle = cssVar('--sheet-border', '#adb5bd');
   ctx.strokeRect(a.x + 0.5, a.y + 0.5, b.x - a.x, b.y - a.y);
 
   for (const e of doc.entities) {
     if (!isVisible(e)) continue;
-    const color = layerOf(doc, e.layer)?.color ?? '#000';
+    const color = layerColor(e.layer);
     if (selection.has(e.id)) drawEntity(e, '#f59f00', 3);
     else if (hover === e.id) drawEntity(e, color, 2.6);
     else drawEntity(e, color, 1.6);
   }
 
   const preview = previewEntity();
-  if (preview) drawEntity(preview, layerOf(doc, doc.activeLayer)?.color ?? '#000', 1.4, true);
+  if (preview) drawEntity(preview, layerColor(doc.activeLayer), 1.4, true);
 
   if (drag?.mode === 'box') {
     const s = toScreen(drag.start);
@@ -752,6 +776,16 @@ $('undo').addEventListener('click', undo);
 $('redo').addEventListener('click', redo);
 $('delete').addEventListener('click', deleteSelection);
 $('fit').addEventListener('click', fit);
+$('theme').addEventListener('click', () => {
+  theme = nextTheme(theme);
+  try {
+    localStorage.setItem(THEME_KEY, theme);
+  } catch {
+    /* sem armazenamento: vale só nesta aba */
+  }
+  applyTheme();
+});
+darkQuery.addEventListener('change', () => theme === 'system' && render());
 $('add-layer').addEventListener('click', () => {
   const name = prompt('Nome da nova camada', `Camada ${doc.layers.length + 1}`)?.trim();
   if (!name) return;
@@ -787,6 +821,7 @@ function connectPaper(): void {
 }
 
 new ResizeObserver(resize).observe(canvas);
+applyTheme();
 setTool('select');
 refreshPanels();
 resize();
