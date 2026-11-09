@@ -127,8 +127,13 @@ def _make_handler(hub, dist_dir):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-store")
-            self.send_header("Connection", "keep-alive")
+            # Sem keep-alive: quando o hub fecha, a conexão precisa
+            # terminar (EOF) para o EventSource reconectar no servidor
+            # novo; com keep-alive o handler voltava a esperar outro
+            # pedido no mesmo socket e a aba ficava presa no estado velho.
+            self.send_header("Connection", "close")
             self.end_headers()
+            self.close_connection = True
             state = hub.state()
             try:
                 self._event(state)
