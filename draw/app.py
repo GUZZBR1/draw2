@@ -1482,6 +1482,11 @@ def main():
                 "--ink-model sem caminho: passe o arquivo .onnx ou "
                 "defina a variavel DRAW_INK_MODEL"
             )
+    if args.cad and args.markers:
+        parser.error(
+            "--cad nao combina com --markers: o CAD le a camada "
+            "confirmada, que o modo de marcadores nao acumula"
+        )
     if args.session_baseline and args.markers:
         parser.error("--session-baseline nao combina com --markers")
     hand_model = None
