@@ -10,11 +10,13 @@ from contextlib import contextmanager
 from functools import partial
 import hashlib
 import inspect
+import io
 import json
 import os
 from pathlib import Path
 import platform
 import sys
+import zipfile
 
 import cv2
 import numpy as np
@@ -83,12 +85,28 @@ def validate_protocol(path=PROTOCOL):
     return protocol
 
 
-def load_bench(root, protocol):
+def load_bench(root, protocol, *, package_path):
     """Read-only cache hits; never imports the private cache's inference code."""
+    package_bytes = Path(package_path).read_bytes()
+    if sha256(package_bytes) != protocol["baseline_input"]["package_sha256"]:
+        raise ValueError("package SHA-256 differs from preregistration")
+    with zipfile.ZipFile(io.BytesIO(package_bytes)) as archive:
+        return _load_registered_bench(root, protocol, archive)
+
+
+def _load_registered_bench(root, protocol, archive):
     root = Path(root)
     expected = protocol["baseline_input"]
-    index_raw = (root / "cache/cache_index.json").read_bytes()
-    model_hash = sha256((root / "model/page_clean_v2_fixed.onnx").read_bytes())
+    prefix = Path(expected["package"]).stem
+
+    def read_registered(relative):
+        data = (root / relative).read_bytes()
+        if sha256(data) != sha256(archive.read(f"{prefix}/{relative}")):
+            raise ValueError(f"package member mismatch: {relative}")
+        return data
+
+    index_raw = read_registered("cache/cache_index.json")
+    model_hash = sha256(read_registered("model/page_clean_v2_fixed.onnx"))
     if (sha256(index_raw) != expected["cache_index_sha256"]
             or model_hash != expected["model_sha256"]):
         raise ValueError("dataset/model differs from preregistration")
@@ -97,27 +115,27 @@ def load_bench(root, protocol):
     for i in range(1, 31):
         name = f"warp:f{i:02d}"
         entry = index[name]
-        image_path = root / f"warps/f{i:02d}_warp.png"
-        img = cv2.imread(str(image_path))
+        image_bytes = read_registered(f"warps/f{i:02d}_warp.png")
+        img = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
         if img is None or list(img.shape) != entry["shape"]:
             raise ValueError(f"missing/invalid warp: {name}")
         key = sha256(bytes.fromhex(model_hash) + repr(img.shape).encode() + img.tobytes())
         if key != entry["key"] or entry["model_sha256"] != model_hash:
             raise ValueError(f"cache key mismatch: {name}")
-        cache_path = root / f"cache/{key}.npy"
-        cache_bytes = cache_path.read_bytes()
-        prob = np.load(cache_path, allow_pickle=False)
+        cache_bytes = read_registered(f"cache/{key}.npy")
+        prob = np.load(io.BytesIO(cache_bytes), allow_pickle=False)
         if (prob.dtype != np.float32 or prob.shape != (1216, 864)
                 or not np.isfinite(prob).all() or prob.min() < 0 or prob.max() > 1):
             raise ValueError(f"invalid native probability map: {name}")
         entries.append({"name": name, "cache_key": key,
-                        "warp_sha256": sha256(image_path.read_bytes()),
+                        "warp_sha256": sha256(image_bytes),
                         "map_sha256": sha256(cache_bytes)})
         maps.append(prob)
     provenance = {
         "source": "real_anchor_basis_cache", "physical_pages": 1,
         "page_id": "bench-2026-11-07-f01-f30", "cache_hits": 30, "cache_misses": 0,
         "native_grid": [864, 1216], "model_sha256": model_hash,
+        "package_sha256": expected["package_sha256"],
         "cache_index_sha256": sha256(index_raw), "entries": entries,
     }
     provenance["input_fingerprint"] = sha256(
@@ -306,10 +324,10 @@ def runtime():
             "opencv_threads": cv2.getNumThreads()}
 
 
-def run_arm(root, *, ecc_refine_enabled, protocol_path=PROTOCOL):
+def run_arm(root, *, ecc_refine_enabled, package_path, protocol_path=PROTOCOL):
     enabled = require_ecc(ecc_refine_enabled)
     protocol = validate_protocol(protocol_path)
-    drawing, settled, provenance = load_bench(root, protocol)
+    drawing, settled, provenance = load_bench(root, protocol, package_path=package_path)
     with configured_ecc(enabled):
         return _run_page(drawing, settled, provenance, enabled, protocol)
 
@@ -376,10 +394,13 @@ def compare_arms(off, on):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bench-root", type=Path, required=True)
+    parser.add_argument("--package", type=Path, required=True,
+                        help="original ZIP with the preregistered SHA-256")
     parser.add_argument("--ecc-refine", type=int, choices=(0, 1), required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
-    report = run_arm(args.bench_root, ecc_refine_enabled=args.ecc_refine)
+    report = run_arm(args.bench_root, ecc_refine_enabled=args.ecc_refine,
+                     package_path=args.package)
     args.out.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
 
 

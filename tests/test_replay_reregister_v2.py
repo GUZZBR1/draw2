@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sys
 import time
+import zipfile
 
 import cv2
 import numpy as np
@@ -253,17 +254,35 @@ def test_bench_loader_validates_cache_without_inference(tmp_path):
     index_raw = json.dumps(index).encode()
     (tmp_path / "cache/cache_index.json").write_bytes(index_raw)
     protocol = {"baseline_input": {"cache_index_sha256": rr.sha256(index_raw),
-                                   "model_sha256": model_hash}}
-    drawing, settled, provenance = rr.load_bench(tmp_path, protocol)
+                                   "model_sha256": model_hash,
+                                   "package": "unit-bench.zip"}}
+    package_path = tmp_path / "registered.zip"
+
+    def register_package():
+        with zipfile.ZipFile(package_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for directory in ("cache", "warps", "model"):
+                for path in (tmp_path / directory).iterdir():
+                    archive.write(path, f"unit-bench/{path.relative_to(tmp_path)}")
+        protocol["baseline_input"]["package_sha256"] = rr.sha256(package_path.read_bytes())
+
+    register_package()
+    drawing, settled, provenance = rr.load_bench(tmp_path, protocol, package_path=package_path)
     assert len(drawing) == 30 and len(settled) == 3
     assert provenance["cache_hits"] == 30 and provenance["cache_misses"] == 0
     assert len(provenance["entries"]) == 30
+    np.save(cache_path, np.ones(img.shape[:2], np.float32))
+    with pytest.raises(ValueError, match="package"):
+        rr.load_bench(tmp_path, protocol, package_path=package_path)
     np.save(cache_path, np.zeros((10, 10), np.float32))
+    register_package()
     with pytest.raises(ValueError, match="native"):
-        rr.load_bench(tmp_path, protocol)
+        rr.load_bench(tmp_path, protocol, package_path=package_path)
     cache_path.unlink()
     with pytest.raises(FileNotFoundError):
-        rr.load_bench(tmp_path, protocol)
+        rr.load_bench(tmp_path, protocol, package_path=package_path)
+    package_path.write_bytes(package_path.read_bytes() + b"changed")
+    with pytest.raises(ValueError, match="package SHA-256"):
+        rr.load_bench(tmp_path, protocol, package_path=package_path)
 
 
 class ProbIsWarp:
