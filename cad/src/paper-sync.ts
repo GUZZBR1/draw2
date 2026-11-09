@@ -26,6 +26,9 @@ function freezeLive(doc: Doc, label: string): void {
   const layer = addLayer(doc, label, 'papel-pagina');
   for (const e of live) {
     e.layer = layer.id;
+    // Id novo: a camada ao vivo reaproveita p-<página>-<traço> na
+    // sessão seguinte e o congelado não pode colidir com ele.
+    e.id = `e${doc.nextId++}`;
     delete e.paperId;
   }
 }

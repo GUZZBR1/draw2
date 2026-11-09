@@ -77,3 +77,12 @@ test('item do papel editado no CAD sobrevive à virada de página', () => {
   applyPaperState(doc, state({ page: 2, strokes: [], history: [] }));
   assert.ok(doc.entities.some((e) => e.id === line.id && e.points[1].x === 70));
 });
+
+test('congelar dá id novo: sessão seguinte não colide com o congelado', () => {
+  const doc = newDoc();
+  applyPaperState(doc, state());
+  applyPaperState(doc, state({ session: 'S2' }));
+  const ids = doc.entities.map((e) => e.id);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.equal(doc.entities.length, 4);
+});
