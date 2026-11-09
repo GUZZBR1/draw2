@@ -402,7 +402,7 @@ class ReplayWorker:
         self.last_pass_start = now
         if self.confirm_once:
             self.confirm_once = False
-        prob = render_pass(page, true_quad, corners)
+        prob = self.render_observation(page, true_quad, corners)
         first_pass = generation != self.worker_generation
         if first_pass:
             self.worker_generation = generation
@@ -447,6 +447,9 @@ class ReplayWorker:
             self.published = (generation, result["confirmed"])
             self.publish_seq += 1
         return result
+
+    def render_observation(self, page, true_quad, corners):
+        return render_pass(page, true_quad, corners)
 
     def _identity_keeps_page(self, prob, corners, generation):
         """Decisão de identidade da primeira passada (ink_layers)."""
@@ -602,7 +605,7 @@ class ReplayApp:
     """
 
     def __init__(self, hand_state, turn_event_enabled=False,
-                 detect_ms=None, app_logic=None):
+                 detect_ms=None, app_logic=None, worker_factory=ReplayWorker):
         self.hand_state = hand_state
         self.app_logic = APP_LOGIC if app_logic is None else app_logic
         if self.app_logic not in APP_LOGICS:
@@ -615,7 +618,7 @@ class ReplayApp:
             (DETECT_MS if detect_ms is None else detect_ms) / 1000.0
         )
         self.last_det_seq = 0
-        self.worker = ReplayWorker(turn_event_enabled)
+        self.worker = worker_factory(turn_event_enabled)
         self.corner_history = deque(maxlen=_INK_CORNER_HISTORY)
         self.ink_session_open = False
         self.clean_generation = 0
@@ -850,7 +853,8 @@ def compare_canvases(before, after, candidates):
 # --------------------------------------------------------------------
 
 
-def settle_drawing(drawing, settled, hand_config, turn_event_enabled):
+def settle_drawing(drawing, settled, hand_config, turn_event_enabled,
+                   app_factory=ReplayApp):
     """Desenha a sessão sob geometria parada e deixa assentar.
 
     Na sessão de desenho a mão está presente e se mexendo (ou sem
@@ -859,7 +863,7 @@ def settle_drawing(drawing, settled, hand_config, turn_event_enabled):
     shape = settled[0].shape
     quad = base_quad(shape)
     rng = _rng("drawing", str(hand_config))
-    app = ReplayApp(hand_config[0], turn_event_enabled)
+    app = app_factory(hand_config[0], turn_event_enabled)
     drawing_hand = (None, False) if hand_config[0] is None else (True, True)
     target = PASSES_PER_WARP * len(drawing)
     guard = 0
@@ -1034,10 +1038,10 @@ def _settle(ep, settled, quad, rng, hand_config, frames=SETTLE_FRAMES):
         ))
 
 
-def run_control(base, settled, hand_config):
+def run_control(base, settled, hand_config, episode_factory=Episode):
     app, quad = copy.deepcopy(base)
     rng = _rng("control", str(hand_config))
-    ep = Episode(app)
+    ep = episode_factory(app)
     ep.mark()
     _settle(ep, settled, quad, rng, hand_config)
     out = ep.report(quad, quad)
@@ -1049,10 +1053,10 @@ def run_control(base, settled, hand_config):
     return out
 
 
-def run_move(base, settled, hand_config, spec):
+def run_move(base, settled, hand_config, spec, episode_factory=Episode):
     app, quad = copy.deepcopy(base)
     rng = _rng("move", str(spec), str(hand_config))
-    ep = Episode(app)
+    ep = episode_factory(app)
     frames = spec["frames"]
     target = transform_quad(
         quad, spec.get("shift", (0.0, 0.0)), spec.get("angle", 0.0),
@@ -1163,11 +1167,11 @@ def sway_offsets(profile, frames, rng):
     return offsets * (SWAY_AMPLITUDE_PX / max(peak, 1e-6))
 
 
-def run_sway(base, settled, hand_config, profile):
+def run_sway(base, settled, hand_config, profile, episode_factory=Episode):
     app, quad = copy.deepcopy(base)
     rng = _rng("sway", profile, str(hand_config))
     offsets = sway_offsets(profile, SWAY_FRAMES, rng)
-    ep = Episode(app)
+    ep = episode_factory(app)
     for i in range(SWAY_FRAMES):
         ep.step(Frame(
             settled[i % 3], quad, _noisy(quad + offsets[i], rng),
