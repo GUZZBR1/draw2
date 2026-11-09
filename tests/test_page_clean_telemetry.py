@@ -40,10 +40,8 @@ class _BlockingInk:
 
 
 @pytest.mark.lento
-def test_telemetry_counts_replaced_pending_and_stamps_stages(
-        monkeypatch):
-    monkeypatch.setattr(
-        ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
+def test_telemetry_counts_replaced_pending_and_stamps_stages(monkeypatch):
+    monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
     fake = _BlockingInk()
     worker = app_module._PageCleanWorker(fake).start()
     try:
@@ -100,8 +98,7 @@ def test_telemetry_counts_replaced_pending_and_stamps_stages(
 
 @pytest.mark.lento
 def test_telemetry_snapshot_is_a_copy(monkeypatch):
-    monkeypatch.setattr(
-        ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
     fake = _BlockingInk()
     fake.release.set()
     worker = app_module._PageCleanWorker(fake).start()
@@ -166,8 +163,10 @@ def _run_identity_telemetry(monkeypatch, returned, flag):
 @pytest.mark.lento
 @pytest.mark.parametrize("ecc_enabled", ["0", "1"])
 @pytest.mark.parametrize("decision", ["same_page", "new_page"])
-def test_identity_chamfer_is_diagnostic_and_ecc_rejection_only_defers_shadow(
-    monkeypatch, ecc_enabled, decision,
+def test_identity_chamfer_is_diagnostic_and_ecc_rejection_defers_production(
+    monkeypatch,
+    ecc_enabled,
+    decision,
 ):
     monkeypatch.setenv("DRAW_ECC_REFINE", ecc_enabled)
     calls = []
@@ -185,20 +184,38 @@ def test_identity_chamfer_is_diagnostic_and_ecc_rejection_only_defers_shadow(
         assert calls[-2:] == [cv2.MOTION_HOMOGRAPHY, cv2.MOTION_AFFINE]
     off_event = off["page_identity_events"][-1]
     on_event = on["page_identity_events"][-1]
-    assert on_event["decision"] == off_event["decision"] == decision
+    expected_decision = "deferred_ecc_rejected" if ecc_enabled == "1" else decision
+    assert on_event["decision"] == off_event["decision"] == expected_decision
     assert on_event["ecc_rejected"] == (ecc_enabled == "1")
     assert on_event["ecc_refine_enabled"] == int(ecc_enabled)
-    assert on_event["shadow_decision"] == (
-        "defer" if ecc_enabled == "1" else decision
+    assert off_event["ecc_refine_enabled"] == int(ecc_enabled)
+    assert on_event["deferred"] == (ecc_enabled == "1")
+    assert on_event["quarantine_frames"] == int(ecc_enabled)
+    assert on_event["quarantine_reason"] == (
+        "ecc_rejected" if ecc_enabled == "1" else None
     )
+    assert on_event["shadow_decision"] == ("defer" if ecc_enabled == "1" else decision)
     assert set(off_event) == {
-        "generation", "decision", "recall", "containment", "reference_px",
-        "visible_reference_px", "geometry_registered", "threshold",
-        "containment_threshold", "ecc_ms", "ecc_rejected", "ecc_converged",
+        "generation",
+        "decision",
+        "recall",
+        "containment",
+        "reference_px",
+        "visible_reference_px",
+        "geometry_registered",
+        "threshold",
+        "containment_threshold",
+        "ecc_ms",
+        "ecc_rejected",
+        "ecc_converged",
         "ecc_mode",
+        "ecc_refine_enabled",
+        "quarantine_frames",
+        "quarantine_reason",
+        "deferred",
     }
     new_fields = set(on_event) - set(off_event)
-    assert len(new_fields) == 12  # 2 medianas, 8 coberturas, estado e sombra
+    assert len(new_fields) == 11  # 2 medianas, 8 coberturas e sombra
     for key in new_fields:
         assert on["records"][-1][key] == on_event[key]
         assert all(key not in record for record in off["records"])
@@ -215,18 +232,20 @@ def test_identity_chamfer_is_diagnostic_and_ecc_rejection_only_defers_shadow(
 def test_identity_chamfer_default_off_never_computes_or_emits(monkeypatch):
     monkeypatch.setenv("DRAW_ECC_REFINE", "0")
     monkeypatch.setattr(
-        ink_layers_module, "_identity_chamfer_fields",
+        ink_layers_module,
+        "_identity_chamfer_fields",
         lambda *a: pytest.fail("Chamfer desligado nao pode computar"),
     )
     monkeypatch.setattr(
-        cv2, "distanceTransform",
+        cv2,
+        "distanceTransform",
         lambda *a: pytest.fail("Chamfer desligado nao pode computar distancias"),
     )
     explicit, canvas = _run_identity_telemetry(monkeypatch, "same_page", "0")
     default, default_canvas = _run_identity_telemetry(monkeypatch, "same_page", None)
     assert explicit["page_identity_events"] == default["page_identity_events"]
     for record in default["records"]:
-        assert "ecc_refine_enabled" not in record
+        assert record["ecc_refine_enabled"] == 0
         assert "shadow_decision" not in record
         assert not any(key.startswith("chamfer_") for key in record)
     np.testing.assert_array_equal(canvas, default_canvas)

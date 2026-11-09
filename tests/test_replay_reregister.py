@@ -49,8 +49,7 @@ class _ProbIsWarp:
 
 @pytest.mark.lento
 def test_worker_mirror_matches_real_worker(monkeypatch):
-    monkeypatch.setattr(
-        ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.005)
+    monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.005)
     monkeypatch.setattr(ink_layers_module, "_IDLE_PROBE_SECONDS", 0.005)
     drawing, settled = rr.synthetic_pages(SHAPE, stages=3, seed=3)
     base = rr.base_quad(SHAPE)
@@ -58,8 +57,7 @@ def test_worker_mirror_matches_real_worker(monkeypatch):
     sequence = []
     for stage in drawing + [settled]:
         for k in range(4):
-            corners = (base + rng.normal(0, 2.0, size=(4, 2))).astype(
-                np.float32)
+            corners = (base + rng.normal(0, 2.0, size=(4, 2))).astype(np.float32)
             sequence.append((stage[k % len(stage)], corners))
 
     real = app_module._PageCleanWorker(_ProbIsWarp()).start()
@@ -93,10 +91,16 @@ def test_worker_mirror_ecc_uses_only_confirmed_canvas(monkeypatch):
 
     def refine(reference, observed, hand_mask=None):
         references.append(None if reference is None else reference.copy())
-        return observed, np.eye(3), {
-            "ecc_ms": 0.0, "ecc_rejected": False,
-            "ecc_converged": False, "ecc_mode": "bypass",
-        }
+        return (
+            observed,
+            np.eye(3),
+            {
+                "ecc_ms": 0.0,
+                "ecc_rejected": False,
+                "ecc_converged": False,
+                "ecc_mode": "bypass",
+            },
+        )
 
     monkeypatch.setattr(ink_layers_module, "_refine_ink_ecc", refine)
     mirror = rr.ReplayWorker()
@@ -132,8 +136,7 @@ def _drive_real_identity(sequence, returned):
                 assert time.monotonic() < deadline, "passada nao rodou"
                 time.sleep(0.001)
         _version, canvas = real.poll(generation, 0)
-        decision = real.telemetry_snapshot()["page_identity_events"][-1][
-            "decision"]
+        decision = real.telemetry_snapshot()["page_identity_events"][-1]["decision"]
     finally:
         real.stop()
     return canvas, decision
@@ -141,14 +144,14 @@ def _drive_real_identity(sequence, returned):
 
 @pytest.mark.lento
 def test_worker_mirror_matches_real_identity_recovery(monkeypatch):
-    monkeypatch.setattr(
-        ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.005)
+    monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.005)
     monkeypatch.setattr(ink_layers_module, "_IDLE_PROBE_SECONDS", 0.005)
     drawing, settled = rr.synthetic_pages(SHAPE, stages=3, seed=4)
     base = rr.base_quad(SHAPE)
     sequence = [
         (stage[k % len(stage)], base.copy())
-        for stage in drawing + [settled] for k in range(4)
+        for stage in drawing + [settled]
+        for k in range(4)
     ]
     moved = base + np.float32([6.0, -4.0])
     same = (rr.render_pass(settled[0], base, moved), moved)
@@ -178,22 +181,21 @@ def test_render_pass_is_identity_when_warp_matches_page():
 
 def test_comparator_accepts_pure_rewarp_and_flags_extra_ink():
     canvas = np.zeros((200, 150), np.uint8)
-    cv2.polylines(
-        canvas, [np.int32([[20, 30], [120, 60], [60, 170]])], False, 255, 3)
+    cv2.polylines(canvas, [np.int32([[20, 30], [120, 60], [60, 170]])], False, 255, 3)
     cv2.circle(canvas, (100, 140), 25, 255, 2)
-    matrix = np.array(
-        [[0.98, 0.05, 6.0], [-0.04, 1.01, -4.0], [0.0, 0.0, 1.0]])
-    rewarped = cv2.warpPerspective(
-        canvas, matrix, (150, 200), flags=cv2.INTER_NEAREST)
+    matrix = np.array([[0.98, 0.05, 6.0], [-0.04, 1.01, -4.0], [0.0, 0.0, 1.0]])
+    rewarped = cv2.warpPerspective(canvas, matrix, (150, 200), flags=cv2.INTER_NEAREST)
     same = rr.compare_canvases(
-        canvas, rewarped, [("identity", np.eye(3)), ("known", matrix)])
+        canvas, rewarped, [("identity", np.eye(3)), ("known", matrix)]
+    )
     assert same["canvas_identical_after_move"]
     assert same["new_confirmed_px_outside_tol"] == 0
 
     doubled = rewarped.copy()
     doubled[100:110, 10:60] = 255
     extra = rr.compare_canvases(
-        canvas, doubled, [("identity", np.eye(3)), ("known", matrix)])
+        canvas, doubled, [("identity", np.eye(3)), ("known", matrix)]
+    )
     assert not extra["canvas_identical_after_move"]
     assert extra["new_confirmed_px_outside_tol"] > 0
 
@@ -216,15 +218,14 @@ def test_reduced_run_reports_contract_fields(monkeypatch, chamfer_flag):
     monkeypatch.setenv("DRAW_ECC_REFINE", "0")
     if chamfer_flag == "0":
         monkeypatch.setattr(
-            ink_layers_module, "_identity_chamfer_fields",
+            ink_layers_module,
+            "_identity_chamfer_fields",
             lambda *a: pytest.fail("Chamfer off nao pode computar no replay"),
         )
     monkeypatch.setattr(rr, "SETTLE_FRAMES", 60)
     monkeypatch.setattr(rr, "SWAY_FRAMES", 90)
-    monkeypatch.setattr(
-        rr, "HAND_CONFIGS", {"presente_mexendo": (True, "always")})
-    monkeypatch.setattr(
-        rr, "MOVES", {"translate_large": rr.MOVES["translate_large"]})
+    monkeypatch.setattr(rr, "HAND_CONFIGS", {"presente_mexendo": (True, "always")})
+    monkeypatch.setattr(rr, "MOVES", {"translate_large": rr.MOVES["translate_large"]})
     monkeypatch.setattr(rr, "DROP_FRAMES", {"long_150f": 45})
     monkeypatch.setattr(rr, "DROP_MODES", ("page_out",))
     monkeypatch.setattr(rr, "SWAY_PROFILES", ("bimodal",))
@@ -234,11 +235,15 @@ def test_reduced_run_reports_contract_fields(monkeypatch, chamfer_flag):
     control = results["control_static"]["presente_mexendo"]
     assert control["passes_gate"] and not control["vacuous"]
     fields = (
-        "canvas_identical_after_move", "confirmed_px_delta",
-        "generations_created", "false_page_turns",
+        "canvas_identical_after_move",
+        "confirmed_px_delta",
+        "generations_created",
+        "false_page_turns",
     )
     for section in (
-        "move_same_canvas", "drop_and_return", "drop_and_turn",
+        "move_same_canvas",
+        "drop_and_return",
+        "drop_and_turn",
         "sway_negative",
     ):
         for by_hand in results[section].values():
@@ -247,12 +252,14 @@ def test_reduced_run_reports_contract_fields(monkeypatch, chamfer_flag):
                     assert field in run, (section, field)
     # A folha que some além do relógio de perda abre geração nova
     # pelo caminho de drop: é o que a régua tem de enxergar.
-    lost = results["drop_and_return"]["page_out_long_150f"][
-        "presente_mexendo"]
+    lost = results["drop_and_return"]["page_out_long_150f"]["presente_mexendo"]
     assert lost["drops"] == 1 and lost["generations_created"] >= 1
     assert set(results["summary"]) >= {
-        "control_static", "move_same_canvas", "drop_and_return",
-        "sway_negative", "sway_negative_turn_event_enabled",
+        "control_static",
+        "move_same_canvas",
+        "drop_and_return",
+        "sway_negative",
+        "sway_negative_turn_event_enabled",
     }
     if chamfer_flag == "0":
         assert "identity_chamfer" not in results
@@ -280,8 +287,11 @@ def test_reduced_run_reports_contract_fields(monkeypatch, chamfer_flag):
 @pytest.mark.parametrize("ecc_enabled", ["0", "1"])
 @pytest.mark.parametrize("chamfer_flag", ["0", "1"])
 @pytest.mark.parametrize("decision", ["same_page", "new_page"])
-def test_replay_ecc_rejection_defers_only_shadow(
-    monkeypatch, ecc_enabled, chamfer_flag, decision,
+def test_replay_ecc_rejection_defers_production(
+    monkeypatch,
+    ecc_enabled,
+    chamfer_flag,
+    decision,
 ):
     monkeypatch.setenv("DRAW_ECC_REFINE", ecc_enabled)
     monkeypatch.setenv("DRAW_IDENTITY_CHAMFER", chamfer_flag)
@@ -303,21 +313,26 @@ def test_replay_ecc_rejection_defers_only_shadow(
     corners = rr.base_quad(SHAPE)
     mirror.identity_reference_corners = corners.copy()
     mirror.identity_recovery_requested = True
-    assert mirror._identity_keeps_page(candidate, corners, 2) == (decision == "same_page")
+    kept = mirror._identity_keeps_page(candidate, corners, 2)
+    assert kept is (None if ecc_enabled == "1" else decision == "same_page")
     event = mirror.identity_events[-1]
-    assert event["decision"] == decision
+    expected_decision = "deferred_ecc_rejected" if ecc_enabled == "1" else decision
+    assert event["decision"] == expected_decision
     assert event["ecc_rejected"] == (ecc_enabled == "1")
     assert bool(calls) == (ecc_enabled == "1")
+    assert event["ecc_refine_enabled"] == int(ecc_enabled)
     if chamfer_flag == "1":
         assert event["ecc_refine_enabled"] == int(ecc_enabled)
         assert event["shadow_decision"] == ("defer" if ecc_enabled == "1" else decision)
         expected = ink_layers_module._identity_chamfer_fields(
-            candidate > 0.7, reference > 0, decision, event,
+            candidate > 0.7,
+            reference > 0,
+            expected_decision,
+            event,
         )
         for key, value in expected.items():
             assert event[key] == value
     else:
-        assert "ecc_refine_enabled" not in event
         assert "shadow_decision" not in event
         assert not any(key.startswith("chamfer_") for key in event)
 
@@ -331,10 +346,16 @@ def test_episode_chamfer_uses_ground_truth_not_decision_and_separates_ecc(monkey
         monkeypatch.setenv("DRAW_ECC_REFINE", str(enabled))
         prior = settled[0] > 0.7
         seen = np.roll(prior, enabled + 1, axis=0)
-        app.worker.identity_events.append({
-            "decision": "new_page", "recall": 0.0, "containment": 0.0,
-            **ink_layers_module._identity_chamfer_fields(seen, prior, "new_page", {}),
-        })
+        app.worker.identity_events.append(
+            {
+                "decision": "new_page",
+                "recall": 0.0,
+                "containment": 0.0,
+                **ink_layers_module._identity_chamfer_fields(
+                    seen, prior, "new_page", {}
+                ),
+            }
+        )
     report = ep.report(quad, quad, identity_true_class="same_page")
     assert report["identity_true_class"] == "same_page"
     assert report["identity_decisions"] == ["new_page", "new_page"]
