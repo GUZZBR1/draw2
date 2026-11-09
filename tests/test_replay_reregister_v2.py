@@ -27,20 +27,30 @@ def content():
 
 
 def record(enabled=1, *, rejected=False, baseline_rejections=0, raw="new_page"):
-    identities = rr.identity_measurements([
-        {"decision": raw, "ecc_rejected": rejected}], enabled)
+    identities = rr.identity_measurements(
+        [{"decision": raw, "ecc_rejected": rejected}], enabled
+    )
     return {
-        "ecc_refine_enabled": enabled, "DRAW_ECC_REFINE": str(enabled),
-        "vacuous": False, "canvas_identical_after_move": False,
-        "generations_created": 1, "false_page_turns": 1,
-        "identity_decisions": [raw], "new_confirmed_px_outside_tol": 100,
+        "ecc_refine_enabled": enabled,
+        "DRAW_ECC_REFINE": str(enabled),
+        "vacuous": False,
+        "canvas_identical_after_move": False,
+        "generations_created": 1,
+        "false_page_turns": 1,
+        "identity_decisions": [raw],
+        "new_confirmed_px_outside_tol": 100,
         "lost_confirmed_px_outside_tol": 200,
         "diagnostics": {
-            "baseline_rejections": baseline_rejections, "identity": identities,
+            "baseline_rejections": baseline_rejections,
+            "identity": identities,
             "canvas": {"new_px": 100, "lost_px": 200},
-            "passes": [{"ecc_rejected": rejected,
-                        "roundtrip_corner_max_canonical_px": 0.0,
-                        "same_page_anchor_unchanged": True}],
+            "passes": [
+                {
+                    "ecc_rejected": rejected,
+                    "roundtrip_corner_max_canonical_px": 0.0,
+                    "same_page_anchor_unchanged": True,
+                }
+            ],
         },
     }
 
@@ -113,19 +123,30 @@ def test_fixed_anchor_contract_not_consecutive_or_true_quad(monkeypatch):
             assert worker._geometry["roundtrip_corner_max_canonical_px"] < 1e-6
             np.testing.assert_array_equal(worker.anchor, quad)
         np.testing.assert_array_equal(*observations)
-        assert workers[0]._geometry["consecutive_quad_displacement_canonical_px"] != (
-            workers[1]._geometry["consecutive_quad_displacement_canonical_px"])
-        registered, _, _ = ink._register_ink_probability(observations[0], quad, moved, None)
+        assert (
+            workers[0]._geometry["consecutive_quad_displacement_canonical_px"]
+            != (workers[1]._geometry["consecutive_quad_displacement_canonical_px"])
+        )
+        registered, _, _ = ink._register_ink_probability(
+            observations[0], quad, moved, None
+        )
         kernel = np.ones((7, 7), np.uint8)
-        assert rr.v1._mismatch(prob > 0.7, registered > 0.7, np.eye(3), kernel) == (0, 0)
+        assert rr.v1._mismatch(prob > 0.7, registered > 0.7, np.eye(3), kernel) == (
+            0,
+            0,
+        )
 
 
 def test_diagnostic_quad_values_cannot_change_outcome():
     original = record(raw="same_page")
     original.update(canvas_identical_after_move=True, generations_created=0)
     changed = copy.deepcopy(original)
-    original["diagnostics"]["passes"][0]["consecutive_quad_displacement_canonical_px"] = 0
-    changed["diagnostics"]["passes"][0]["consecutive_quad_displacement_canonical_px"] = 1e9
+    original["diagnostics"]["passes"][0][
+        "consecutive_quad_displacement_canonical_px"
+    ] = 0
+    changed["diagnostics"]["passes"][0][
+        "consecutive_quad_displacement_canonical_px"
+    ] = 1e9
     a, b = map(rr.finalize_episode, (original, changed))
     assert a["outcome"] == b["outcome"] == "passed"
     assert a["decisive"] == b["decisive"]
@@ -151,7 +172,10 @@ def test_real_ecc_rejection_never_votes_new_page(monkeypatch, enabled):
     with rr.configured_ecc(enabled):
         assert not worker._identity_keeps_page(other, quad, generation)
     event = worker.identity_events[-1]
-    assert event["decision"] == "new_page"  # production is not modified
+    assert event["decision"] == ("deferred_ecc_rejected" if enabled else "new_page")
+    assert event["deferred"] is bool(enabled)
+    assert event["ecc_refine_enabled"] == enabled
+    assert (worker.identity_reference is not None) is bool(enabled)
     assert event["ecc_rejected"] is bool(enabled)
     assert calls == ([cv2.MOTION_HOMOGRAPHY, cv2.MOTION_AFFINE] if enabled else [])
     measured = rr.identity_measurements([event], enabled)[0]
@@ -172,7 +196,10 @@ def test_baseline_rejection_defers_clean_episode_and_all_votes():
     result = rr.finalize_episode(record(baseline_rejections=1, raw="same_page"))
     assert result["outcome"] == "decision_deferred"
     assert result["decisive"]["identity_votes"] == []
-    assert rr.summarize([result], 1)["identity_votes"] == {"same_page": 0, "new_page": 0}
+    assert rr.summarize([result], 1)["identity_votes"] == {
+        "same_page": 0,
+        "new_page": 0,
+    }
 
 
 @pytest.mark.parametrize("outcome", ["vacuous", "invalid"])
@@ -191,12 +218,19 @@ def test_nondecisions_do_not_enter_any_denominator(outcome):
 
 
 def arms():
-    shared = {"protocol_sha256": "p", "protocol_id": "p", "runner_sha256": "r",
-              "production_source_sha256": {"helper": "h"}, "runtime": {"opencv": "x"},
-              "input": {"input_fingerprint": "same-page"},
-              "episodes": [{"page_id": "p1", "scenario": "move", "case": "c", "hand": "h"}]}
-    return [dict(copy.deepcopy(shared), ecc_refine_enabled=i, groups={"state": i})
-            for i in (0, 1)]
+    shared = {
+        "protocol_sha256": "p",
+        "protocol_id": "p",
+        "runner_sha256": "r",
+        "production_source_sha256": {"helper": "h"},
+        "runtime": {"opencv": "x"},
+        "input": {"input_fingerprint": "same-page"},
+        "episodes": [{"page_id": "p1", "scenario": "move", "case": "c", "hand": "h"}],
+    }
+    return [
+        dict(copy.deepcopy(shared), ecc_refine_enabled=i, groups={"state": i})
+        for i in (0, 1)
+    ]
 
 
 def test_no_mixed_state_tables_or_mismatched_page_comparison():
@@ -206,9 +240,11 @@ def test_no_mixed_state_tables_or_mismatched_page_comparison():
     a, b = rr.finalize_episode(record(0)), rr.finalize_episode(record(1))
     with pytest.raises(ValueError, match="pool"):
         rr.summarize([a, b], 0)
-    for mutate in (lambda a: a["input"].update(input_fingerprint="other-page"),
-                   lambda a: a.update(runner_sha256="changed"),
-                   lambda a: a["episodes"][0].update(hand="other")):
+    for mutate in (
+        lambda a: a["input"].update(input_fingerprint="other-page"),
+        lambda a: a.update(runner_sha256="changed"),
+        lambda a: a["episodes"][0].update(hand="other"),
+    ):
         changed = copy.deepcopy(on)
         mutate(changed)
         with pytest.raises(ValueError, match="unpaired"):
@@ -242,31 +278,49 @@ def test_bench_loader_validates_cache_without_inference(tmp_path):
     model_hash = hashlib.sha256(model).hexdigest()
     (tmp_path / "model/page_clean_v2_fixed.onnx").write_bytes(model)
     img = np.zeros((1216, 864, 3), np.uint8)
-    key = rr.sha256(bytes.fromhex(model_hash) + repr(img.shape).encode() + img.tobytes())
+    key = rr.sha256(
+        bytes.fromhex(model_hash) + repr(img.shape).encode() + img.tobytes()
+    )
     cache_path = tmp_path / f"cache/{key}.npy"
     np.save(cache_path, np.zeros(img.shape[:2], np.float32))
     first = tmp_path / "warps/f01_warp.png"
     cv2.imwrite(str(first), img)
     for i in range(2, 31):
         (tmp_path / f"warps/f{i:02d}_warp.png").hardlink_to(first)
-    index = {f"warp:f{i:02d}": {"key": key, "shape": list(img.shape),
-                              "model_sha256": model_hash} for i in range(1, 31)}
+    index = {
+        f"warp:f{i:02d}": {
+            "key": key,
+            "shape": list(img.shape),
+            "model_sha256": model_hash,
+        }
+        for i in range(1, 31)
+    }
     index_raw = json.dumps(index).encode()
     (tmp_path / "cache/cache_index.json").write_bytes(index_raw)
-    protocol = {"baseline_input": {"cache_index_sha256": rr.sha256(index_raw),
-                                   "model_sha256": model_hash,
-                                   "package": "unit-bench.zip"}}
+    protocol = {
+        "baseline_input": {
+            "cache_index_sha256": rr.sha256(index_raw),
+            "model_sha256": model_hash,
+            "package": "unit-bench.zip",
+        }
+    }
     package_path = tmp_path / "registered.zip"
 
     def register_package():
-        with zipfile.ZipFile(package_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        with zipfile.ZipFile(
+            package_path, "w", compression=zipfile.ZIP_DEFLATED
+        ) as archive:
             for directory in ("cache", "warps", "model"):
                 for path in (tmp_path / directory).iterdir():
                     archive.write(path, f"unit-bench/{path.relative_to(tmp_path)}")
-        protocol["baseline_input"]["package_sha256"] = rr.sha256(package_path.read_bytes())
+        protocol["baseline_input"]["package_sha256"] = rr.sha256(
+            package_path.read_bytes()
+        )
 
     register_package()
-    drawing, settled, provenance = rr.load_bench(tmp_path, protocol, package_path=package_path)
+    drawing, settled, provenance = rr.load_bench(
+        tmp_path, protocol, package_path=package_path
+    )
     assert len(drawing) == 30 and len(settled) == 3
     assert provenance["cache_hits"] == 30 and provenance["cache_misses"] == 0
     assert len(provenance["entries"]) == 30
@@ -290,6 +344,82 @@ class ProbIsWarp:
 
     def ink_prob(self, warped):
         return warped
+
+
+@pytest.mark.parametrize("rejected_passes", [2, 4])
+def test_v2_matches_production_quarantine_recovery_and_timeout(
+    monkeypatch, rejected_passes
+):
+    monkeypatch.setattr(ink, "_PAGE_CLEAN_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(ink, "_IDLE_PROBE_SECONDS", 0)
+    monkeypatch.setattr(ink, "_PAGE_IDENTITY_MAX_DEFERRALS", 3)
+    rejecting = False
+
+    def refine(reference, observed, hand_mask=None):
+        return (
+            observed,
+            np.eye(3),
+            {
+                "ecc_rejected": rejecting,
+                "ecc_converged": False,
+                "ecc_mode": "affine",
+                "ecc_ms": 0.0,
+            },
+        )
+
+    monkeypatch.setattr(ink, "_refine_ink_ecc", refine)
+    prob = content()
+    other = np.flipud(np.fliplr(prob)).copy()
+    quad = rr.v1.base_quad(SHAPE)
+    mirror = rr.ReplayWorker(ecc_refine_enabled=1)
+    real = ink._PageCleanWorker(ProbIsWarp()).start()
+    try:
+        with rr.configured_ecc(1):
+            generation = mirror.new_generation()
+            assert real.new_generation() == generation
+            for i in range(4 + rejected_passes + 4):
+                if i == 4:
+                    generation = mirror.new_generation(preserve_identity=True)
+                    assert real.new_generation(preserve_identity=True) == generation
+                rejecting = 4 <= i < 4 + rejected_passes
+                current = other if rejecting else prob
+                mirror.submit((current, quad, quad), generation)
+                assert mirror.tick((i + 1) * 10) is not None
+                with real._condition:
+                    before = real._passes_total
+                    real.submit(current, generation, quad)
+                    assert real._condition.wait_for(
+                        lambda: real._passes_total > before or real._stopped, timeout=5
+                    )
+                    assert real.error is None
+                np.testing.assert_array_equal(
+                    real.poll(generation, 0)[1], mirror.published[1]
+                )
+                if mirror.anchor is None:
+                    assert real._anchor_corners is None
+                else:
+                    np.testing.assert_array_equal(real._anchor_corners, mirror.anchor)
+                assert real._identity_defer_count == mirror.identity_defer_count
+                assert (real._identity_reference is None) == (
+                    mirror.identity_reference is None
+                )
+                real_events = real.telemetry_snapshot()["page_identity_events"]
+                assert len(real_events) == len(mirror.identity_events)
+                for actual, expected in zip(real_events, mirror.identity_events):
+                    for key in (
+                        "decision",
+                        "deferred",
+                        "quarantine_reason",
+                        "quarantine_frames",
+                        "ecc_rejected",
+                        "ecc_refine_enabled",
+                    ):
+                        assert actual[key] == expected[key]
+            assert mirror.identity_events[-1]["decision"] == (
+                "same_page" if rejected_passes == 2 else "quarantine_timeout"
+            )
+    finally:
+        real.stop()
 
 
 @pytest.mark.lento
@@ -332,7 +462,11 @@ def test_v2_matches_production_passes_and_fixed_same_page_anchor(monkeypatch, en
                 _, canvas = real.poll(generation, 0)
                 np.testing.assert_array_equal(canvas > 0, mirror.acc._confirmed > 0)
             real_event = real.telemetry_snapshot()["page_identity_events"][-1]
-            assert real_event["decision"] == mirror.identity_events[-1]["decision"] == "same_page"
+            assert (
+                real_event["decision"]
+                == mirror.identity_events[-1]["decision"]
+                == "same_page"
+            )
             np.testing.assert_array_equal(mirror.anchor, quad)
             assert all(p["same_page_anchor_unchanged"] for p in mirror.pass_records)
             assert all(p["ecc_refine_enabled"] == enabled for p in mirror.pass_records)

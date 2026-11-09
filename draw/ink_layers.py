@@ -239,6 +239,8 @@ _PAGE_IDENTITY_MIN_RECALL = 0.65
 # crescimento. Pagina diferente mede 0,23-0,25 (sintetica), margem
 # de 2x contra falso positivo.
 _PAGE_IDENTITY_MIN_CONTAINMENT = 0.5
+# Maximo de passadas adiadas por recuperacao, somando ECC e oclusao.
+_PAGE_IDENTITY_MAX_DEFERRALS = 5
 # O canvas confirmado inclui o halo da fronteira, que uma passada
 # sozinha nunca cobre no limiar do voto: a comparacao dilata os
 # dois lados pela mesma tolerancia do comparador da regua.
@@ -272,10 +274,16 @@ def _identity_chamfer_fields(seen, reference, decision, ecc_info):
         ("reference_to_seen", reference, seen),
     ):
         distances = None
-        if (source is not None and target is not None
-                and np.any(source) and np.any(target)):
+        if (
+            source is not None
+            and target is not None
+            and np.any(source)
+            and np.any(target)
+        ):
             distance_map = cv2.distanceTransform(
-                (~target).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE,
+                (~target).astype(np.uint8),
+                cv2.DIST_L2,
+                cv2.DIST_MASK_PRECISE,
             )
             distances = distance_map[source]
         prefix = f"chamfer_{direction}"
@@ -284,9 +292,11 @@ def _identity_chamfer_fields(seen, reference, decision, ecc_info):
         )
         for radius in _IDENTITY_CHAMFER_RADII:
             fields[f"{prefix}_coverage_{radius}px"] = (
-                float(np.mean(distances <= radius)) if distances is not None
-                else 0.0 if (source is not None and np.any(source)
-                             and target is not None) else None
+                float(np.mean(distances <= radius))
+                if distances is not None
+                else 0.0
+                if (source is not None and np.any(source) and target is not None)
+                else None
             )
     return fields
 
@@ -343,6 +353,8 @@ def _registration_is_identity(matrix):
     )
 
 
+# Fonte fixada pelos hashes da pre-inscricao do replay v2.
+# fmt: off
 def _refine_ink_ecc(reference, observed, hand_mask=None):
     """Refina somente o residuo na grade da ancora; devolve mapa, H e custo."""
     started = time.perf_counter()
@@ -468,6 +480,8 @@ def _register_ink_probability(prob, anchor, corners, reference, visible=None):
         ) > 0
     return prob, visible, info
 
+# fmt: on
+
 
 class _LayeredInkAccumulator:
     """Tinta de uma geracao em duas camadas: provisoria e confirmada.
@@ -564,16 +578,11 @@ class _LayeredInkAccumulator:
         # coberto: mao segurando a pagina nao e pagina trocada) e a
         # camada provisoria congela onde nao ha visao (ver abaixo).
         evidence = (
-            prob
-            if visible is None
-            else np.where(visible, prob, 0.0).astype(np.float32)
+            prob if visible is None else np.where(visible, prob, 0.0).astype(np.float32)
         )
         mask_now = evidence > self.threshold
         turn = False
-        if (
-            canvas_before >= _INK_TURN_MIN_CANVAS_PX
-            and not self._turn_fired
-        ):
+        if canvas_before >= _INK_TURN_MIN_CANVAS_PX and not self._turn_fired:
             if visible is None:
                 judge_turn = True
                 turn_low = (
@@ -633,21 +642,13 @@ class _LayeredInkAccumulator:
             # tinta sumiu — e quem esta sobre ela e a mao, nao o
             # apagador; sem este congelamento, toda oclusao virava
             # retracao na regua e a tinta piscava ao reaparecer.
-            provisional_now = provisional_now | (
-                previous_provisional & ~visible
-            )
-        retracted = (
-            previous_provisional & ~provisional_now & ~confirmed_now
-        )
+            provisional_now = provisional_now | (previous_provisional & ~visible)
+        retracted = previous_provisional & ~provisional_now & ~confirmed_now
         if np.any(retracted):
             self._retracted_ever |= retracted
         self._provisional_ever |= provisional_now
-        provisional_changed = bool(
-            np.any(provisional_now != previous_provisional)
-        )
-        self._provisional = np.where(
-            provisional_now, 255, 0
-        ).astype(np.uint8)
+        provisional_changed = bool(np.any(provisional_now != previous_provisional))
+        self._provisional = np.where(provisional_now, 255, 0).astype(np.uint8)
         return {
             "confirmed": self._confirmed.copy(),
             "provisional": self._provisional.copy(),
@@ -656,12 +657,8 @@ class _LayeredInkAccumulator:
             "new_confirmed_px": new_confirmed_px,
             "confirmed_px": int(np.count_nonzero(self._confirmed)),
             "provisional_px": int(np.count_nonzero(self._provisional)),
-            "provisional_ever_px": int(
-                np.count_nonzero(self._provisional_ever)
-            ),
-            "retracted_px_total": int(
-                np.count_nonzero(self._retracted_ever)
-            ),
+            "provisional_ever_px": int(np.count_nonzero(self._provisional_ever)),
+            "retracted_px_total": int(np.count_nonzero(self._retracted_ever)),
             "turn": turn,
         }
 
@@ -728,6 +725,7 @@ class _PageCleanWorker:
         self._identity_reference = None
         self._identity_reference_corners = None
         self._identity_recovery_requested = False
+        self._identity_defer_count = 0
         self._accumulator = _LayeredInkAccumulator(
             threshold=getattr(page_clean, "threshold", 0.7)
         )
@@ -781,13 +779,15 @@ class _PageCleanWorker:
         """
         with self._condition:
             self._identity_recovery_requested = bool(preserve_identity)
+            self._identity_defer_count = 0
             if preserve_identity:
                 reference = self._accumulator._confirmed
                 self._identity_reference = (
                     None if reference is None else reference.copy()
                 )
                 self._identity_reference_corners = (
-                    None if self._anchor_corners is None
+                    None
+                    if self._anchor_corners is None
                     else self._anchor_corners.copy()
                 )
             else:
@@ -845,9 +845,7 @@ class _PageCleanWorker:
                 # porque ela e atraso real de atualizacao.
                 self._telemetry_replaced += 1
             self._telemetry_submits += 1
-            self._pending = (
-                warped, generation, time.monotonic(), corners, visible
-            )
+            self._pending = (warped, generation, time.monotonic(), corners, visible)
             self._condition.notify_all()
 
     def set_hand_presence(self, present, moved=False):
@@ -871,9 +869,7 @@ class _PageCleanWorker:
                 self._confirm_once = True
             if present is not None:
                 self._still_passes = 0
-            if present is not None and (
-                moved or present != self._hand_state
-            ):
+            if present is not None and (moved or present != self._hand_state):
                 self._hand_motion_at = time.monotonic()
             self._hand_state = present
             self._condition.notify_all()
@@ -882,8 +878,7 @@ class _PageCleanWorker:
         """Mao presente e sem movimento alem da janela de quietude."""
         return (
             self._hand_motion_at is not None
-            and time.monotonic() - self._hand_motion_at
-            >= _HAND_REST_STILL_SECONDS
+            and time.monotonic() - self._hand_motion_at >= _HAND_REST_STILL_SECONDS
         )
 
     def _at_rest(self):
@@ -898,6 +893,8 @@ class _PageCleanWorker:
         propria mao, reportado pela assinatura da mascara.
         Ver _REST_MIN_GENERATION_PASSES/_REST_QUIET_PASSES.
         """
+        if self._identity_recovery_requested and self._identity_reference is not None:
+            return False
         if (
             self._generation_passes < _REST_MIN_GENERATION_PASSES
             or self._quiet_passes < _REST_QUIET_PASSES
@@ -996,10 +993,7 @@ class _PageCleanWorker:
         So dispara com DRAW_PAGE_TURN_EVENT=1 (ver o portao acima).
         """
         with self._condition:
-            if (
-                self._turn_event is None
-                or self._turn_event[0] != generation
-            ):
+            if self._turn_event is None or self._turn_event[0] != generation:
                 return None
             _gen, canvas = self._turn_event
             self._turn_event = None
@@ -1035,9 +1029,7 @@ class _PageCleanWorker:
                         if self._pending is None:
                             break
                         continue
-                    remaining = interval - (
-                        time.monotonic() - self._last_pass_start
-                    )
+                    remaining = interval - (time.monotonic() - self._last_pass_start)
                     if remaining <= 0 or self._pending is None:
                         break
                     self._condition.wait(timeout=remaining)
@@ -1045,9 +1037,7 @@ class _PageCleanWorker:
                         return
                 if self._pending is None:
                     continue
-                warped, generation, submitted_at, corners, visible = (
-                    self._pending
-                )
+                warped, generation, submitted_at, corners, visible = self._pending
                 self._pending = None
                 self._last_pass_start = time.monotonic()
                 pass_started_at = self._last_pass_start
@@ -1064,6 +1054,10 @@ class _PageCleanWorker:
             identity_reference_px = None
             identity_visible_reference_px = None
             identity_deferred = False
+            identity_timed_out = False
+            quarantine_reason = None
+            quarantine_frames = 0
+            ecc_refine_enabled = int(_ecc_refinement_enabled())
             identity_geometry_registered = False
             identity_chamfer = {}
             ecc_info = {
@@ -1081,9 +1075,7 @@ class _PageCleanWorker:
                 if ink_prob is not None:
                     prob = ink_prob(warped)
                 else:
-                    prob = (
-                        self._page_clean.ink_mask(warped) > 0
-                    ).astype(np.float32)
+                    prob = (self._page_clean.ink_mask(warped) > 0).astype(np.float32)
                 pass_ended_at = time.monotonic()
                 with self._condition:
                     if self._stopped:
@@ -1091,24 +1083,31 @@ class _PageCleanWorker:
                     if generation != self._generation:
                         continue
                     first_pass = generation != self._worker_generation
-                    recovering = (
-                        self._identity_reference is not None
-                        and (first_pass or self._identity_recovery_requested)
+                    recovering = self._identity_reference is not None and (
+                        first_pass or self._identity_recovery_requested
                     )
                     anchor = (
-                        self._identity_reference_corners if recovering
-                        else corners if first_pass else self._anchor_corners
+                        self._identity_reference_corners
+                        if recovering
+                        else corners
+                        if first_pass
+                        else self._anchor_corners
                     )
                     confirmed = self._accumulator._confirmed
                     ecc_reference = (
                         confirmed.astype(np.float32) / 255.0
-                        if (confirmed is not None and ink_prob is not None
-                            and (not first_pass or recovering))
+                        if (
+                            confirmed is not None
+                            and ink_prob is not None
+                            and (not first_pass or recovering)
+                        )
                         else None
                     )
                 # ECC nao segura o lock que submit/poll/new_generation usam.
-                registered_prob, registered_visible, ecc_info = _register_ink_probability(
-                    prob, anchor, corners, ecc_reference, visible
+                registered_prob, registered_visible, ecc_info = (
+                    _register_ink_probability(
+                        prob, anchor, corners, ecc_reference, visible
+                    )
                 )
             except Exception as error:  # noqa: BLE001 - vai para o laco
                 with self._condition:
@@ -1127,7 +1126,7 @@ class _PageCleanWorker:
                     self._generation_passes = 0
                     self._quiet_passes = 0
                 # A decisao de identidade roda na primeira passada e,
-                # enquanto estiver adiada por oclusao, nas seguintes
+                # enquanto estiver em quarentena, nas seguintes
                 # — a referencia so e consumida quando a decisao sai.
                 identity_pending = (
                     self._identity_recovery_requested
@@ -1136,9 +1135,7 @@ class _PageCleanWorker:
                 if first_pass or identity_pending:
                     identity_reference = self._identity_reference
                     identity_corners = self._identity_reference_corners
-                    identity_recovery_requested = (
-                        self._identity_recovery_requested
-                    )
+                    identity_recovery_requested = self._identity_recovery_requested
                     keep_page = False
                     if identity_reference is not None:
                         candidate = registered_prob
@@ -1149,35 +1146,22 @@ class _PageCleanWorker:
                         prior_px = int(np.count_nonzero(prior))
                         identity_reference_px = prior_px
                         if prior_px == 0:
-                            seen_any = (
-                                candidate > self._accumulator.threshold
-                            )
+                            seen_any = candidate > self._accumulator.threshold
                             if identity_visible is not None:
                                 seen_any = seen_any & identity_visible
                             keep_page = not np.any(seen_any)
                             identity_recall = 1.0 if keep_page else 0.0
                         else:
                             seen = candidate > self._accumulator.threshold
-                            kernel = np.ones(
-                                (_IDENTITY_DILATION_KERNEL,) * 2, np.uint8
-                            )
-                            seen_d = cv2.dilate(
-                                seen.astype(np.uint8), kernel
-                            ) > 0
+                            kernel = np.ones((_IDENTITY_DILATION_KERNEL,) * 2, np.uint8)
+                            seen_d = cv2.dilate(seen.astype(np.uint8), kernel) > 0
                             if identity_visible is not None:
                                 prior_visible = prior & identity_visible
-                                prior_visible_px = int(
-                                    np.count_nonzero(prior_visible)
-                                )
-                                identity_visible_reference_px = (
-                                    prior_visible_px
-                                )
+                                prior_visible_px = int(np.count_nonzero(prior_visible))
+                                identity_visible_reference_px = prior_visible_px
                                 if prior_visible_px < max(
                                     _IDENTITY_MIN_VISIBLE_PX,
-                                    int(
-                                        _IDENTITY_MIN_VISIBLE_FRACTION
-                                        * prior_px
-                                    ),
+                                    int(_IDENTITY_MIN_VISIBLE_FRACTION * prior_px),
                                 ):
                                     # Tinta anterior quase toda
                                     # coberta: decidir agora seria
@@ -1185,15 +1169,17 @@ class _PageCleanWorker:
                                     # Adia; a referencia fica para a
                                     # proxima passada.
                                     identity_deferred = True
+                                    quarantine_reason = "occlusion"
                                 else:
-                                    prior_d = cv2.dilate(
-                                        prior_visible.astype(np.uint8),
-                                        kernel,
-                                    ) > 0
-                                    identity_recall = (
-                                        np.count_nonzero(
-                                            prior_visible & seen_d
+                                    prior_d = (
+                                        cv2.dilate(
+                                            prior_visible.astype(np.uint8),
+                                            kernel,
                                         )
+                                        > 0
+                                    )
+                                    identity_recall = (
+                                        np.count_nonzero(prior_visible & seen_d)
                                         / prior_visible_px
                                     )
                                     seen_px = int(np.count_nonzero(seen))
@@ -1201,20 +1187,16 @@ class _PageCleanWorker:
                                         0.0
                                         if seen_px == 0
                                         else (
-                                            np.count_nonzero(seen & prior_d)
-                                            / seen_px
+                                            np.count_nonzero(seen & prior_d) / seen_px
                                         )
                                     )
                                     keep_page = (
-                                        identity_recall
-                                        >= _PAGE_IDENTITY_MIN_RECALL
+                                        identity_recall >= _PAGE_IDENTITY_MIN_RECALL
                                         and identity_containment
                                         >= _PAGE_IDENTITY_MIN_CONTAINMENT
                                     )
                             else:
-                                prior_d = cv2.dilate(
-                                    prior.astype(np.uint8), kernel
-                                ) > 0
+                                prior_d = cv2.dilate(prior.astype(np.uint8), kernel) > 0
                                 identity_recall = (
                                     np.count_nonzero(prior & seen_d) / prior_px
                                 )
@@ -1222,64 +1204,87 @@ class _PageCleanWorker:
                                 identity_containment = (
                                     0.0
                                     if seen_px == 0
-                                    else (
-                                        np.count_nonzero(seen & prior_d)
-                                        / seen_px
-                                    )
+                                    else (np.count_nonzero(seen & prior_d) / seen_px)
                                 )
                                 keep_page = (
                                     identity_recall >= _PAGE_IDENTITY_MIN_RECALL
                                     and identity_containment
                                     >= _PAGE_IDENTITY_MIN_CONTAINMENT
                                 )
+                    if (
+                        identity_reference is not None
+                        and ecc_refine_enabled
+                        and ecc_info.get("ecc_rejected")
+                    ):
+                        identity_deferred = True
+                        quarantine_reason = "ecc_rejected"
+                    if identity_deferred:
+                        self._identity_defer_count += 1
+                        quarantine_frames = self._identity_defer_count
+                        identity_timed_out = (
+                            quarantine_frames > _PAGE_IDENTITY_MAX_DEFERRALS
+                        )
                     if identity_recovery_requested:
-                        if identity_deferred:
+                        if identity_timed_out:
+                            identity_decision = "quarantine_timeout"
+                        elif quarantine_reason == "ecc_rejected":
+                            identity_decision = "deferred_ecc_rejected"
+                        elif identity_deferred:
                             identity_decision = "deferred_occlusion"
                         else:
-                            identity_decision = (
-                                "same_page" if keep_page else "new_page"
-                            )
+                            identity_decision = "same_page" if keep_page else "new_page"
                         if _identity_chamfer_enabled():
                             metric_seen = metric_reference = None
                             if identity_reference is not None:
                                 metric_seen = candidate > self._accumulator.threshold
                                 metric_reference = (
-                                    prior if identity_visible is None
+                                    prior
+                                    if identity_visible is None
                                     else prior & identity_visible
                                 )
                             identity_chamfer = _identity_chamfer_fields(
-                                metric_seen, metric_reference,
-                                identity_decision, ecc_info,
+                                metric_seen,
+                                metric_reference,
+                                identity_decision,
+                                ecc_info,
                             )
-                        self._identity_events.append({
-                            "generation": generation,
-                            "decision": identity_decision,
-                            "recall": identity_recall,
-                            "containment": identity_containment,
-                            "reference_px": identity_reference_px,
-                            "visible_reference_px": (
-                                identity_visible_reference_px
-                            ),
-                            "geometry_registered": (
-                                identity_geometry_registered
-                            ),
-                            "threshold": _PAGE_IDENTITY_MIN_RECALL,
-                            "containment_threshold": (
-                                _PAGE_IDENTITY_MIN_CONTAINMENT
-                            ),
-                            **ecc_info,
-                            **identity_chamfer,
-                        })
-                    if identity_deferred:
+                        self._identity_events.append(
+                            {
+                                "generation": generation,
+                                "decision": identity_decision,
+                                "recall": identity_recall,
+                                "containment": identity_containment,
+                                "reference_px": identity_reference_px,
+                                "visible_reference_px": (identity_visible_reference_px),
+                                "geometry_registered": (identity_geometry_registered),
+                                "threshold": _PAGE_IDENTITY_MIN_RECALL,
+                                "containment_threshold": (
+                                    _PAGE_IDENTITY_MIN_CONTAINMENT
+                                ),
+                                **ecc_info,
+                                **identity_chamfer,
+                                "ecc_refine_enabled": ecc_refine_enabled,
+                                "quarantine_reason": quarantine_reason,
+                                "quarantine_frames": quarantine_frames,
+                                "deferred": identity_deferred,
+                            }
+                        )
+                    if identity_deferred and not identity_timed_out:
                         # A referencia NAO e consumida: a proxima
-                        # passada decide quando houver tinta
-                        # anterior visivel o bastante. A evidencia
-                        # desta entra no acumulador com a oclusao
-                        # abstida; se a decisao final for pagina
-                        # nova, o reset dela a descarta.
+                        # passada decide com registro e visao
+                        # confiaveis. ECC rejeitado nao vota.
                         pass
                     else:
-                        if not keep_page:
+                        if identity_timed_out:
+                            # Perda de lock, nao voto de pagina nova.
+                            # A proxima passada estabelece outra ancora.
+                            self._accumulator.reset()
+                            self._anchor_corners = None
+                            self._worker_generation = -1
+                            self._generation_passes = 0
+                            self._quiet_passes = 0
+                            self._still_passes = 0
+                        elif not keep_page:
                             self._accumulator.reset()
                             self._anchor_corners = corners
                         # Keep the old anchor when identity matched: all future
@@ -1287,13 +1292,21 @@ class _PageCleanWorker:
                         self._identity_reference = None
                         self._identity_reference_corners = None
                         self._identity_recovery_requested = False
-                if ((first_pass or identity_pending)
-                        and not identity_deferred and not keep_page):
+                        self._identity_defer_count = 0
+                if (
+                    (first_pass or identity_pending)
+                    and not identity_deferred
+                    and not keep_page
+                ):
                     if visible is not None:
                         prob = np.where(visible, prob, 0.0).astype(np.float32)
                 else:
                     prob = registered_prob
                     visible = registered_visible
+                if identity_deferred and (
+                    quarantine_reason == "ecc_rejected" or identity_timed_out
+                ):
+                    visible = np.zeros(prob.shape, dtype=bool)
                 result = self._accumulator.add(prob, visible)
                 if (
                     result["confirmed_changed"]
@@ -1312,9 +1325,7 @@ class _PageCleanWorker:
                 else:
                     self._quiet_passes += 1
                 self._passes_total += 1
-                self._last_pass_ms = (
-                    time.monotonic() - pass_started
-                ) * 1000.0
+                self._last_pass_ms = (time.monotonic() - pass_started) * 1000.0
                 self._provisional_px = result["provisional_px"]
                 self._confirmed_px = result["confirmed_px"]
                 self._retracted_px_total = result["retracted_px_total"]
@@ -1331,7 +1342,7 @@ class _PageCleanWorker:
                         generation,
                         result["confirmed"],
                     )
-                if first_pass or result["confirmed_changed"]:
+                if first_pass or identity_timed_out or result["confirmed_changed"]:
                     self._version += 1
                     self._published = (
                         generation,
@@ -1340,6 +1351,7 @@ class _PageCleanWorker:
                     )
                 if (
                     first_pass
+                    or identity_timed_out
                     or result["confirmed_changed"]
                     or result["provisional_changed"]
                 ):
@@ -1357,34 +1369,41 @@ class _PageCleanWorker:
                 # confirmed_px (a uniao nao existe mais).
                 published_at = time.monotonic()
                 self._telemetry_passes += 1
-                if first_pass or result["confirmed_changed"]:
+                if first_pass or identity_timed_out or result["confirmed_changed"]:
                     self._telemetry_publishes += 1
-                self._telemetry_records.append({
-                    **ecc_info,
-                    **identity_chamfer,
-                    "generation": generation,
-                    "version": self._version,
-                    "page_identity_decision": identity_decision,
-                    "page_identity_recall": identity_recall,
-                    "page_identity_containment": identity_containment,
-                    "page_identity_reference_px": identity_reference_px,
-                    "page_identity_visible_reference_px": (
-                        identity_visible_reference_px
-                    ),
-                    "page_identity_geometry_registered": (
-                        identity_geometry_registered
-                    ),
-                    "submitted_at": submitted_at,
-                    "pass_started_at": pass_started_at,
-                    "pass_ended_at": pass_ended_at,
-                    "published_at": published_at,
-                    "queue_wait_s": pass_started_at - submitted_at,
-                    "pass_s": pass_ended_at - pass_started_at,
-                    "submit_to_publish_s": published_at - submitted_at,
-                    "mask_px": int(np.count_nonzero(
-                        prob > self._accumulator.threshold)),
-                    "confirmed_px": result["confirmed_px"],
-                })
+                self._telemetry_records.append(
+                    {
+                        **ecc_info,
+                        **identity_chamfer,
+                        "ecc_refine_enabled": ecc_refine_enabled,
+                        "quarantine_reason": quarantine_reason,
+                        "quarantine_frames": quarantine_frames,
+                        "deferred": identity_deferred,
+                        "generation": generation,
+                        "version": self._version,
+                        "page_identity_decision": identity_decision,
+                        "page_identity_recall": identity_recall,
+                        "page_identity_containment": identity_containment,
+                        "page_identity_reference_px": identity_reference_px,
+                        "page_identity_visible_reference_px": (
+                            identity_visible_reference_px
+                        ),
+                        "page_identity_geometry_registered": (
+                            identity_geometry_registered
+                        ),
+                        "submitted_at": submitted_at,
+                        "pass_started_at": pass_started_at,
+                        "pass_ended_at": pass_ended_at,
+                        "published_at": published_at,
+                        "queue_wait_s": pass_started_at - submitted_at,
+                        "pass_s": pass_ended_at - pass_started_at,
+                        "submit_to_publish_s": published_at - submitted_at,
+                        "mask_px": int(
+                            np.count_nonzero(prob > self._accumulator.threshold)
+                        ),
+                        "confirmed_px": result["confirmed_px"],
+                    }
+                )
                 self._condition.notify_all()
 
     def stats(self):
@@ -1393,9 +1412,7 @@ class _PageCleanWorker:
             return {
                 "passes_total": self._passes_total,
                 "pass_ms": (
-                    None
-                    if self._last_pass_ms is None
-                    else round(self._last_pass_ms, 1)
+                    None if self._last_pass_ms is None else round(self._last_pass_ms, 1)
                 ),
                 "canvas_px": self._confirmed_px,
                 "provisional_px": self._provisional_px,

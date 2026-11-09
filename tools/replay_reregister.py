@@ -133,7 +133,9 @@ MOVES = {
     "rotate_12deg": {"angle": 12.0, "frames": 30},
     "scale_0_85": {"scale": 0.85, "frames": 30},
     "combined": {
-        "shift": (120.0, 30.0), "angle": -8.0, "scale": 1.1,
+        "shift": (120.0, 30.0),
+        "angle": -8.0,
+        "scale": 1.1,
         "frames": 45,
     },
 }
@@ -148,9 +150,7 @@ SWAY_PROFILES = ("smooth", "bimodal")
 
 
 def _load_prob_cache():
-    spec = importlib.util.spec_from_file_location(
-        "prob_cache", RULER / "prob_cache.py"
-    )
+    spec = importlib.util.spec_from_file_location("prob_cache", RULER / "prob_cache.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.ProbCache()
@@ -165,9 +165,7 @@ def real_pages():
         img = cv2.imread(str(WARPS / f"{fid}_warp.png"))
         if img is None:
             raise RuntimeError(f"warp nao encontrado: {fid}")
-        probs.append(
-            np.asarray(cache.get(img, name=f"warp:{fid}"), np.float32)
-        )
+        probs.append(np.asarray(cache.get(img, name=f"warp:{fid}"), np.float32))
     return [[prob] for prob in probs], probs[-3:]
 
 
@@ -198,8 +196,12 @@ def synthetic_pages(shape=SYNTHETIC_SHAPE, stages=10, seed=7):
             strength = 0.85 if rng.random() < 0.8 else 0.55
             layer = np.zeros(shape, np.float32)
             cv2.polylines(
-                layer, [pts.astype(np.int32).reshape(-1, 1, 2)], False,
-                1.0, int(rng.integers(2, 4)), lineType=cv2.LINE_AA,
+                layer,
+                [pts.astype(np.int32).reshape(-1, 1, 2)],
+                False,
+                1.0,
+                int(rng.integers(2, 4)),
+                lineType=cv2.LINE_AA,
             )
             ink = np.maximum(ink, layer * strength)
         base = np.clip(cv2.GaussianBlur(ink, (0, 0), 1.0) * 1.15, 0, 0.98)
@@ -209,12 +211,16 @@ def synthetic_pages(shape=SYNTHETIC_SHAPE, stages=10, seed=7):
             noise = rng.normal(0.0, 0.03, size=shape).astype(np.float32)
             dx, dy = rng.uniform(-0.4, 0.4, size=2)
             moved = cv2.warpAffine(
-                base, np.float32([[1, 0, dx], [0, 1, dy]]), (w, h),
+                base,
+                np.float32([[1, 0, dx], [0, 1, dy]]),
+                (w, h),
                 flags=cv2.INTER_LINEAR,
             )
-            variants.append(np.clip(
-                moved * gain + noise * (moved > 0.05), 0.0, 1.0
-            ).astype(np.float32))
+            variants.append(
+                np.clip(moved * gain + noise * (moved > 0.05), 0.0, 1.0).astype(
+                    np.float32
+                )
+            )
         sequence.append(variants)
         settled = variants
     return sequence, settled
@@ -231,12 +237,15 @@ def base_quad(shape):
     height = 466.0
     width = height * w / h
     cx, cy = 560.0, 370.0
-    quad = np.array([
-        (cx - width / 2 + 12, cy - height / 2),
-        (cx + width / 2 - 12, cy - height / 2),
-        (cx + width / 2, cy + height / 2),
-        (cx - width / 2, cy + height / 2),
-    ], np.float32)
+    quad = np.array(
+        [
+            (cx - width / 2 + 12, cy - height / 2),
+            (cx + width / 2 - 12, cy - height / 2),
+            (cx + width / 2, cy + height / 2),
+            (cx - width / 2, cy + height / 2),
+        ],
+        np.float32,
+    )
     return quad
 
 
@@ -274,12 +283,18 @@ def render_pass(page, true_quad, warp_corners):
         prob = page.copy()
     else:
         prob = cv2.warpPerspective(
-            page, matrix, (shape[1], shape[0]),
-            flags=cv2.INTER_LINEAR, borderValue=0.0,
+            page,
+            matrix,
+            (shape[1], shape[0]),
+            flags=cv2.INTER_LINEAR,
+            borderValue=0.0,
         )
     visible = cv2.warpPerspective(
-        _ONES_FRAME, _page_matrix(warp_corners, shape),
-        (shape[1], shape[0]), flags=cv2.INTER_NEAREST, borderValue=0,
+        _ONES_FRAME,
+        _page_matrix(warp_corners, shape),
+        (shape[1], shape[0]),
+        flags=cv2.INTER_NEAREST,
+        borderValue=0,
     )
     prob[visible == 0] = 0.0
     return prob
@@ -321,6 +336,9 @@ class ReplayWorker:
         self.identity_reference = None
         self.identity_reference_corners = None
         self.identity_recovery_requested = False
+        self.identity_defer_count = 0
+        self._identity_deferred = False
+        self._identity_timed_out = False
         self.identity_events = []
         self.ecc_records = []
         self._identity_candidate = None
@@ -328,11 +346,10 @@ class ReplayWorker:
 
     def new_generation(self, preserve_identity=False):
         self.identity_recovery_requested = bool(preserve_identity)
+        self.identity_defer_count = 0
         if preserve_identity:
             reference = self.acc._confirmed
-            self.identity_reference = (
-                None if reference is None else reference.copy()
-            )
+            self.identity_reference = None if reference is None else reference.copy()
             self.identity_reference_corners = (
                 None if self.anchor is None else self.anchor.copy()
             )
@@ -362,6 +379,8 @@ class ReplayWorker:
         self.hand_state = present
 
     def _at_rest(self, now):
+        if self.identity_recovery_requested and self.identity_reference is not None:
+            return False
         if (
             self.generation_passes < _ink._REST_MIN_GENERATION_PASSES
             or self.quiet_passes < _ink._REST_QUIET_PASSES
@@ -372,8 +391,7 @@ class ReplayWorker:
         if self.hand_state is True:
             return (
                 self.hand_motion_at is not None
-                and now - self.hand_motion_at
-                >= _ink._HAND_REST_STILL_SECONDS
+                and now - self.hand_motion_at >= _ink._HAND_REST_STILL_SECONDS
             )
         return False
 
@@ -404,27 +422,42 @@ class ReplayWorker:
             self.confirm_once = False
         prob = self.render_observation(page, true_quad, corners)
         first_pass = generation != self.worker_generation
+        identity_pending = (
+            self.identity_recovery_requested and self.identity_reference is not None
+        )
+        self._identity_deferred = False
+        self._identity_timed_out = False
         if first_pass:
             self.worker_generation = generation
             self.generation_passes = 0
             self.quiet_passes = 0
-            if not self._identity_keeps_page(prob, corners, generation):
+        if first_pass or identity_pending:
+            if self._identity_keeps_page(prob, corners, generation) is False:
                 self.acc.reset()
                 self.anchor = corners
-        if first_pass and self._identity_candidate is not None:
+        if (first_pass or identity_pending) and self._identity_candidate is not None:
             prob = self._identity_candidate
             ecc_info = self._identity_ecc
         else:
-            if first_pass and self._identity_ecc is not None:
+            if (first_pass or identity_pending) and self._identity_ecc is not None:
                 ecc_info = self._identity_ecc
             else:
                 confirmed = self.acc._confirmed
                 prob, _visible, ecc_info = _ink._register_ink_probability(
-                    prob, self.anchor, corners,
+                    prob,
+                    self.anchor,
+                    corners,
                     None if confirmed is None else confirmed.astype(np.float32) / 255.0,
                 )
+        ecc_info = {
+            **ecc_info,
+            "ecc_refine_enabled": int(_ink._ecc_refinement_enabled()),
+        }
         self.ecc_records.append(ecc_info)
-        result = self.acc.add(prob)
+        result = self.acc.add(
+            prob,
+            np.zeros(prob.shape, dtype=bool) if self._identity_deferred else None,
+        )
         if (
             result["confirmed_changed"]
             or result["provisional_changed"]
@@ -443,7 +476,7 @@ class ReplayWorker:
             self.coverage_turn_signals += 1
             if self.turn_event_enabled and self.turn_event is None:
                 self.turn_event = (generation, result["confirmed"])
-        if first_pass or result["confirmed_changed"]:
+        if first_pass or self._identity_timed_out or result["confirmed_changed"]:
             self.published = (generation, result["confirmed"])
             self.publish_seq += 1
         return result
@@ -452,23 +485,26 @@ class ReplayWorker:
         return render_pass(page, true_quad, corners)
 
     def _identity_keeps_page(self, prob, corners, generation):
-        """Decisão de identidade da primeira passada (ink_layers)."""
+        """True/False decide; None adia, como no worker de ink_layers."""
         reference = self.identity_reference
         reference_corners = self.identity_reference_corners
         requested = self.identity_recovery_requested
-        self.identity_reference = None
-        self.identity_reference_corners = None
-        self.identity_recovery_requested = False
         keep_page = False
         recall = None
         containment = None
         seen = prior = None
         self._identity_candidate = None
         self._identity_ecc = None
+        self._identity_deferred = False
+        self._identity_timed_out = False
+        enabled = int(_ink._ecc_refinement_enabled())
+        quarantine_frames = 0
         if reference is not None:
             confirmed = self.acc._confirmed
             candidate, _visible, self._identity_ecc = _ink._register_ink_probability(
-                prob, reference_corners, corners,
+                prob,
+                reference_corners,
+                corners,
                 None if confirmed is None else confirmed.astype(np.float32) / 255.0,
             )
             prior = reference > 0
@@ -479,47 +515,83 @@ class ReplayWorker:
                 recall = 1.0 if keep_page else 0.0
                 containment = 1.0 if keep_page else 0.0
             else:
-                kernel = np.ones(
-                    (_ink._IDENTITY_DILATION_KERNEL,) * 2, np.uint8
-                )
-                seen_d = cv2.dilate(
-                    seen.astype(np.uint8), kernel
-                ) > 0
-                prior_d = cv2.dilate(
-                    prior.astype(np.uint8), kernel
-                ) > 0
+                kernel = np.ones((_ink._IDENTITY_DILATION_KERNEL,) * 2, np.uint8)
+                seen_d = cv2.dilate(seen.astype(np.uint8), kernel) > 0
+                prior_d = cv2.dilate(prior.astype(np.uint8), kernel) > 0
                 recall = np.count_nonzero(prior & seen_d) / prior_px
                 seen_px = int(np.count_nonzero(seen))
                 containment = (
-                    0.0
-                    if seen_px == 0
-                    else np.count_nonzero(seen & prior_d) / seen_px
+                    0.0 if seen_px == 0 else np.count_nonzero(seen & prior_d) / seen_px
                 )
                 keep_page = (
                     recall >= _ink._PAGE_IDENTITY_MIN_RECALL
                     and containment >= _ink._PAGE_IDENTITY_MIN_CONTAINMENT
                 )
-            if keep_page:
+            self._identity_deferred = bool(
+                enabled and self._identity_ecc.get("ecc_rejected")
+            )
+            if self._identity_deferred:
+                self.identity_defer_count += 1
+                quarantine_frames = self.identity_defer_count
+                self._identity_timed_out = (
+                    quarantine_frames > _ink._PAGE_IDENTITY_MAX_DEFERRALS
+                )
+            if keep_page or self._identity_deferred:
                 self._identity_candidate = candidate
+        decision = (
+            "quarantine_timeout"
+            if self._identity_timed_out
+            else "deferred_ecc_rejected"
+            if self._identity_deferred
+            else "same_page"
+            if keep_page
+            else "new_page"
+        )
         if requested:
-            decision = "same_page" if keep_page else "new_page"
             chamfer = (
                 _ink._identity_chamfer_fields(
-                    seen, prior, decision, self._identity_ecc or {},
-                ) if _ink._identity_chamfer_enabled() else {}
+                    seen,
+                    prior,
+                    decision,
+                    self._identity_ecc or {},
+                )
+                if _ink._identity_chamfer_enabled()
+                else {}
             )
-            self.identity_events.append({
-                "generation": generation,
-                "decision": decision,
-                "recall": None if recall is None else round(float(recall), 4),
-                "containment": (
-                    None if containment is None
-                    else round(float(containment), 4)
-                ),
-                **(self._identity_ecc or {}),
-                **chamfer,
-            })
-        return keep_page
+            self.identity_events.append(
+                {
+                    "generation": generation,
+                    "decision": decision,
+                    "recall": None if recall is None else round(float(recall), 4),
+                    "containment": (
+                        None if containment is None else round(float(containment), 4)
+                    ),
+                    **(self._identity_ecc or {}),
+                    **chamfer,
+                    "ecc_refine_enabled": enabled,
+                    "ecc_rejected": bool(
+                        (self._identity_ecc or {}).get("ecc_rejected")
+                    ),
+                    "deferred": self._identity_deferred,
+                    "quarantine_frames": quarantine_frames,
+                    "quarantine_reason": "ecc_rejected"
+                    if self._identity_deferred
+                    else None,
+                }
+            )
+        if not self._identity_deferred or self._identity_timed_out:
+            self.identity_reference = None
+            self.identity_reference_corners = None
+            self.identity_recovery_requested = False
+            self.identity_defer_count = 0
+        if self._identity_timed_out:
+            self.acc.reset()
+            self.anchor = None
+            self.worker_generation = -1
+            self.generation_passes = 0
+            self.quiet_passes = 0
+            self.still_passes = 0
+        return None if self._identity_deferred else bool(keep_page)
 
     def take_turn_event(self, generation):
         if self.turn_event is None or self.turn_event[0] != generation:
@@ -564,7 +636,9 @@ class ReplayDetector:
                 corners, verdict, captured_at = self.pending
                 self.pending = None
                 self.inflight = (
-                    corners, verdict, captured_at,
+                    corners,
+                    verdict,
+                    captured_at,
                     max(done_at, captured_at) + self.latency,
                 )
 
@@ -588,8 +662,7 @@ class ReplayDetector:
 class Frame:
     """O que a cena entrega num quadro."""
 
-    def __init__(self, page, true_quad, detected, verdict="paper",
-                 hand=(None, False)):
+    def __init__(self, page, true_quad, detected, verdict="paper", hand=(None, False)):
         self.page = page
         self.true_quad = true_quad
         self.detected = detected
@@ -604,8 +677,14 @@ class ReplayApp:
     (exibição, gravação, telemetria) não toca o canvas confirmado.
     """
 
-    def __init__(self, hand_state, turn_event_enabled=False,
-                 detect_ms=None, app_logic=None, worker_factory=ReplayWorker):
+    def __init__(
+        self,
+        hand_state,
+        turn_event_enabled=False,
+        detect_ms=None,
+        app_logic=None,
+        worker_factory=ReplayWorker,
+    ):
         self.hand_state = hand_state
         self.app_logic = APP_LOGIC if app_logic is None else app_logic
         if self.app_logic not in APP_LOGICS:
@@ -659,12 +738,15 @@ class ReplayApp:
             ran_detection = False
         if self.tracker.should_detect(self.frame_number):
             corners = (
-                None if frame.detected is None
+                None
+                if frame.detected is None
                 else np.asarray(frame.detected, np.float32).copy()
             )
             self.detector.submit(corners, frame.verdict, now)
         event = self.tracker.update(
-            detected, verdict, ran_detection,
+            detected,
+            verdict,
+            ran_detection,
             captured_at if ran_detection else now,
         )
         if event == "drop":
@@ -687,20 +769,19 @@ class ReplayApp:
             hand_present = self.worker.hand_state
         if ran_detection and self.tracker.corners is not None:
             if not self.ink_session_open:
-                self._new_generation(
-                    "reopen", preserve_identity=self.recovery_pending
-                )
+                self._new_generation("reopen", preserve_identity=self.recovery_pending)
                 self.recovery_pending = False
                 self.corner_history.clear()
                 self.ink_session_open = True
             if hand_present is not False or not self.corner_history:
                 self.corner_history.append(self.tracker.corners.copy())
-            ink_corners = np.median(
-                np.stack(self.corner_history), axis=0
-            ).astype(np.float32)
+            ink_corners = np.median(np.stack(self.corner_history), axis=0).astype(
+                np.float32
+            )
             self.last_warp_corners = ink_corners
             page = (
-                frame.page if frame.page is not None
+                frame.page
+                if frame.page is not None
                 else np.zeros_like(self._page_shape_hint)
             )
             self.worker.submit(
@@ -724,9 +805,7 @@ def _hand(config, moving):
 
 
 def _noisy(quad, rng, sigma=DETECTOR_NOISE_PX):
-    return (quad + rng.normal(0.0, sigma, size=quad.shape)).astype(
-        np.float32
-    )
+    return (quad + rng.normal(0.0, sigma, size=quad.shape)).astype(np.float32)
 
 
 def _rng(*names):
@@ -746,9 +825,7 @@ def _ecc_refine(before, after, init):
     scale = np.diag([1.0 / factor, 1.0 / factor, 1.0])
 
     def prep(mask):
-        img = cv2.resize(
-            mask.astype(np.float32), size, interpolation=cv2.INTER_AREA
-        )
+        img = cv2.resize(mask.astype(np.float32), size, interpolation=cv2.INTER_AREA)
         return cv2.GaussianBlur(img, (0, 0), 3.0)
 
     template, moving = prep(after), prep(before)
@@ -757,9 +834,13 @@ def _ecc_refine(before, after, init):
     warp /= warp[2, 2]
     try:
         _cc, warp = cv2.findTransformECC(
-            template, moving, warp, cv2.MOTION_HOMOGRAPHY,
+            template,
+            moving,
+            warp,
+            cv2.MOTION_HOMOGRAPHY,
             (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 100, 1e-6),
-            None, 5,
+            None,
+            5,
         )
     except cv2.error:
         return None
@@ -771,14 +852,21 @@ def _mismatch(before, after, matrix, kernel):
     h, w = after.shape
     b8 = before.astype(np.uint8) * 255
     a8 = after.astype(np.uint8) * 255
-    warped = cv2.warpPerspective(
-        b8, matrix, (w, h), flags=cv2.INTER_LINEAR, borderValue=0
-    ) > 127
+    warped = (
+        cv2.warpPerspective(b8, matrix, (w, h), flags=cv2.INTER_LINEAR, borderValue=0)
+        > 127
+    )
     new_px = after & ~(cv2.dilate(warped.astype(np.uint8), kernel) > 0)
-    back = cv2.warpPerspective(
-        cv2.dilate(a8, kernel), matrix, (before.shape[1], before.shape[0]),
-        flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP, borderValue=0,
-    ) > 127
+    back = (
+        cv2.warpPerspective(
+            cv2.dilate(a8, kernel),
+            matrix,
+            (before.shape[1], before.shape[0]),
+            flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
+            borderValue=0,
+        )
+        > 127
+    )
     lost_px = before & ~back
     return int(np.count_nonzero(new_px)), int(np.count_nonzero(lost_px))
 
@@ -803,15 +891,15 @@ def compare_canvases(before, after, candidates):
         "confirmed_px_before": int(np.count_nonzero(b)),
         "confirmed_px_after": int(np.count_nonzero(a)),
     }
-    out["confirmed_px_delta"] = (
-        out["confirmed_px_after"] - out["confirmed_px_before"]
-    )
+    out["confirmed_px_delta"] = out["confirmed_px_after"] - out["confirmed_px_before"]
     if not b.any() or not a.any():
-        out.update({
-            "new_confirmed_px_outside_tol": int(np.count_nonzero(a)),
-            "lost_confirmed_px_outside_tol": int(np.count_nonzero(b)),
-            "alignment": {"method": "none (canvas vazio)"},
-        })
+        out.update(
+            {
+                "new_confirmed_px_outside_tol": int(np.count_nonzero(a)),
+                "lost_confirmed_px_outside_tol": int(np.count_nonzero(b)),
+                "alignment": {"method": "none (canvas vazio)"},
+            }
+        )
     else:
         best = None
         for name, init in candidates:
@@ -826,20 +914,27 @@ def compare_canvases(before, after, candidates):
                     best = (key, label, matrix, new_px, lost_px)
         _key, label, matrix, new_px, lost_px = best
         h, w = b.shape
-        frame_pts = np.float32(
-            [[0, 0], [w, 0], [w, h], [0, h]]
-        ).reshape(-1, 1, 2)
+        frame_pts = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
         moved = cv2.perspectiveTransform(frame_pts, matrix)
-        out.update({
-            "new_confirmed_px_outside_tol": new_px,
-            "lost_confirmed_px_outside_tol": lost_px,
-            "alignment": {
-                "method": label,
-                "max_corner_shift_px": round(float(np.max(
-                    np.linalg.norm((moved - frame_pts).reshape(-1, 2), axis=1)
-                )), 2),
-            },
-        })
+        out.update(
+            {
+                "new_confirmed_px_outside_tol": new_px,
+                "lost_confirmed_px_outside_tol": lost_px,
+                "alignment": {
+                    "method": label,
+                    "max_corner_shift_px": round(
+                        float(
+                            np.max(
+                                np.linalg.norm(
+                                    (moved - frame_pts).reshape(-1, 2), axis=1
+                                )
+                            )
+                        ),
+                        2,
+                    ),
+                },
+            }
+        )
     out["canvas_identical_after_move"] = (
         out["new_confirmed_px_outside_tol"] == 0
         and out["lost_confirmed_px_outside_tol"] == 0
@@ -853,8 +948,9 @@ def compare_canvases(before, after, candidates):
 # --------------------------------------------------------------------
 
 
-def settle_drawing(drawing, settled, hand_config, turn_event_enabled,
-                   app_factory=ReplayApp):
+def settle_drawing(
+    drawing, settled, hand_config, turn_event_enabled, app_factory=ReplayApp
+):
     """Desenha a sessão sob geometria parada e deixa assentar.
 
     Na sessão de desenho a mão está presente e se mexendo (ou sem
@@ -870,18 +966,26 @@ def settle_drawing(drawing, settled, hand_config, turn_event_enabled,
     while app.worker.passes_total < target:
         passes = app.worker.passes_total
         stage = drawing[min(passes // PASSES_PER_WARP, len(drawing) - 1)]
-        app.step(Frame(
-            stage[passes % len(stage)], quad, _noisy(quad, rng),
-            hand=drawing_hand,
-        ))
+        app.step(
+            Frame(
+                stage[passes % len(stage)],
+                quad,
+                _noisy(quad, rng),
+                hand=drawing_hand,
+            )
+        )
         guard += 1
         if guard > 100 * target:
             raise RuntimeError("a sessao de desenho nao avancou")
     for i in range(SETTLE_FRAMES):
-        app.step(Frame(
-            settled[i % 3], quad, _noisy(quad, rng),
-            hand=_hand(hand_config, False),
-        ))
+        app.step(
+            Frame(
+                settled[i % 3],
+                quad,
+                _noisy(quad, rng),
+                hand=_hand(hand_config, False),
+            )
+        )
     return app, quad
 
 
@@ -903,8 +1007,11 @@ def identity_chamfer_distribution(events):
                 **{
                     label: float(np.percentile(values, q)) if values else None
                     for label, q in (
-                        ("min", 0), ("p25", 25), ("median", 50),
-                        ("p75", 75), ("max", 100),
+                        ("min", 0),
+                        ("p25", 25),
+                        ("median", 50),
+                        ("p75", 75),
+                        ("max", 100),
                     )
                 },
             }
@@ -926,14 +1033,10 @@ class Episode:
         self.passes_before = app.worker.passes_total
         self.turns_before = app.worker.coverage_turn_signals
         self.identity_before = len(app.worker.identity_events)
-        self.det_before = (
-            app.detector.completed, app.detector.replaced
-        )
+        self.det_before = (app.detector.completed, app.detector.replaced)
         self.generation_before = app.clean_generation
         self.frames = 0
-        self.min_px = (
-            0 if self.before is None else int(np.count_nonzero(self.before))
-        )
+        self.min_px = 0 if self.before is None else int(np.count_nonzero(self.before))
         self.passes_during = 0
         self.max_excursion = 0.0
 
@@ -941,11 +1044,16 @@ class Episode:
         self.app.step(frame)
         self.frames += 1
         if self.app.last_warp_corners is not None:
-            self.max_excursion = max(self.max_excursion, float(np.max(
-                np.linalg.norm(
-                    self.app.last_warp_corners - frame.true_quad, axis=1
-                )
-            )))
+            self.max_excursion = max(
+                self.max_excursion,
+                float(
+                    np.max(
+                        np.linalg.norm(
+                            self.app.last_warp_corners - frame.true_quad, axis=1
+                        )
+                    )
+                ),
+            )
         canvas = self.app.canvas()
         px = 0 if canvas is None else int(np.count_nonzero(canvas))
         self.min_px = min(self.min_px, px)
@@ -957,9 +1065,7 @@ class Episode:
     def report(self, true_before, true_after, identity_true_class=None):
         app = self.app
         shape = (self.before if self.before is not None else app.canvas()).shape
-        events = {
-            k: app.events[k] - self.events_before[k] for k in app.events
-        }
+        events = {k: app.events[k] - self.events_before[k] for k in app.events}
         anchor_after = app.worker.anchor
         candidates = [("identity", np.eye(3))]
         if self.anchor_before is not None and anchor_after is not None:
@@ -967,23 +1073,37 @@ class Episode:
             pa2 = _page_matrix(anchor_after, shape)
             # Onde o registro na âncora põe a evidência depois do
             # movimento (a geometria nova lida como tremor).
-            candidates.append(("registration_displacement", (
-                pa2 @ np.linalg.inv(_page_matrix(app.last_warp_corners, shape))
-                @ _page_matrix(self.warp_before, shape) @ np.linalg.inv(pa1)
-            )))
+            candidates.append(
+                (
+                    "registration_displacement",
+                    (
+                        pa2
+                        @ np.linalg.inv(_page_matrix(app.last_warp_corners, shape))
+                        @ _page_matrix(self.warp_before, shape)
+                        @ np.linalg.inv(pa1)
+                    ),
+                )
+            )
             # O conteúdo físico da página entre as duas âncoras.
-            candidates.append(("page_motion", (
-                pa2 @ np.linalg.inv(_page_matrix(true_after, shape))
-                @ _page_matrix(true_before, shape) @ np.linalg.inv(pa1)
-            )))
+            candidates.append(
+                (
+                    "page_motion",
+                    (
+                        pa2
+                        @ np.linalg.inv(_page_matrix(true_after, shape))
+                        @ _page_matrix(true_before, shape)
+                        @ np.linalg.inv(pa1)
+                    ),
+                )
+            )
         comparison = compare_canvases(self.before, app.canvas(), candidates)
         generations = app.clean_generation - self.generation_before
         passes = app.worker.passes_total - self.passes_before
-        geometry_error = float(np.max(np.linalg.norm(
-            app.last_warp_corners - true_after, axis=1
-        )))
-        identity = app.worker.identity_events[self.identity_before:]
-        ecc_records = app.worker.ecc_records[self.passes_before:]
+        geometry_error = float(
+            np.max(np.linalg.norm(app.last_warp_corners - true_after, axis=1))
+        )
+        identity = app.worker.identity_events[self.identity_before :]
+        ecc_records = app.worker.ecc_records[self.passes_before :]
         ecc_ms = [record["ecc_ms"] for record in ecc_records]
         same_page = sum(1 for e in identity if e["decision"] == "same_page")
         chamfer = {}
@@ -1005,9 +1125,7 @@ class Episode:
             "false_page_turns": events["reopen"] - same_page + events["turn"],
             "identity_decisions": [e["decision"] for e in identity],
             "identity_recalls": [e["recall"] for e in identity],
-            "identity_containments": [
-                e.get("containment") for e in identity
-            ],
+            "identity_containments": [e.get("containment") for e in identity],
             "drops": events["drop"],
             "reopens": events["reopen"],
             "coverage_turns_applied": events["turn"],
@@ -1019,9 +1137,7 @@ class Episode:
             "passes_during_perturbation": self.passes_during,
             "passes_total": passes,
             "frames_total": self.frames,
-            "detections_completed": (
-                app.detector.completed - self.det_before[0]
-            ),
+            "detections_completed": (app.detector.completed - self.det_before[0]),
             "detections_replaced": app.detector.replaced - self.det_before[1],
             "vacuous": passes == 0,
             "ink_geometry_error_px": round(geometry_error, 2),
@@ -1032,10 +1148,14 @@ class Episode:
 
 def _settle(ep, settled, quad, rng, hand_config, frames=SETTLE_FRAMES):
     for i in range(frames):
-        ep.step(Frame(
-            settled[i % 3], quad, _noisy(quad, rng),
-            hand=_hand(hand_config, False),
-        ))
+        ep.step(
+            Frame(
+                settled[i % 3],
+                quad,
+                _noisy(quad, rng),
+                hand=_hand(hand_config, False),
+            )
+        )
 
 
 def run_control(base, settled, hand_config, episode_factory=Episode):
@@ -1059,7 +1179,9 @@ def run_move(base, settled, hand_config, spec, episode_factory=Episode):
     ep = episode_factory(app)
     frames = spec["frames"]
     target = transform_quad(
-        quad, spec.get("shift", (0.0, 0.0)), spec.get("angle", 0.0),
+        quad,
+        spec.get("shift", (0.0, 0.0)),
+        spec.get("angle", 0.0),
         spec.get("scale", 1.0),
     )
     for i in range(1, frames + 1):
@@ -1071,10 +1193,14 @@ def run_move(base, settled, hand_config, spec, episode_factory=Episode):
             spec.get("angle", 0.0) * ease,
             1.0 + (spec.get("scale", 1.0) - 1.0) * ease,
         )
-        ep.step(Frame(
-            settled[i % 3], true_quad, _noisy(true_quad, rng),
-            hand=_hand(hand_config, True),
-        ))
+        ep.step(
+            Frame(
+                settled[i % 3],
+                true_quad,
+                _noisy(true_quad, rng),
+                hand=_hand(hand_config, True),
+            )
+        )
     ep.mark()
     _settle(ep, settled, target, rng, hand_config)
     out = ep.report(quad, target, identity_true_class="same_page")
@@ -1086,8 +1212,7 @@ def run_move(base, settled, hand_config, spec, episode_factory=Episode):
     return out
 
 
-def run_drop(base, settled, hand_config, lost_frames, mode,
-             return_pages=None):
+def run_drop(base, settled, hand_config, lost_frames, mode, return_pages=None):
     """Folha perdida por N quadros e de volta.
 
     return_pages=None: a MESMA página volta (F-09). Com outra
@@ -1097,20 +1222,29 @@ def run_drop(base, settled, hand_config, lost_frames, mode,
     returned = settled if return_pages is None else return_pages
     app, quad = copy.deepcopy(base)
     rng = _rng(
-        "drop", mode, str(lost_frames), str(hand_config),
+        "drop",
+        mode,
+        str(lost_frames),
+        str(hand_config),
         "turn" if return_pages is not None else "same",
     )
     ep = Episode(app)
     for i in range(lost_frames):
         page = settled[i % 3] if mode == "detector_miss" else None
-        ep.step(Frame(
-            page, quad, None, verdict=None,
-            hand=_hand(hand_config, False),
-        ))
+        ep.step(
+            Frame(
+                page,
+                quad,
+                None,
+                verdict=None,
+                hand=_hand(hand_config, False),
+            )
+        )
     ep.mark()
     _settle(ep, returned, quad, rng, hand_config)
     out = ep.report(
-        quad, quad,
+        quad,
+        quad,
         identity_true_class="same_page" if return_pages is None else "new_page",
     )
     out["return_kind"] = "turn" if return_pages is not None else "same"
@@ -1124,8 +1258,7 @@ def run_drop(base, settled, hand_config, lost_frames, mode,
         out["passes_gate"] = (
             out["canvas_survived"]
             and out["lost_confirmed_px_outside_tol"] == 0
-            and out["new_confirmed_px_outside_tol"]
-            <= RECOVERY_GROWTH_TOL_PX
+            and out["new_confirmed_px_outside_tol"] <= RECOVERY_GROWTH_TOL_PX
         )
     else:
         # Sem drop nao ha identidade a decidir: o cenario e trivial.
@@ -1147,9 +1280,7 @@ def sway_offsets(profile, frames, rng):
                 for _ in range(2):
                     period = rng.uniform(2.0, 5.0)
                     phase = rng.uniform(0, 2 * np.pi)
-                    offsets[:, corner, axis] += np.sin(
-                        2 * np.pi * t / period + phase
-                    )
+                    offsets[:, corner, axis] += np.sin(2 * np.pi * t / period + phase)
     else:
         # Biestável: o ajuste alterna entre a folha e o caderno
         # aberto (um lado inteiro do quad salta para a outra
@@ -1160,7 +1291,7 @@ def sway_offsets(profile, frames, rng):
         while i < frames:
             dwell = int(rng.uniform(1.0, 4.0) * FPS)
             if mode:
-                offsets[i:i + dwell] = side
+                offsets[i : i + dwell] = side
             i += dwell
             mode ^= 1
     peak = np.max(np.linalg.norm(offsets, axis=2))
@@ -1173,16 +1304,18 @@ def run_sway(base, settled, hand_config, profile, episode_factory=Episode):
     offsets = sway_offsets(profile, SWAY_FRAMES, rng)
     ep = episode_factory(app)
     for i in range(SWAY_FRAMES):
-        ep.step(Frame(
-            settled[i % 3], quad, _noisy(quad + offsets[i], rng),
-            hand=_hand(hand_config, False),
-        ))
+        ep.step(
+            Frame(
+                settled[i % 3],
+                quad,
+                _noisy(quad + offsets[i], rng),
+                hand=_hand(hand_config, False),
+            )
+        )
     ep.mark()
     _settle(ep, settled, quad, rng, hand_config)
     out = ep.report(quad, quad)
-    out["max_corner_sway_px"] = round(
-        float(np.max(np.linalg.norm(offsets, axis=2))), 1
-    )
+    out["max_corner_sway_px"] = round(float(np.max(np.linalg.norm(offsets, axis=2))), 1)
     out["passes_gate"] = out["false_page_turns"] == 0
     return out
 
@@ -1196,9 +1329,7 @@ def _gate(runs, key="passes_gate"):
     return {
         "runs": len(flat),
         "failed": failed,
-        "passed_vacuously": sum(
-            1 for r in flat if r[key] and r["vacuous"]
-        ),
+        "passed_vacuously": sum(1 for r in flat if r[key] and r["vacuous"]),
         "passed_with_stale_ink_geometry": sum(
             1 for r in flat if r[key] and not r["ink_geometry_follows_page"]
         ),
@@ -1213,12 +1344,15 @@ def run_all(drawing, settled, source):
                 "warps reais f01-f30 da mesa, probabilidades do cache da "
                 "regua de 2026-11-01 (modelo v2); pagina assentada cicla "
                 "f28-f30"
-            ) if source == "real" else (
+            )
+            if source == "real"
+            else (
                 "pagina sintetica deterministica (10 estagios x 3 tracos, "
                 "caneta e lapis, ombro sub-limiar por blur); draw-lab "
                 "ausente nesta maquina"
             )
-        ) + (
+        )
+        + (
             f", {PASSES_PER_WARP} passadas por warp no desenho, "
             "rastreador + geracao do app + registro + acumulador reais, "
             "unidade = passada"
@@ -1264,13 +1398,11 @@ def run_all(drawing, settled, source):
         _turn_drawing, settled_turn = synthetic_pages(
             shape=settled[0].shape, stages=2, seed=101
         )
-    results["inputs"] += (
-        "; pagina de troca: "
-        + (
-            "espelho vertical da assentada (proxy de conteudo "
-            "distinto; a sessao real f01-f30 e uma pagina so)"
-            if source == "real" else "seed sintetico independente (101)"
-        )
+    results["inputs"] += "; pagina de troca: " + (
+        "espelho vertical da assentada (proxy de conteudo "
+        "distinto; a sessao real f01-f30 e uma pagina so)"
+        if source == "real"
+        else "seed sintetico independente (101)"
     )
     for hand_name, hand_config in HAND_CONFIGS.items():
         bases = {}
@@ -1291,24 +1423,27 @@ def run_all(drawing, settled, source):
             )
         for mode in DROP_MODES:
             for name, frames in DROP_FRAMES.items():
-                results["drop_and_return"][f"{mode}_{name}"][hand_name] = (
-                    run_drop(bases[False], settled, hand_config, frames, mode)
+                results["drop_and_return"][f"{mode}_{name}"][hand_name] = run_drop(
+                    bases[False], settled, hand_config, frames, mode
                 )
-                results["drop_and_turn"][f"{mode}_{name}"][hand_name] = (
-                    run_drop(
-                        bases[False], settled, hand_config, frames, mode,
-                        return_pages=settled_turn,
-                    )
+                results["drop_and_turn"][f"{mode}_{name}"][hand_name] = run_drop(
+                    bases[False],
+                    settled,
+                    hand_config,
+                    frames,
+                    mode,
+                    return_pages=settled_turn,
                 )
         for profile in SWAY_PROFILES:
             for flag, label in ((False, "default"), (True, "turn_event_enabled")):
-                results["sway_negative"][f"{profile}_{label}"][hand_name] = (
-                    run_sway(bases[flag], settled, hand_config, profile)
+                results["sway_negative"][f"{profile}_{label}"][hand_name] = run_sway(
+                    bases[flag], settled, hand_config, profile
                 )
 
     def runs(section, only=None):
         return [
-            r for key, by_hand in results[section].items()
+            r
+            for key, by_hand in results[section].items()
             if only is None or key.endswith(only)
             for r in by_hand.values()
         ]
@@ -1322,9 +1457,7 @@ def run_all(drawing, settled, source):
         "drop_and_return": {
             "runs": len(drops),
             "canvas_survived": sum(1 for r in drops if r["canvas_survived"]),
-            "generation_reset": sum(
-                1 for r in drops if r["generations_created"] > 0
-            ),
+            "generation_reset": sum(1 for r in drops if r["generations_created"] > 0),
             "identity_same_page": sum(
                 r["identity_decisions"].count("same_page") for r in drops
             ),
@@ -1340,8 +1473,7 @@ def run_all(drawing, settled, source):
     }
     if _ink._identity_chamfer_enabled():
         episodes = (
-            runs("move_same_canvas") + runs("drop_and_return")
-            + runs("drop_and_turn")
+            runs("move_same_canvas") + runs("drop_and_return") + runs("drop_and_turn")
         )
         results["identity_chamfer"] = {
             "replay_visibility": (
@@ -1350,11 +1482,17 @@ def run_all(drawing, settled, source):
             ),
             "by_true_class": {
                 label: {
-                    "episodes": sum(r["identity_true_class"] == label for r in episodes),
-                    "by_ecc": identity_chamfer_distribution([
-                        event for r in episodes if r["identity_true_class"] == label
-                        for event in r["identity_events"]
-                    ]),
+                    "episodes": sum(
+                        r["identity_true_class"] == label for r in episodes
+                    ),
+                    "by_ecc": identity_chamfer_distribution(
+                        [
+                            event
+                            for r in episodes
+                            if r["identity_true_class"] == label
+                            for event in r["identity_events"]
+                        ]
+                    ),
                 }
                 for label in ("same_page", "new_page")
             },
@@ -1367,19 +1505,25 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default=None)
     parser.add_argument(
-        "--synthetic", action="store_true",
+        "--synthetic",
+        action="store_true",
         help="forca a pagina sintetica mesmo com o draw-lab presente",
     )
     parser.add_argument(
-        "--detect-ms", type=float, default=DETECT_MS,
+        "--detect-ms",
+        type=float,
+        default=DETECT_MS,
         help="duracao simulada de uma deteccao de folha (ms)",
     )
     parser.add_argument(
-        "--app-logic", choices=APP_LOGICS, default=APP_LOGIC,
+        "--app-logic",
+        choices=APP_LOGICS,
+        default=APP_LOGIC,
         help="main = recuperacao de identidade; legacy = drop zera",
     )
     parser.add_argument(
-        "--strict", action="store_true",
+        "--strict",
+        action="store_true",
         help="sai com 1 se um portao (moveu/balanco padrao) reprovar",
     )
     args = parser.parse_args()
@@ -1400,8 +1544,11 @@ def main():
     failed = any(
         summary[key]["verdict"] == "REPROVADO"
         for key in (
-            "control_static", "move_same_canvas", "drop_and_return_same_page",
-            "drop_and_turn", "sway_negative",
+            "control_static",
+            "move_same_canvas",
+            "drop_and_return_same_page",
+            "drop_and_turn",
+            "sway_negative",
         )
     )
     return 1 if (args.strict and failed) else 0

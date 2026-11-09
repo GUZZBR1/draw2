@@ -585,8 +585,8 @@ dilatada pela tolerância de fronteira.
 identidade e aos records por passada de `draw/ink_layers.py`.
 O parser, como no ECC, aceita `1/true/yes/on` (ignora caixa e espaços);
 ausente ou qualquer outro valor deixa a flag OFF. Desligada, não calcula
-distâncias nem acrescenta campos. As decisões vivas continuam usando
-recall 0,65, contenção 0,5 e o mesmo adiamento por oclusão.
+distâncias nem acrescenta campos Chamfer/sombra. As decisões vivas continuam
+usando recall 0,65 e contenção 0,5, sem limiares novos de distância.
 
 - `chamfer_seen_to_reference_median_px` e
   `chamfer_reference_to_seen_median_px`: medianas das distâncias
@@ -601,13 +601,33 @@ recall 0,65, contenção 0,5 e o mesmo adiamento por oclusão.
   vazia: mediana `null` (distância indefinida), coberturas zero. Referência
   indisponível: todas as métricas `null`, nunca sentinelas enormes do OpenCV.
 - `ecc_refine_enabled`: estado explícito 0/1 de `DRAW_ECC_REFINE`.
-  Não misturar distribuições de estados diferentes sem anotação.
+  Emitido em **todos** os eventos de identidade e records de passada,
+  mesmo com Chamfer desligado, assim como `ecc_rejected`. Não misturar
+  distribuições de estados diferentes sem anotação.
 - `shadow_decision`: `defer` se `ecc_rejected=True`; caso contrário,
-  a decisão viva (`same_page`, `new_page` ou `deferred_occlusion`). Não
-  altera reset, consumo da referência, geração nem canvas, inclusive
-  quando a decisão viva é `new_page` e a sombra é `defer`.
+  a decisão viva. Continua sendo diagnóstico opt-in: não vota por distância.
   Decisão/recall/contenção existentes continuam lado a lado; nos records
   por passada eles conservam os nomes `page_identity_*`.
+
+**F-11 Block 2 — quarentena em produção.** Com `DRAW_ECC_REFINE=1`,
+`ecc_rejected=True` adia a decisão viva para `deferred_ecc_rejected`, nunca
+`new_page`. A referência e a âncora antigas ficam disponíveis para a
+próxima passada, e a evidência rejeitada se abstém do voto e da virada:
+o canvas não é contaminado nem zerado durante a quarentena. O adiamento
+por oclusão continua como `deferred_occlusion`.
+
+Eventos e records declaram `deferred`, `quarantine_reason` (`ecc_rejected`,
+`occlusion` ou `null`) e `quarantine_frames`, número de passadas consecutivas
+adiadas nesta recuperação. O teto configurável no módulo
+`_PAGE_IDENTITY_MAX_DEFERRALS = 5` é compartilhado pelos dois motivos;
+a recuperação pendente não entra em descanso total. Uma decisão concluída
+ou geração nova zera o contador. Se a próxima passada ainda adia após
+atingir o teto, emite `quarantine_timeout` (não é voto de página nova),
+descarta referência e canvas e perde a âncora, sem aceitar a evidência
+daquela passada. A próxima passada começa com âncora e acumulador limpos.
+O evento terminal preserva a contagem e o motivo; os estados internos
+da quarentena são limpos. Este teto é um default operacional, não um
+limiar de identidade calibrado nas quatro páginas reais.
 
 O replay usa os mesmos nomes de diagnóstico nos eventos. Com a flag on,
 `Episode.report` inclui `identity_events`, `identity_true_class` e
