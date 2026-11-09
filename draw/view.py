@@ -2,9 +2,10 @@
 
 Monta a interface com:
 - Barra superior Studio (logo DRAW, indicador de captura ao vivo e ponte CAD).
-- Painel esquerdo com a visao da camera e reticulos refinados de deteccao.
+- Barra vertical lateral a esquerda da camera com atalhos de teclado ([S], [C], [F], [Q]).
+- Painel central com a visao da camera.
 - Painel direito com a folha ao vivo enquadrada em moldura de papel.
-- Barra inferior com atalhos de teclado ([S] Salvar PNG, [C] Base, [F] Frame, [Q] Sair).
+- Rodape sutil com informacoes de formato e identidade.
 - Quadros de aviso e erro em estilo card de vidro translucido.
 """
 
@@ -131,7 +132,7 @@ def _draw_status_badge(status, text, status_color=None):
 
 
 def _compose_view(camera_img, canvas_img):
-    """Janela unica: camera a esquerda, folha ao vivo a direita em estilo Studio / Glass.
+    """Janela unica: barra de botoes e camera a esquerda, folha ao vivo a direita em estilo Studio / Glass.
 
     Tamanho final fixo (1600x640), garantindo contraste, legibilidade,
     identidade de estúdio e sem mutação nos arrays de entrada.
@@ -172,12 +173,11 @@ def _compose_view(camera_img, canvas_img):
     cv2.putText(studio, "FOLHA AO VIVO", (split_x + 20, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.42, COLOR_PAPER_TEXT_LABEL, 1, cv2.LINE_AA)
     cv2.putText(studio, "CANVAS DIGITAL", (target_w - 140, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.36, COLOR_PAPER_TEXT_MUTED, 1, cv2.LINE_AA)
 
-    # 2. Barra Inferior (Footer de atalhos)
-    # Footer esquerdo (dark)
+    # 2. Barra Inferior (Footer sutil)
     cv2.rectangle(studio, (0, target_h - footer_h), (split_x, target_h), COLOR_SURFACE_BAR, -1)
     cv2.line(studio, (0, target_h - footer_h), (split_x, target_h - footer_h), COLOR_BORDER_SUBTLE, 1, cv2.LINE_AA)
 
-    cv2.putText(studio, "[S] Salvar PNG    [C] Base    [F] Frame    [Q] Sair", (24, target_h - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 185, 180), 1, cv2.LINE_AA)
+    cv2.putText(studio, "Draw - Paper to Digital Bridge", (24, target_h - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (140, 145, 142), 1, cv2.LINE_AA)
     cv2.putText(studio, "Ponte papel -> CAD", (split_x - 170, target_h - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.36, COLOR_TEXT_MUTED, 1, cv2.LINE_AA)
 
     # Footer direito (estudio papel)
@@ -185,25 +185,48 @@ def _compose_view(camera_img, canvas_img):
     cv2.line(studio, (split_x, target_h - footer_h), (target_w, target_h - footer_h), COLOR_PAPER_BORDER, 1, cv2.LINE_AA)
     cv2.putText(studio, "A4 850x1200", (split_x + 20, target_h - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.36, COLOR_PAPER_TEXT_MUTED, 1, cv2.LINE_AA)
 
-    # 3. Painel da Camera (Esquerda)
+    # 3. Barra Vertical de Botoes (lado esquerdo da camera)
+    panel_h = target_h - header_h - footer_h - 16  # 544px
+    panel_y = header_h + 8
+    toolbar_x = 16
+    toolbar_w = 96
+
+    _draw_pill(studio, toolbar_x, panel_y, toolbar_w, panel_h, (26, 28, 26), COLOR_BORDER_SUBTLE, radius=8, alpha=0.9)
+    cv2.putText(studio, "ATALHOS", (toolbar_x + 22, panel_y + 26), cv2.FONT_HERSHEY_SIMPLEX, 0.32, COLOR_TEXT_MUTED, 1, cv2.LINE_AA)
+    cv2.line(studio, (toolbar_x + 12, panel_y + 36), (toolbar_x + toolbar_w - 12, panel_y + 36), COLOR_BORDER_SUBTLE, 1, cv2.LINE_AA)
+
+    buttons = [
+        ("[S]", "Salvar"),
+        ("[C]", "Base"),
+        ("[F]", "Frame"),
+        ("[Q]", "Sair"),
+    ]
+    btn_y = panel_y + 48
+    for key, label in buttons:
+        _draw_pill(studio, toolbar_x + 10, btn_y, toolbar_w - 20, 44, (35, 38, 36), (58, 64, 61), radius=6, alpha=1.0)
+        cv2.putText(studio, key, (toolbar_x + 20, btn_y + 19), cv2.FONT_HERSHEY_DUPLEX, 0.42, COLOR_ACCENT_YELLOW, 1, cv2.LINE_AA)
+        cv2.putText(studio, label, (toolbar_x + 20, btn_y + 34), cv2.FONT_HERSHEY_SIMPLEX, 0.34, COLOR_TEXT_SOFT, 1, cv2.LINE_AA)
+        btn_y += 56
+
+    # 4. Painel da Camera (a direita da barra de botoes)
+    cam_area_x = toolbar_x + toolbar_w + 12
+    cam_area_w = split_x - cam_area_x - 12
     cam_h, cam_w = camera_img.shape[:2]
-    panel_h = target_h - header_h - footer_h - 16
     aspect_cam = cam_w / max(1, cam_h)
     target_cam_w = int(panel_h * aspect_cam)
-    max_cam_w = split_x - 24
-    if target_cam_w > max_cam_w:
-        target_cam_w = max_cam_w
-        target_cam_h = int(max_cam_w / aspect_cam)
+    if target_cam_w > cam_area_w:
+        target_cam_w = cam_area_w
+        target_cam_h = int(cam_area_w / aspect_cam)
     else:
         target_cam_h = panel_h
 
     cam_resized = cv2.resize(camera_img, (target_cam_w, target_cam_h))
-    cam_x = 12 + (split_x - 24 - target_cam_w) // 2
-    cam_y = header_h + 8 + (panel_h - target_cam_h) // 2
+    cam_x = cam_area_x + (cam_area_w - target_cam_w) // 2
+    cam_y = panel_y + (panel_h - target_cam_h) // 2
     studio[cam_y:cam_y + target_cam_h, cam_x:cam_x + target_cam_w] = cam_resized
     cv2.rectangle(studio, (cam_x, cam_y), (cam_x + target_cam_w, cam_y + target_cam_h), COLOR_BORDER_CARD, 1, cv2.LINE_AA)
 
-    # 4. Painel da Folha Digital (Direita)
+    # 5. Painel da Folha Digital (Direita)
     canvas_h, canvas_w = canvas_img.shape[:2]
     aspect_sheet = canvas_w / max(1, canvas_h)
     target_sheet_w = int(panel_h * aspect_sheet)
@@ -216,7 +239,7 @@ def _compose_view(camera_img, canvas_img):
 
     sheet_resized = cv2.resize(canvas_img, (target_sheet_w, target_sheet_h))
     sheet_x = split_x + 12 + (target_w - split_x - 24 - target_sheet_w) // 2
-    sheet_y = header_h + 8 + (panel_h - target_sheet_h) // 2
+    sheet_y = panel_y + (panel_h - target_sheet_h) // 2
 
     studio[sheet_y:sheet_y + target_sheet_h, sheet_x:sheet_x + target_sheet_w] = sheet_resized
     cv2.rectangle(studio, (sheet_x, sheet_y), (sheet_x + target_sheet_w, sheet_y + target_sheet_h), (190, 195, 192), 1, cv2.LINE_AA)
