@@ -242,6 +242,27 @@ def test_server_streams_state_changes(server):
     assert received[1]["strokes"][0]["id"] == "s0001"
 
 
+def test_event_stream_ends_when_server_stops(tmp_path):
+    hub = cs.CadHub()
+    srv = cs.CadServer(hub, port=0, dist_dir=tmp_path).start()
+    ended = threading.Event()
+
+    def read_events():
+        with urllib.request.urlopen(srv.url + "api/events", timeout=10) as r:
+            for _raw in r:
+                pass
+        ended.set()
+
+    thread = threading.Thread(target=read_events, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and hub.state()["version"] != 0:
+        time.sleep(0.02)
+    time.sleep(0.3)
+    srv.stop()
+    assert ended.wait(timeout=5), "SSE seguiu aberto depois do stop"
+
+
 def test_server_without_dist_explains_build(tmp_path):
     hub = cs.CadHub()
     srv = cs.CadServer(hub, port=0, dist_dir=tmp_path / "nada").start()
