@@ -9,20 +9,24 @@ Não há recomendação de ligar/desligar ECC.
 - Pré-inscrição: [`F07_REPLAY_V2_A_R1_2026-11-09.json`](F07_REPLAY_V2_A_R1_2026-11-09.json),
   commit `a376baa`, anterior a qualquer execução de página.
   SHA-256: `aa6b9d79d805d4f0c0527d33c618253645882ea0c120cc92a0d8675e357fc81c`.
-- Runner: `tools/replay_reregister_v2.py`, código no commit `db99216`.
+- Runner: `tools/replay_reregister_v2.py`, código no commit `1cda9ff`.
   SHA-256 conjunto dos runners v2 + v1:
-  `5fc689bcec093f46a9965b7552fa627db7c8816bc9946ffcf0e5dc5c69110c74`.
+  `dac4dde13a111f07bfb6d2eec48e0fb5a3fcaa1ba2a1915216201c6dbe027da4`.
 - **Uma página física real**, 30 warps/cache hits f01–f30, zero cache misses,
   mapas float32 nativos 864×1216; assentamento com f28–f30. Mesmo pacote do #46.
   As outras três páginas do pool **não estão no pacote**; nenhum proxy/espelho
   ou página sintética as substituiu. Entradas privadas não entram no Git.
 - Fingerprint das mesmas entradas nos dois braços:
-  `83a1247a2e689a637b3b3617e23483d63b0ec7aa090f1c990fc4350377a5773a`.
+  `7d00b945c8bcef978cdd89af0927c3306802959afdd13c54bd9116e9aa3cb417`.
   Modelo: `0e7fecb1ec99bac663c3c9e2c42d32dea31ec5c81fc8ecd617df6612fc0aa639`.
 - Runtime idêntico: Python 3.12.16, OpenCV 5.0.0, NumPy 2.5.4, Linux x86_64,
   oito threads OpenCV. Runtime, inscrição, código, entradas e 32 casos pareados
   conferidos por `compare_arms`. A cadência adaptativa produz contagens de
   passadas diferentes; a unidade decisiva pareada é **episódio**, não passada.
+- ZIP original obrigatório, SHA-256 pré-inscrito conferido; cada arquivo usado
+  é comparado ao membro do ZIP e apenas esses bytes verificados são consumidos.
+  Os dois braços foram repetidos após corrigir essa validação, com os mesmos
+  números decisivos. A inscrição R1 e seus critérios não foram alterados.
 
 ## Medição decisiva (tabelas separadas, sem pooling)
 
@@ -67,7 +71,7 @@ decisivo de página nova e zero reprovação; rejeição não foi convertida em 
 
 Diagnóstico ON, sem votos: mediana/p95 de deslocamento de canto mediano
 canônico: âncora fixa **2,96/406,86 px**, consecutivo **~0/12,09 px**.
-Tempo ECC mediana/p95: **121,19/568,38 ms**, incluindo rejeições/bypasses,
+Tempo ECC mediana/p95: **126,48/692,05 ms**, incluindo rejeições/bypasses,
 sem interpretação de desempenho de produto.
 
 ## O que a régua mede — e o que não mede
@@ -94,8 +98,8 @@ taxa: critérios, bases geométricas e tratamento de vacuidade/adiamento diferem
 ## Reprodução e auditoria
 
 ```sh
-.venv/bin/python tools/replay_reregister_v2.py --bench-root "$BENCH" --ecc-refine 0 --out off.json
-.venv/bin/python tools/replay_reregister_v2.py --bench-root "$BENCH" --ecc-refine 1 --out on.json
+.venv/bin/python tools/replay_reregister_v2.py --bench-root "$BENCH" --package "$ZIP" --ecc-refine 0 --out off.json
+.venv/bin/python tools/replay_reregister_v2.py --bench-root "$BENCH" --package "$ZIP" --ecc-refine 1 --out on.json
 .venv/bin/python - <<'PY'
 import json
 from tools.replay_reregister_v2 import compare_arms
@@ -105,8 +109,8 @@ PY
 ```
 
 SHA-256 dos resultados completos entregues à sessão, com diagnóstico por passada:
-OFF `be4a13b6f1ca16f1e85e66caf450e6fff839eff6f7a6956e7d25f70fea033a2e`;
-ON `0eab787212b84b3eceb0d3de61a9fbd79a09b2d7bac31c8d7a6dbc5e8e06de34`.
+OFF `7c295cd8c3b339de443d1d516cd08bdd37b8235be4430688f147aa23b4cafbc1`;
+ON `28241ec2f38683798b5e9ee6a4b8e94314e0a3d4a4b5e22f2668209a5c169174`.
 Somente agregados entram no Git. Flags de Chamfer e virada explicitamente `0`.
 Nenhuma flag, limiar ou caminho de produção foi alterado; workflows intactos.
 
