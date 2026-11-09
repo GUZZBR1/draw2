@@ -82,7 +82,7 @@ function commit(mutate: (d: Doc) => void): void {
 }
 
 function afterChange(): void {
-  selection = new Set([...selection].filter((id) => doc.entities.some((e) => e.id === id)));
+  selection = new Set([...selection].filter((id) => doc.entities.some((e) => e.id === id && isEditable(e))));
   save();
   refreshPanels();
   render();
