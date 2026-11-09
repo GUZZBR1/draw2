@@ -30,7 +30,7 @@ Convenções:
 | F-01 | Tinta repassada/reimpressa em camadas | acumulador/orquestração | bloqueante | parcial — ver F-01 |
 | F-02 | Traço fino/fraco apagado (nunca chega ao canvas) | tinta | bloqueante | sim |
 | F-03 | Mão confundida com papel | folha/cena | maior | sem régua dedicada |
-| F-04 | Mão cobrindo o desenho: conteúdo some, atrasa ou duplica | cena/acumulador | maior | sem régua ainda |
+| F-04 | Mão cobrindo o desenho: conteúdo some, atrasa ou duplica | cena/acumulador | maior | parcial — testes sintéticos, sem replay real |
 | F-05 | Tinta fantasma em página vazia | tinta | maior | sim |
 | F-06 | Impresso vazando como tinta | tinta | maior | sim |
 | F-07 | Canvas muda sem tinta nova (invariância violada) | orquestração | bloqueante | parcial — ver F-07 |
@@ -176,23 +176,28 @@ trechos somem, voltam atrasados ou aparecem duplicados/deslocados.
   — por desenho, o conteúdo sob a mão é preservado. Mas se a máscara
   de mão erra (mão não detectada), o pixel é julgado como visível sem
   tinta e pode ser **apagado** pela histerese (fração cai a `exit`).
-- No caminho page-clean **não há máscara de visibilidade**: a
-  trabalhadora recebe o warp cru, com a mão dentro
-  (`draw/ink_layers.py`, `_PageCleanWorker`); a tinta confirmada não
-  sai (camada monotônica na geração), mas tinta **nova** desenhada
-  sob/perto da mão entra no voto com prob ~0 nas passadas cobertas —
-  confirma tarde, ou só como provisória que retrata (some da tela) e
-  volta quando a mão sai: o "duplica/atrasa" que o usuário vê.
+- No caminho page-clean, a máscara de visibilidade **já está integrada**
+  (`draw/ink_layers.py`, `_PageCleanWorker`): com MediaPipe e o modelo
+  de mão disponíveis, a trabalhadora obtém a máscara no warp e a
+  registra junto com as probabilidades. Pixel coberto não vota e a
+  provisória fica preservada sob a mão; a confirmada continua monotônica
+  na geração. O modelo ainda recebe o warp cru. Sem máscara disponível,
+  ou quando ela erra, pixels ocultos continuam entrando como visíveis,
+  com risco de atraso, retração da provisória e falsa tinta.
 - Se a mão cobre a borda da folha e o tracker perde a folha, vale
-  F-09: geração nova e a página inteira é republicada.
+  F-09: a reabertura pede recuperação de identidade. O canvas é preservado
+  se a tinta visível reencontra a referência; pouca visibilidade adia a
+  decisão. Uma decisão errada de página nova ainda pode zerá-lo.
 
 **Severidade: maior.** Desenhar é, por definição, mão sobre o desenho
 metade do tempo.
 
-**Como se mede — SEM RÉGUA AINDA.** Nenhuma régua atual injeta
-oclusão de pixels da mão: os quatro regimes de mão da régua de
-re-registro são sinais de presença/movimento, não uma mão no warp.
-Régua que falta: replay de sequência real/sintética em que
+**Como se mede — régua parcial.** `tests/test_ink_occlusion.py` injeta
+visibilidade sintética e verifica abstenção de pixels ocultos, preservação
+da provisória e recuperação de identidade só pela tinta visível (ou
+adiamento quando quase toda a referência está coberta). Os quatro regimes
+de mão da régua de re-registro continuam sendo sinais de presença/movimento,
+não uma mão no warp. Régua que falta: replay de sequência real/sintética em que
 uma mão (real, de vídeo; ou máscara recortada) cruza uma página já
 desenhada; medir (a) px confirmados antes × depois da oclusão
 (perda = qualquer queda), (b) atraso até tinta nova sob a mão
@@ -201,16 +206,14 @@ nova no GT. A infraestrutura de replay do app existe
 (`tools/replay_orchestration.py`); falta o corpus de oclusão e o
 gabarito.
 
-**Ataque de oclusão pendente (frente separada):** tratar evidência
-oculta como desconhecida, em vez de voto negativo, e transportar a
-visibilidade na mesma geometria da probabilidade. O patch foi
-reportado em outra worktree, mas não está integrado nesta `main`;
-testes relatados ali não são prova de integração aqui. Cobrar perda
+**Ataque de oclusão integrado; validação real pendente (frente separada):**
+a evidência oculta já é tratada como desconhecida e a visibilidade
+acompanha a geometria da probabilidade em `main`. Ainda falta cobrar perda
 zero de confirmado, nenhuma cópia depois da desoclusão e atraso de
 tinta nova sob a mão em passadas, incluindo erro/ausência do sinal
 de mão. Isso não corrige o recall de F-11: o desencontro de níveis
 de comparação acontece também sem oclusão. O experimento de tremor
-abaixo não implementa nem presume esse patch.
+abaixo não é validação de oclusão.
 
 ## F-05 — Tinta fantasma
 
@@ -315,6 +318,21 @@ pode confiar nele.
   obrigatória. Ainda não há limiar pré-registrado em `tools/judge.py`;
   o modo hold com balanço realista segue fora da bancada e falta
   vídeo real de caderno movido, não a página real no replay.
+- **Re-baseline v2 do ECC / #46 (2026-11-09):**
+  `tools/replay_reregister_v2.py`, pré-inscrição congelada antes das páginas
+  em `docs/F07_REPLAY_V2_A_R1_2026-11-09.json`, guarda em
+  `tests/test_replay_reregister_v2.py`. Modo A: âncora fixa em `same_page`,
+  helpers produtivos sem mudança; mapas já retificados expressos na base da
+  passada antes do registro, sem injetar movimento físico duas vezes.
+  Quads consecutivos são só diagnóstico. Uma página real f01–f30, mesmos
+  inputs nos braços explícitos `DRAW_ECC_REFINE=0` e `1`, sem pooling.
+  F-07 OFF: **12/15 decisivos**, 3 falhas, 5 vacuosos. ON: **20 adiados,
+  denominador zero**, não «0/20 falhas»: todos os baselines tiveram rejeições
+  ECC e o protocolo exclui episódios com baseline afetado de todos os votos.
+  Rejeição nunca é voto de página nova. Números, hashes e limitações em
+  `docs/F07_REPLAY_V2_A_R1_RESULTADOS_2026-11-09.md`. É régua de contrato sobre
+  mapas, não replay físico nem recomendação sobre a flag; faltam as outras
+  três páginas e frames brutos. A baseline v1 fica histórica, não comparável.
 
 **Registro já ativo; o que falta é o portão.** Em
 `draw/ink_layers.py`, `_PageCleanWorker._work` recalcula
@@ -565,6 +583,78 @@ e os pixels de referência da primeira máscara após a recuperação. O app
 usa recall mínimo de 65% e contenção mínima de 50%, com comparação
 dilatada pela tolerância de fronteira.
 
+**Instrumentação Chamfer (opt-in, sem voto novo).**
+`DRAW_IDENTITY_CHAMFER=1` acrescenta diagnóstico aos eventos de
+identidade e aos records por passada de `draw/ink_layers.py`.
+O parser, como no ECC, aceita `1/true/yes/on` (ignora caixa e espaços);
+ausente ou qualquer outro valor deixa a flag OFF. Desligada, não calcula
+distâncias nem acrescenta campos Chamfer/sombra. As decisões vivas continuam
+usando recall 0,65 e contenção 0,5, sem limiares novos de distância.
+
+- `chamfer_seen_to_reference_median_px` e
+  `chamfer_reference_to_seen_median_px`: medianas das distâncias
+  euclidianas, via `cv2.distanceTransform` (`DIST_L2`, `DIST_MASK_PRECISE`)
+  sobre o complemento do alvo. Unidade: pixel da grade registrada na
+  âncora, não pixel canônico reescalado. Com visibilidade, a referência
+  é `prior_visible`; sem ela, `prior`. Os conjuntos não são dilatados.
+- `chamfer_{seen_to_reference,reference_to_seen}_coverage_{2,4,8,16}px`:
+  fração dos pontos da origem a distância **≤** ao raio, nos dois sentidos.
+  Estes raios são apenas medidas de cobertura, nunca limiares de decisão.
+  Origem vazia: mediana e coberturas `null`; alvo vazio com origem não
+  vazia: mediana `null` (distância indefinida), coberturas zero. Referência
+  indisponível: todas as métricas `null`, nunca sentinelas enormes do OpenCV.
+- `ecc_refine_enabled`: estado explícito 0/1 de `DRAW_ECC_REFINE`.
+  Emitido em **todos** os eventos de identidade e records de passada,
+  mesmo com Chamfer desligado, assim como `ecc_rejected`. Não misturar
+  distribuições de estados diferentes sem anotação.
+- `shadow_decision`: `defer` se `ecc_rejected=True`; caso contrário,
+  a decisão viva. Continua sendo diagnóstico opt-in: não vota por distância.
+  Decisão/recall/contenção existentes continuam lado a lado; nos records
+  por passada eles conservam os nomes `page_identity_*`.
+
+**F-11 Block 2 — quarentena em produção.** Com `DRAW_ECC_REFINE=1`,
+`ecc_rejected=True` adia a decisão viva para `deferred_ecc_rejected`, nunca
+`new_page`. A referência e a âncora antigas ficam disponíveis para a
+próxima passada, e a evidência rejeitada se abstém do voto e da virada:
+o canvas não é contaminado nem zerado durante a quarentena. O adiamento
+por oclusão continua como `deferred_occlusion`.
+
+Eventos e records declaram `deferred`, `quarantine_reason` (`ecc_rejected`,
+`occlusion` ou `null`) e `quarantine_frames`, número de passadas consecutivas
+adiadas nesta recuperação. O teto configurável no módulo
+`_PAGE_IDENTITY_MAX_DEFERRALS = 5` é compartilhado pelos dois motivos;
+a recuperação pendente não entra em descanso total. Uma decisão concluída
+ou geração nova zera o contador. Se a próxima passada ainda adia após
+atingir o teto, emite `quarantine_timeout` (não é voto de página nova),
+descarta referência e canvas e perde a âncora, sem aceitar a evidência
+daquela passada. A próxima passada começa com âncora e acumulador limpos.
+O evento terminal preserva a contagem e o motivo; os estados internos
+da quarentena são limpos. Este teto é um default operacional, não um
+limiar de identidade calibrado nas quatro páginas reais.
+
+O replay usa os mesmos nomes de diagnóstico nos eventos. Com a flag on,
+`Episode.report` inclui `identity_events`, `identity_true_class` e
+`identity_chamfer_by_ecc`: valores individuais, contagem, ausentes,
+min/p25/mediana/p75/max para cada métrica, separados por estado ECC.
+`identity_chamfer.by_true_class` agrega `move_same_canvas` e
+`drop_and_return` como `same_page`, e `drop_and_turn` como `new_page`,
+independentemente da decisão inferida. Episódios sem evento de identidade
+continuam sem amostras (não são zeros). A divergência pré-existente do
+replay permanece: não passa `visible`, usa `prior` inteiro e não adia por
+oclusão. A rejeição ECC só adia a sombra do evento, não o replay vivo.
+
+Para medir sem calibrar corte, executar os dois estados separadamente:
+
+```sh
+DRAW_IDENTITY_CHAMFER=1 DRAW_ECC_REFINE=0 python tools/replay_reregister.py --synthetic --out chamfer-ecc0.json
+DRAW_IDENTITY_CHAMFER=1 DRAW_ECC_REFINE=1 python tools/replay_reregister.py --synthetic --out chamfer-ecc1.json
+```
+
+Remover `--synthetic` só usa dados reais se o laboratório estiver presente;
+conferir sempre `source`. Mesmo com `source=real`, `drop_and_turn` usa
+espelho vertical como proxy, não uma segunda folha real. A amostra de
+quatro páginas reais não permite promover qualquer limiar novo.
+
 - `tools/replay_reregister.py`, cenário `drop_and_return` (ver F-09):
   antes da correção de identidade, `new_page` em 16/16 retornos da
   mesma página nas baselines sintética e real (recall 0,58–0,61 <
@@ -782,7 +872,8 @@ F-11 com portão na régua de re-registro, mas ainda sem vídeo real),
 **F-08** (componentes medidos, sem orçamento de ponta a ponta),
 **F-11** (replay de identidade e balanço de 314 px com página real,
 sem vídeo real) e **F-09** (quedas contadas
-sem limiar). Sem régua dedicada: **F-03, F-04 e F-10** — falhas de
+sem limiar); **F-04** tem testes de visibilidade sintética, ainda sem
+corpus de oclusão real. Sem régua dedicada: **F-03 e F-10** — falhas de
 cena/acumulador, não de modelo isolado.
 
 O "moveu = mesmo canvas" de F-07/F-09 deixou de ser buraco de

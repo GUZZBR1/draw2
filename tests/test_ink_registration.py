@@ -44,6 +44,67 @@ H, W = 60, 80
 Q0 = np.array(
     [(0, 0), (W, 0), (W, H), (0, H)], dtype=np.float32
 )
+
+
+@pytest.mark.parametrize("value, expected", [
+    (None, False), ("0", False), ("false", False), ("2", False),
+    ("1", True), ("true", True), (" YES ", True), ("On", True),
+])
+def test_identity_chamfer_flag_is_explicit_opt_in(monkeypatch, value, expected):
+    monkeypatch.delenv("DRAW_IDENTITY_CHAMFER", raising=False)
+    if value is not None:
+        monkeypatch.setenv("DRAW_IDENTITY_CHAMFER", value)
+    assert ink_layers_module._identity_chamfer_enabled() is expected
+
+
+def test_identity_chamfer_measures_both_directions_and_all_coverages(monkeypatch):
+    monkeypatch.setenv("DRAW_ECC_REFINE", "0")
+    seen = np.zeros((50, 50), dtype=bool)
+    prior = seen.copy()
+    prior[20, 10] = True
+    seen[20, [10, 13, 16, 22, 30]] = True
+    fields = ink_layers_module._identity_chamfer_fields(
+        seen, prior, "new_page", {"ecc_rejected": False},
+    )
+    assert fields["chamfer_seen_to_reference_median_px"] == 6.0
+    assert fields["chamfer_reference_to_seen_median_px"] == 0.0
+    for k, covered in ((2, 1), (4, 2), (8, 3), (16, 4)):
+        assert fields[f"chamfer_seen_to_reference_coverage_{k}px"] == covered / 5
+        assert fields[f"chamfer_reference_to_seen_coverage_{k}px"] == 1.0
+    assert fields["ecc_refine_enabled"] == 0
+    assert fields["shadow_decision"] == "new_page"
+
+
+def test_identity_chamfer_is_euclidean_and_coverage_is_inclusive():
+    seen = np.zeros((20, 20), dtype=bool)
+    prior = seen.copy()
+    prior[2, 2] = True
+    seen[6, 2] = True
+    fields = ink_layers_module._identity_chamfer_fields(seen, prior, "same_page", {})
+    assert fields["chamfer_seen_to_reference_median_px"] == 4.0
+    assert fields["chamfer_seen_to_reference_coverage_4px"] == 1.0
+    seen.fill(False)
+    seen[6, 5] = True
+    fields = ink_layers_module._identity_chamfer_fields(seen, prior, "same_page", {})
+    assert fields["chamfer_seen_to_reference_median_px"] == 5.0
+
+
+@pytest.mark.parametrize("seen_count, prior_count", [(0, 0), (1, 0), (0, 1)])
+def test_identity_chamfer_empty_sets_are_json_null_not_opencv_sentinels(
+    seen_count, prior_count,
+):
+    seen = np.zeros((10, 10), dtype=bool)
+    prior = seen.copy()
+    seen.flat[:seen_count] = True
+    prior.flat[:prior_count] = True
+    fields = ink_layers_module._identity_chamfer_fields(seen, prior, "new_page", {})
+    for direction, count in (("seen_to_reference", seen_count),
+                             ("reference_to_seen", prior_count)):
+        assert fields[f"chamfer_{direction}_median_px"] is None
+        for k in (2, 4, 8, 16):
+            assert fields[f"chamfer_{direction}_coverage_{k}px"] == (
+                0.0 if count else None
+            )
 BLOCK_A = (slice(10, 20), slice(10, 20))
 BLOCK_B = (slice(35, 45), slice(55, 65))
 
