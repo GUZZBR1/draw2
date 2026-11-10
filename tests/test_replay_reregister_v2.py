@@ -441,12 +441,16 @@ def test_v2_matches_production_switch_consensus(monkeypatch, enabled, interrupt,
     rejecting = False
 
     def refine(reference, observed, hand_mask=None):
-        return observed, np.eye(3), {
-            "ecc_rejected": rejecting,
-            "ecc_converged": False,
-            "ecc_mode": "affine",
-            "ecc_ms": 0.0,
-        }
+        return (
+            observed,
+            np.eye(3),
+            {
+                "ecc_rejected": rejecting,
+                "ecc_converged": False,
+                "ecc_mode": "affine",
+                "ecc_ms": 0.0,
+            },
+        )
 
     monkeypatch.setattr(ink, "_refine_ink_ecc", refine)
     prob = content()
@@ -492,7 +496,10 @@ def test_v2_matches_production_switch_consensus(monkeypatch, enabled, interrupt,
                     actual = real._identity_events[-1]
                     expected = mirror.identity_events[-1]
                     for key in (
-                        "decision", "ecc_refine_enabled", "quarantine_frames", "deferred"
+                        "decision",
+                        "ecc_refine_enabled",
+                        "quarantine_frames",
+                        "deferred",
                     ):
                         assert actual[key] == expected[key]
                     if expected["decision"] == "deferred_switch_consensus":

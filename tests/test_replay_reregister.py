@@ -256,7 +256,9 @@ def test_reduced_run_reports_contract_fields(monkeypatch, chamfer_flag):
     assert lost["drops"] == 1 and lost["generations_created"] >= 1
     turned = results["drop_and_turn"]["page_out_long_150f"]["presente_mexendo"]
     assert turned["identity_decisions"] == [
-        "deferred_switch_consensus", "deferred_switch_consensus", "new_page"
+        "deferred_switch_consensus",
+        "deferred_switch_consensus",
+        "new_page",
     ]
     assert turned["passes_gate"]
     assert set(results["summary"]) >= {
@@ -322,8 +324,10 @@ def test_replay_ecc_rejection_defers_production(
     assert kept is (None if ecc_enabled == "1" or decision == "new_page" else True)
     event = mirror.identity_events[-1]
     expected_decision = (
-        "deferred_ecc_rejected" if ecc_enabled == "1"
-        else "deferred_switch_consensus" if decision == "new_page"
+        "deferred_ecc_rejected"
+        if ecc_enabled == "1"
+        else "deferred_switch_consensus"
+        if decision == "new_page"
         else "same_page"
     )
     assert event["decision"] == expected_decision

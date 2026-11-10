@@ -360,7 +360,9 @@ def test_changed_page_content_starts_a_clean_canvas(monkeypatch):
         ink.next_page = True
         for _ in range(2):
             _drive(worker, generation, ink, [(0, 0)])
-            assert worker._identity_events[-1]["decision"] == "deferred_switch_consensus"
+            assert (
+                worker._identity_events[-1]["decision"] == "deferred_switch_consensus"
+            )
             np.testing.assert_array_equal(worker.poll(generation, 0)[1], original[1])
         _drive(worker, generation, ink, [(0, 0)])
         shown = worker.poll_display(generation, 0)

@@ -313,7 +313,9 @@ def test_switch_consensus_telemetry_declares_ecc_flag(
     settle(worker)
     generation = worker.new_generation(preserve_identity=True)
     for decision in (
-        "deferred_switch_consensus", "deferred_switch_consensus", "new_page"
+        "deferred_switch_consensus",
+        "deferred_switch_consensus",
+        "new_page",
     ):
         record = drive(worker, generation, page(other=True))
         event = worker._identity_events[-1]

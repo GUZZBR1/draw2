@@ -185,8 +185,10 @@ def test_identity_chamfer_is_diagnostic_and_ecc_rejection_defers_production(
     off_event = off["page_identity_events"][-1]
     on_event = on["page_identity_events"][-1]
     expected_decision = (
-        "deferred_ecc_rejected" if ecc_enabled == "1"
-        else "deferred_switch_consensus" if decision == "new_page"
+        "deferred_ecc_rejected"
+        if ecc_enabled == "1"
+        else "deferred_switch_consensus"
+        if decision == "new_page"
         else "same_page"
     )
     assert on_event["decision"] == off_event["decision"] == expected_decision
