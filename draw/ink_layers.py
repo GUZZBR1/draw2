@@ -1595,13 +1595,20 @@ class _PageCleanWorker:
                     )
                     if migration is not None:
                         # A passada corrente entra por cima do estado
-                        # migrado, ja registrada na ancora nova.
-                        registered_prob, registered_visible, _info = (
+                        # migrado, ja registrada na ancora nova (com ECC
+                        # contra o canvas migrado, se ligado). Raro: uma
+                        # vez por pouso, entao pode segurar o lock.
+                        migrated_reference = (
+                            None
+                            if ecc_reference is None
+                            else self._accumulator._confirmed.astype(np.float32) / 255.0
+                        )
+                        registered_prob, registered_visible, ecc_info = (
                             _register_ink_probability(
                                 prob,
                                 self._anchor_corners,
                                 (self._reg_frozen_corners if reg_deadband else corners),
-                                None,
+                                migrated_reference,
                                 visible,
                             )
                         )

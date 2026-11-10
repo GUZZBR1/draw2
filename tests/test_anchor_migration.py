@@ -338,3 +338,30 @@ def test_flag_on_never_triggers_on_settled_jitter_replay(fast, scenario):
     digest, snapshot = discipline._parity_canvas(scenario)
     assert snapshot["anchor_migrations"] == 0
     assert digest == discipline.GOLDEN[scenario]
+
+
+@pytest.mark.lento
+def test_migration_pass_keeps_ecc_against_the_migrated_canvas(fast):
+    fast.setenv("DRAW_ANCHOR_MIGRATION", "1")
+    fast.setenv("DRAW_ECC_REFINE", "1")
+    calls = []
+    original = ink._register_ink_probability
+
+    def spy(prob, anchor, corners, reference, visible=None):
+        calls.append(None if reference is None else reference.copy())
+        return original(prob, anchor, corners, reference, visible)
+
+    fast.setattr(ink, "_register_ink_probability", spy)
+    page = _page()
+    rng = np.random.default_rng(5)
+    worker = ink._PageCleanWorker(_ProbIsWarp()).start()
+    try:
+        generation = worker.new_generation()
+        _settled_then(worker, generation, page, rng, [BASE + OFFSET] * 3)
+        record = worker.telemetry_snapshot()["records"][-1]
+    finally:
+        worker.stop()
+    assert record["anchor_migrated"]
+    pre_migration, migrated = calls[-2], calls[-1]
+    assert migrated is not None, "a passada da migracao pulou o ECC"
+    assert not np.array_equal(migrated, pre_migration)
