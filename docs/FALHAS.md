@@ -914,6 +914,25 @@ não tem juiz é o comportamento do sistema com a mão na cena, com a
 página trocando e com o tempo passando — que é onde moram as queixas
 recorrentes do usuário.
 
+**Buraco de observabilidade da aquisição (2026-11-10).** Na sessão ao
+vivo de 2026-11-10 o app passou ~10 s lendo o mousepad do usuário como
+folha e abriu 2 gerações sobre essa cena, e o sub-mecanismo ficou
+indemonstrável: a sessão gravada só guardava warps por geração (a fase
+sem folha e de posicionamento, onde o fantasma nasce, ficava cega) e a
+telemetria não dizia, por aquisição, o `presence_logit`, a fonte do
+desfecho combinado (neural × clássica × veto × presença-só) nem os
+cantos. O replay posterior com o caminho combinado + rastreador sobre
+todo o material salvo deu zero falsos positivos — o que só mostra que o
+material não cobre essa fase. Desde então, toda sessão gravada
+(`draw/selflearn/session.py`) guarda quadros crus esparsos em `raw/`
+(1 a cada 30 passadas + toda transição `no_sheet`/`candidate`/`sheet`,
+teto de 600 quadros ou 1 GiB, corte registrado no `manifest.json`) e um
+registro por aquisição em `acquisitions.jsonl` e no evento `acquisition`
+da telemetria (`draw/app.py`). É só observabilidade: nenhum limiar,
+default ou veredito F-11 acima muda; defeito do caminho que esses
+registros revelarem entra aqui como achado separado, sem conserto no
+mesmo PR.
+
 Amarração com a bancada: o mapa ID → régua acima é a referência que o
 `JULGAMENTO.md` pode citar; nenhuma régua da bancada foi alterada por
 este documento. A guarda automática desta página é

@@ -15,10 +15,24 @@ O que grava, por sessao, em <raiz>/sessions/<session_id>/:
 - gen_NNNN/reference_warp.png - primeiro warp da geracao
 - gen_NNNN/final_warp.png      - ultimo warp da geracao
 - gen_NNNN/final_canvas.png    - ultimo canvas da geracao
+- raw/frame_NNNNNN.png          - quadro cru da camera (como chega,
+  antes de warp/deteccao), esparso: 1 a cada _RAW_EVERY_N_FRAMES
+  passadas do laco e em toda transicao de estado da folha,
+  inclusive sem folha (no_sheet). NNNNNN e o indice da passada
+- acquisitions.jsonl           - um registro por aquisicao de
+  deteccao de folha (caminho combinado + rastreador antes/depois)
 - manifest.json                - session_id, inicio/fim, sha256
   de cada arquivo gravado, sha256 dos arquivos de modelo
   (page-clean e folha), teclas com tempo relativo, telemetria
-  de passadas do worker (U0) e os contadores da sessao
+  de passadas do worker (U0), os contadores da sessao, a lista
+  dos quadros crus (indice da passada, tempo, estado, sha256) e
+  o resumo das aquisicoes
+
+Teto de disco: os quadros crus param em _RAW_MAX_FRAMES arquivos
+ou _RAW_MAX_BYTES bytes, o que vier antes, e o corte fica
+registrado em manifest["raw_frames"]["truncated"]; as aquisicoes
+param em _ACQ_MAX_RECORDS linhas, com o corte em
+manifest["acquisitions"]["truncated"].
 
 Privacidade: isto e LOCAL por desenho - a raiz padrao do app e
 captures/, fora do git. Frame de mesa e dado pessoal: rodar a
@@ -29,7 +43,9 @@ independente).
 
 Custo no laco: as chamadas note_* so copiam o array (memcpy) e
 guardam/substituem referencias; a escrita em disco acontece na
-thread propria do gravador, fora do laco principal.
+thread propria do gravador, fora do laco principal. note_raw_frame
+so copia o quadro quando ele vai ser gravado, e descarta (contando)
+quando ja ha _RAW_MAX_IN_FLIGHT quadros crus esperando a escrita.
 """
 
 import hashlib
@@ -45,6 +61,14 @@ import numpy as np
 
 _SCHEMA = 1
 _DRAIN_SECONDS = 5.0
+
+# Quadros crus esparsos (observabilidade da aquisicao, 2026-11-10):
+# ~0,4 quadro/s a 12 fps; 600 quadros cobrem ~25 min de laco.
+_RAW_EVERY_N_FRAMES = 30
+_RAW_MAX_FRAMES = 600
+_RAW_MAX_BYTES = 1 << 30
+_RAW_MAX_IN_FLIGHT = 4
+_ACQ_MAX_RECORDS = 200_000
 
 
 def sha256_file(path):
@@ -75,7 +99,17 @@ class SessionRecorder:
     """
 
     def __init__(
-        self, root_dir, session_id=None, model_paths=None, clock=None, wall_clock=None
+        self,
+        root_dir,
+        session_id=None,
+        model_paths=None,
+        clock=None,
+        wall_clock=None,
+        raw_every_n_frames=_RAW_EVERY_N_FRAMES,
+        raw_max_frames=_RAW_MAX_FRAMES,
+        raw_max_bytes=_RAW_MAX_BYTES,
+        raw_max_in_flight=_RAW_MAX_IN_FLIGHT,
+        acq_max_records=_ACQ_MAX_RECORDS,
     ):
         self._clock = clock or time.monotonic
         self._wall_clock = wall_clock or time.time
@@ -91,6 +125,27 @@ class SessionRecorder:
         self._generations = {}
         self._finished = False
         self._errors = []
+        self._raw_policy = {
+            "every_n_frames": int(raw_every_n_frames),
+            "on_state_transition": True,
+            "max_frames": int(raw_max_frames),
+            "max_bytes": int(raw_max_bytes),
+            "max_in_flight": int(raw_max_in_flight),
+        }
+        self._raw_noted = 0
+        self._raw_last_state = None
+        self._raw_queued = 0
+        self._raw_in_flight = 0
+        self._raw_dropped_backlog = 0
+        self._raw_bytes = 0
+        self._raw_entries = []
+        self._raw_truncated = None
+        self._acq_max_records = int(acq_max_records)
+        self._acq_queued = 0
+        self._acq_dropped = 0
+        self._acq_written = 0
+        self._acq_truncated = None
+        self._acq_handle = None
         self._queue = queue.SimpleQueue()
         self._thread = threading.Thread(
             target=self._work, name="draw-session-recorder", daemon=True
@@ -137,6 +192,74 @@ class SessionRecorder:
             gen = self._generations.setdefault(int(generation), {})
             gen["final_canvas"] = np.asarray(canvas_bgr).copy()
 
+    def note_raw_frame(self, frame_bgr, frame_index, state, **context):
+        """Quadro cru da passada frame_index; grava esparso.
+
+        Chamado em toda passada do laco com o quadro como chegou
+        da camera. Grava a primeira passada, 1 a cada
+        every_n_frames e toda passada em que state muda (ex.:
+        no_sheet -> candidate -> sheet). context (tempo de captura,
+        aquisicao corrente, passadas da tinta) vai para a entrada
+        do manifesto. Devolve True quando o quadro entrou na fila.
+        """
+        with self._lock:
+            if self._finished or self._raw_truncated is not None:
+                return False
+            self._raw_noted += 1
+            transition = (
+                self._raw_last_state is not None and state != self._raw_last_state
+            )
+            previous_state = self._raw_last_state
+            self._raw_last_state = state
+            every = max(1, self._raw_policy["every_n_frames"])
+            sampled = (self._raw_noted - 1) % every == 0
+            if not (sampled or transition):
+                return False
+            t_s = round(self._clock() - self._started_mono, 3)
+            if self._raw_queued >= self._raw_policy["max_frames"]:
+                self._raw_truncated = {
+                    "reason": "max_frames",
+                    "frame_index": int(frame_index),
+                    "t_s": t_s,
+                }
+                return False
+            if self._raw_in_flight >= self._raw_policy["max_in_flight"]:
+                self._raw_dropped_backlog += 1
+                return False
+            self._raw_queued += 1
+            self._raw_in_flight += 1
+        entry = {
+            "frame_index": int(frame_index),
+            "t_s": t_s,
+            "t_epoch": round(self._wall_clock(), 3),
+            "state": state,
+            "reason": "transition" if transition else "sample",
+            **context,
+        }
+        if transition:
+            entry["previous_state"] = previous_state
+        self._queue.put(("raw", entry, np.asarray(frame_bgr).copy()))
+        return True
+
+    def note_acquisition(self, record):
+        """Registro de uma aquisicao de folha (dict JSON-serializavel)."""
+        with self._lock:
+            if self._finished:
+                return False
+            if self._acq_queued >= self._acq_max_records:
+                self._acq_dropped += 1
+                if self._acq_truncated is None:
+                    self._acq_truncated = {
+                        "reason": "max_records",
+                        "t_s": round(self._clock() - self._started_mono, 3),
+                        "acq_seq": record.get("acq_seq"),
+                    }
+                return False
+            self._acq_queued += 1
+            t_s = round(self._clock() - self._started_mono, 3)
+        self._queue.put(("acq", {"t_s": t_s, **record}))
+        return True
+
     # -- fechamento --
 
     def finish(self, telemetry=None):
@@ -176,6 +299,8 @@ class SessionRecorder:
             "keys": keys,
             "telemetry": telemetry,
             "generations": [],
+            "raw_frames": None,
+            "acquisitions": None,
         }
         self._queue.put(("manifest", manifest))
         self._queue.put(None)
@@ -207,11 +332,65 @@ class SessionRecorder:
                     folder.mkdir(parents=True, exist_ok=True)
                     if not cv2.imwrite(str(folder / f"{kind}.png"), image):
                         raise RuntimeError(f"imwrite devolveu False para {kind}")
+                elif item[0] == "raw":
+                    self._write_raw(item[1], item[2])
+                elif item[0] == "acq":
+                    self._write_acquisition(item[1])
                 elif item[0] == "manifest":
+                    self._close_acquisitions()
                     self._write_manifest(item[1])
             except Exception as error:  # noqa: BLE001 - vai ao manifesto
                 with self._lock:
                     self._errors.append(str(error))
+
+    def _write_raw(self, entry, image):
+        try:
+            ok, encoded = cv2.imencode(".png", image)
+            if not ok:
+                raise RuntimeError(
+                    f"imencode devolveu False no quadro cru {entry['frame_index']}"
+                )
+            data = encoded.tobytes()
+            with self._lock:
+                if self._raw_bytes + len(data) > self._raw_policy["max_bytes"]:
+                    if self._raw_truncated is None:
+                        self._raw_truncated = {
+                            "reason": "max_bytes",
+                            "frame_index": entry["frame_index"],
+                            "t_s": entry["t_s"],
+                        }
+                    return
+                self._raw_bytes += len(data)
+            folder = self.session_dir / "raw"
+            folder.mkdir(parents=True, exist_ok=True)
+            name = f"frame_{entry['frame_index']:06d}.png"
+            (folder / name).write_bytes(data)
+            entry = {
+                **entry,
+                "file": f"raw/{name}",
+                "sha256": _sha256_bytes(data),
+                "bytes": len(data),
+                "shape": list(image.shape),
+            }
+            with self._lock:
+                self._raw_entries.append(entry)
+        finally:
+            with self._lock:
+                self._raw_in_flight -= 1
+
+    def _write_acquisition(self, record):
+        if self._acq_handle is None:
+            self.session_dir.mkdir(parents=True, exist_ok=True)
+            self._acq_handle = open(
+                self.session_dir / "acquisitions.jsonl", "a", encoding="utf-8"
+            )
+        self._acq_handle.write(json.dumps(record, sort_keys=True) + "\n")
+        self._acq_written += 1
+
+    def _close_acquisitions(self):
+        if self._acq_handle is not None:
+            self._acq_handle.close()
+            self._acq_handle = None
 
     def _write_manifest(self, manifest):
         self.session_dir.mkdir(parents=True, exist_ok=True)
@@ -227,7 +406,28 @@ class SessionRecorder:
             entry["files"] = files
             generations.append(entry)
         manifest["generations"] = generations
+        acq_path = self.session_dir / "acquisitions.jsonl"
         with self._lock:
+            manifest["raw_frames"] = {
+                "policy": dict(self._raw_policy),
+                "noted_frames": self._raw_noted,
+                "saved": len(self._raw_entries),
+                "bytes": self._raw_bytes,
+                "dropped_backlog": self._raw_dropped_backlog,
+                "truncated": self._raw_truncated,
+                "frames": sorted(
+                    (dict(e) for e in self._raw_entries),
+                    key=lambda e: e["frame_index"],
+                ),
+            }
+            manifest["acquisitions"] = {
+                "file": "acquisitions.jsonl" if acq_path.exists() else None,
+                "records": self._acq_written,
+                "max_records": self._acq_max_records,
+                "dropped": self._acq_dropped,
+                "truncated": self._acq_truncated,
+                "sha256": sha256_file(acq_path),
+            }
             manifest["write_errors"] = list(self._errors)
         (self.session_dir / "manifest.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"

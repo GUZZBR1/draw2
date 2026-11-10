@@ -78,6 +78,7 @@ from .sheet_track import (
     _corner_distance as _corner_distance,
     _blend_corners as _blend_corners,
     _SheetTracker as _SheetTracker,
+    _corners_json as _corners_json,
     _LK_MAX_STEP_PX as _LK_MAX_STEP_PX,
     _LK_MAX_FB_ERROR_PX as _LK_MAX_FB_ERROR_PX,
     _lk_track_corners as _lk_track_corners,
@@ -355,18 +356,87 @@ def _detect_sheet_combined(frame, neural_detector):
     sem esse canal, cada ajuste recusado vira contagem de perda e a
     folha cai durante os episódios de oclusão).
     """
-    if neural_detector is not None:
-        corners, verdict = neural_detector.detect_sheet_with_confidence(frame)
-        if corners is not None:
-            return corners, verdict
-        logit = neural_detector.last_presence_logit
-        if logit is not None and logit <= neural_module.PRESENCE_VETO_LOGIT:
-            return None, None
+    corners, verdict, _trace = _detect_sheet_combined_traced(frame, neural_detector)
+    return corners, verdict
+
+
+_CLASSIC_TRACE_VERDICT = {"paper": "corners", "blank_maybe": "blank_maybe"}
+
+
+def _detect_sheet_combined_traced(frame, neural_detector):
+    """_detect_sheet_combined com o rastro da aquisicao.
+
+    Mesma decisao, linha a linha; o terceiro elemento so descreve
+    o que aconteceu: presence_logit, cantos/veredito neurais, se o
+    classico rodou e o que disse (corners, blank_maybe ou None) e a
+    fonte do desfecho combinado: "neural" (quad neural fechou),
+    "veto" (logit ate PRESENCE_VETO_LOGIT), "classic" (o classico
+    devolveu quad, paper ou blank_maybe), "presence_only" (nenhum
+    quad, logit positivo: (None, "paper")) ou "none".
+    """
+    trace = {
+        "neural_ran": neural_detector is not None,
+        "presence_logit": None,
+        "veto_logit": None,
+        "neural_corners": None,
+        "neural_verdict": None,
+        "classic_ran": False,
+        "classic_verdict": None,
+        "classic_corners": None,
+    }
+
+    def _done(corners, verdict, source):
+        trace["source"] = source
+        trace["combined_corners"] = _corners_json(corners)
+        trace["combined_verdict"] = verdict
+        return corners, verdict, trace
+
+    def _classic():
         corners, verdict = paper_module.detect_sheet_with_confidence(frame)
-        if corners is None and logit is not None and logit > 0:
-            return None, "paper"
+        trace["classic_ran"] = True
+        trace["classic_verdict"] = (
+            _CLASSIC_TRACE_VERDICT.get(verdict, verdict)
+            if corners is not None
+            else None
+        )
+        trace["classic_corners"] = _corners_json(corners)
         return corners, verdict
-    return paper_module.detect_sheet_with_confidence(frame)
+
+    if neural_detector is not None:
+        trace["veto_logit"] = float(neural_module.PRESENCE_VETO_LOGIT)
+        corners, verdict = neural_detector.detect_sheet_with_confidence(frame)
+        logit = neural_detector.last_presence_logit
+        trace["presence_logit"] = None if logit is None else float(logit)
+        trace["neural_corners"] = _corners_json(corners)
+        trace["neural_verdict"] = verdict
+        if corners is not None:
+            return _done(corners, verdict, "neural")
+        if logit is not None and logit <= neural_module.PRESENCE_VETO_LOGIT:
+            return _done(None, None, "veto")
+        corners, verdict = _classic()
+        if corners is None and logit is not None and logit > 0:
+            return _done(None, "paper", "presence_only")
+        return _done(corners, verdict, "classic" if corners is not None else "none")
+    corners, verdict = _classic()
+    return _done(corners, verdict, "classic" if corners is not None else "none")
+
+
+def _acquisition_record(trace, frame_index, consumed, before, after, tracker_event):
+    """Evento por aquisicao: rastro do combinado + rastreador."""
+    return {
+        **trace,
+        "frame_index": frame_index,
+        "consumed_by_tracker": consumed,
+        "tracker_before": before,
+        "tracker_after": after,
+        "tracker_event": tracker_event,
+    }
+
+
+def _emit_acquisition(telemetry, session_recorder, record):
+    telemetry.event("acquisition", **record)
+    if session_recorder is not None:
+        session_recorder.note_acquisition(record)
 
 
 # Teto do pool paralelo do OpenCV. Sem teto, o pool abre com as
@@ -542,7 +612,13 @@ def run(
             # Amostragem fora do laco (T4): o laco submete e colhe.
             hand_presence_worker = _HandPresenceWorker(clean_hand_presence).start()
 
+    # Rastro por aquisicao: ligado so em sessao gravada (abaixo, com
+    # o gravador); fora dela, a deteccao e a de sempre.
+    trace_acquisitions = False
+
     def detect_sheet(frame):
+        if trace_acquisitions:
+            return _detect_sheet_combined_traced(frame, neural_detector)
         return _detect_sheet_combined(frame, neural_detector)
 
     capture = _open_capture(parse_source(source))
@@ -629,6 +705,10 @@ def run(
                 "Aviso: a coleta de sessao nao iniciou "
                 f"({error}); o app segue sem gravar a sessao."
             )
+    # Sessao gravada e diagnosticavel: quadros crus esparsos e um
+    # evento por aquisicao de folha (observabilidade, 2026-11-10).
+    trace_acquisitions = session_recorder is not None
+    last_acq_seq = None
     # Geracao do gravador no caminho legado (sem worker, a geracao
     # e local: abre na folha nova e na tecla C).
     legacy_generation = 0
@@ -811,12 +891,48 @@ def run(
                     detection_worker.submit(frame, frame_capture_ms / 1000.0)
                 if detection_worker.error is not None:
                     raise detection_worker.error
+                tracker_before = (
+                    tracker.diagnostic_state()
+                    if trace_acquisitions and ran_detection
+                    else None
+                )
                 tracker_event = tracker.update(
                     detected_corners,
                     detected_verdict,
                     ran_detection,
                     det_captured_at if ran_detection else time.monotonic(),
                 )
+                if trace_acquisitions:
+                    if ran_detection:
+                        tracker_after = tracker.diagnostic_state()
+                        for trace in detection_worker.take_traces(last_det_seq):
+                            consumed = trace["result_seq"] == last_det_seq
+                            if consumed:
+                                last_acq_seq = trace["acq_seq"]
+                            _emit_acquisition(
+                                telemetry,
+                                session_recorder,
+                                _acquisition_record(
+                                    trace,
+                                    frame_number,
+                                    consumed,
+                                    tracker_before if consumed else None,
+                                    tracker_after if consumed else None,
+                                    tracker_event if consumed else None,
+                                ),
+                            )
+                    session_recorder.note_raw_frame(
+                        frame,
+                        frame_number,
+                        "sheet"
+                        if tracker.corners is not None
+                        else "candidate"
+                        if tracker.has_pending
+                        else "no_sheet",
+                        capture_ms=frame_capture_ms,
+                        acq_seq=last_acq_seq,
+                        ink_passes_total=tel_fields.get("passes_total"),
+                    )
                 if tracker_event == "drop":
                     ink_session_open = False
                     session_corners = None
@@ -1225,6 +1341,15 @@ def run(
         frame_source.stop()
         if detection_worker is not None:
             detection_worker.stop()
+            if trace_acquisitions:
+                # Aquisicoes que nenhum quadro do rastreador consumiu
+                # (latest-wins ou fim de sessao) tambem viram evento.
+                for trace in detection_worker.take_traces():
+                    _emit_acquisition(
+                        telemetry,
+                        session_recorder,
+                        _acquisition_record(trace, None, False, None, None, None),
+                    )
         if hand_presence_worker is not None:
             hand_presence_worker.stop()
         if ink_worker is not None:
