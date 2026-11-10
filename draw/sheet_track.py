@@ -109,6 +109,14 @@ _SHEET_LOST_SECONDS = 0.5
 _SHEET_LOST_MIN_FRAMES = 10
 
 
+def _corners_json(corners):
+    """Cantos como lista JSON (2 casas), ou None. So diagnostico."""
+    if corners is None:
+        return None
+    points = np.asarray(corners, dtype=np.float64).reshape(-1, 2)
+    return [[round(float(x), 2), round(float(y), 2)] for x, y in points]
+
+
 def _corner_distance(current, detected):
     return float(np.max(np.linalg.norm(current - detected, axis=1)))
 
@@ -157,6 +165,25 @@ class _SheetTracker:
         self._last_seen_at = None
         self._recent = deque(maxlen=_SHEET_FILTER_WINDOW)
         self._absent_calls = 0
+
+    @property
+    def has_pending(self):
+        """Ha candidato a salto/primeira folha esperando confirmacao."""
+        return self._pending is not None
+
+    def diagnostic_state(self):
+        """Retrato JSON do estado interno (leitura pura, so diagnostico)."""
+        return {
+            "present": self.corners is not None,
+            "corners": _corners_json(self.corners),
+            "verdict": self.verdict,
+            "missed": bool(self.missed),
+            "pending": _corners_json(self._pending),
+            "pending_since": self._pending_since,
+            "frames_since_seen": int(self._frames_since_seen),
+            "last_seen_at": self._last_seen_at,
+            "absent_calls": int(self._absent_calls),
+        }
 
     def should_detect(self, frame_number):
         if self.corners is not None:
@@ -416,6 +443,14 @@ class _SheetDetectionWorker:
     relogios de persistencia de salto (0,3 s) e de perda (0,5 s)
     medem o tempo da cena, e um resultado que chega atrasado nao
     pode inflar nem encolher esses relogios.
+
+    Rastro por aquisicao (observabilidade, 2026-11-10): se detect
+    devolve um terceiro elemento (dict de diagnostico), o worker o
+    guarda por aquisicao com acq_seq, result_seq (None se a
+    deteccao terminou depois do stop), carimbo de captura,
+    detected_frame_index (o frame_index passado a submit: a passada
+    cujo quadro foi examinado) e duracao; take_traces() entrega cada rastro exatamente uma vez.
+    Com detect de dois elementos, nada disso existe.
     """
 
     def __init__(self, detect):
@@ -433,18 +468,20 @@ class _SheetDetectionWorker:
         self._completed = 0
         self._dropped = 0
         self._last_detect_ms = None
+        self._acq_seq = 0
+        self._traces = []
 
     def start(self):
         self._thread.start()
         return self
 
-    def submit(self, frame, captured_at):
+    def submit(self, frame, captured_at, frame_index=None):
         with self._condition:
             if self._stopped:
                 return
             if self._pending is not None:
                 self._dropped += 1
-            self._pending = (frame, captured_at)
+            self._pending = (frame, captured_at, frame_index)
             self._submitted += 1
             self._condition.notify_all()
 
@@ -463,19 +500,35 @@ class _SheetDetectionWorker:
                 )
                 if self._stopped:
                     return
-                frame, captured_at = self._pending
+                frame, captured_at, frame_index = self._pending
                 self._pending = None
             started = time.monotonic()
             try:
-                corners, verdict = self._detect(frame)
+                outcome = self._detect(frame)
             except Exception as error:  # noqa: BLE001 - vai para o laco
                 with self._condition:
                     self._error = error
                     self._stopped = True
                     self._condition.notify_all()
                 return
+            corners, verdict = outcome[0], outcome[1]
+            trace = outcome[2] if len(outcome) > 2 else None
             detect_ms = round((time.monotonic() - started) * 1000.0, 1)
             with self._condition:
+                if trace is not None:
+                    self._acq_seq += 1
+                    self._traces.append(
+                        {
+                            **trace,
+                            "acq_seq": self._acq_seq,
+                            "result_seq": (
+                                None if self._stopped else self._result_seq + 1
+                            ),
+                            "captured_at": captured_at,
+                            "detected_frame_index": frame_index,
+                            "detect_ms": detect_ms,
+                        }
+                    )
                 if self._stopped:
                     return
                 self._completed += 1
@@ -489,6 +542,26 @@ class _SheetDetectionWorker:
                     detect_ms,
                 )
                 self._condition.notify_all()
+
+    def take_traces(self, upto_result_seq=None):
+        """Retira os rastros ate o resultado upto_result_seq.
+
+        None retira todos, inclusive os de deteccao nao publicada
+        (fim de sessao). Cada rastro sai uma unica vez.
+        """
+        with self._condition:
+            if upto_result_seq is None:
+                taken, self._traces = self._traces, []
+                return taken
+            taken, kept = [], []
+            for trace in self._traces:
+                seq = trace["result_seq"]
+                if seq is not None and seq <= upto_result_seq:
+                    taken.append(trace)
+                else:
+                    kept.append(trace)
+            self._traces = kept
+            return taken
 
     @property
     def error(self):
