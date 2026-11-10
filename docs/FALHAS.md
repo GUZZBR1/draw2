@@ -377,6 +377,45 @@ tempo real.
   etapa + uma medida de ponta a ponta no replay (carimbo de captura
   × carimbo de publicação, que a telemetria já registra).
 
+### M1 — jitter do quad de registro destrói o voto de tinta (auditoria de 2026-11-10)
+
+**Mecanismo fechado** pelas provas de replay do ciclo de auditoria
+(`~/workspace/draw-lab/live-audit-2026-11-10/7-prova-p2-registro.md`,
+`~/workspace/draw-lab/live-audit-2026-11-10/9-p3a-variancia-quad.md`):
+o voto de tinta (prob ≥ 0,5 no mesmo pixel em 3 passadas) é destruído
+pelo jitter do quad que alimenta `_registration_matrix`
+(`draw/ink_layers.py`) — fração de descarte 0,347/0,573/0,818 com
+jitter de ±2/±4/±8 px por canto. A decomposição de variância (P3a)
+mostrou que o jitter real é **evento discreto** (flips de modo do
+detector, pousos de salto), não ruído: o rastreador chegou a
+confirmar como âncora o quad espúrio do frame 0 e recusar todos os
+seguintes.
+
+Estado das saídas — **não repropor as refutadas sem evidência nova**:
+
+| Saída | Prova | Veredito |
+|---|---|---|
+| ECC de registro (`DRAW_ECC_REFINE`) | P2 | refutada: fração de descarte no mesmo regime, IoU pior; segue OFF |
+| Voto tolerante por dilatação da prob | P2b | refutada: infla o canvas 2–6× |
+| Suavização EMA / One Euro do quad | P3b | reprovadas: erro simétrico (a tinta fica para trás quando a página anda de verdade; α = 0,15 não converge em 30 passadas) |
+| Banda morta τ = 10 px no quad de registro (`DRAW_REG_DEADBAND`) | P3b (`~/workspace/draw-lab/live-audit-2026-11-10/10-p3b-estabilizadores.md`) | aprovada em replay; atrás da flag, padrão `0` |
+| Âncora por mediana das 3 primeiras passadas (`DRAW_REG_ANCHOR_MEDIAN3`) | P3b | aprovada em replay; atrás da flag, padrão `0` |
+
+As duas aprovadas são disciplina, não suavização. Banda morta: o
+registro usa um quad congelado por geração enquanto o desvio máximo
+de canto for < `_REG_DEADBAND_TAU_PX` (10); ≥ τ por 2 passadas
+seguidas libera (contado em `reg_deadband_releases` da telemetria);
+spike de 1 passada nunca libera (0 liberações espúrias no regime
+evento-dirigido). τ = 3 foi medido e reprovado (libera no ruído; pior
+inflação da classe): τ precisa exceder o diâmetro do jitter assentado.
+Âncora-mediana: com passada 0 em modo espúrio (126–331 px/canto), a
+âncora = 1ª amostra dá IoU 0,001 (falha silenciosa); a mediana-de-3
+dá IoU 0,441–0,478 no mesmo caso, sem mexer em limiar. Ambas valem só
+para o quad de registro: warp do app, rastreador e exibição
+intocados. Régua no repo: `tests/test_reg_discipline.py` (contratos
+das flags e paridade byte a byte com as duas desligadas). Ligar
+qualquer uma por padrão exige teste ao vivo na mesa do Lucas.
+
 ## F-09 — Folha perdida com o caderno movido
 
 **Sintoma:** a pessoa move o caderno (ou o detector perde a folha por
