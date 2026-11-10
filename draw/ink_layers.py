@@ -316,6 +316,41 @@ _IDENTITY_MIN_VISIBLE_PX = 32
 # passada se abstem — nem avanca nem zera a sequencia de virada.
 _OCCLUSION_TURN_MIN_VISIBLE_PX = 200
 
+# Vigia de identidade no meio da geracao (frente 28, 2026-11-10):
+# a fronteira de geracao existente so julga a identidade na VOLTA
+# da folha (drop -> new_generation(preserve_identity=True)). Com a
+# folha sempre presente, virar a pagina somava as duas no mesmo
+# canvas — medido ao vivo: decisao de identidade None em 53/53
+# passadas, 87% do canvas confirmado depois da troca. A vigia NAO
+# decide nada: ela ARMA o juiz de identidade existente no meio da
+# geracao, com a referencia = o canvas confirmado ate aqui. Quem
+# decide e o juiz (recall/containment dilatados, consenso de 3,
+# adiamento por oclusao/ECC, quarentena) — o gatilho cru de
+# cobertura do U3 foi reprovado ao vivo em 2026-11-01 justamente
+# por decidir sozinho sob balanco de geometria; aqui o balanco
+# nem arma (a vigia exige geometria quieta) e quem arma ainda
+# passa pelo juiz. Dois chamadores: (a) salto grande de pose
+# confirmado pelo tracker, sinalizado pelo app via
+# arm_identity_check("pose_jump"); (b) ruptura de conteudo: o
+# recall dilatado do canvas na passada registrada <=
+# _IDENTITY_WATCH_MAX_RECALL por _IDENTITY_WATCH_PASSES passadas
+# seguidas com massa de tinta nova >= _IDENTITY_WATCH_MIN_SEEN_PX
+# e deslocamento da ancora <= _IDENTITY_WATCH_MAX_DISPLACEMENT_PX.
+# Virada para pagina em branco nao arma (sem massa nova nao ha o
+# que somar; quando a escrita comeca na pagina nova, a vigia
+# dispara). Atras de DRAW_IDENTITY_WATCH=1, desligado por padrao.
+_ENV_IDENTITY_WATCH_VAR = "DRAW_IDENTITY_WATCH"
+_IDENTITY_WATCH_MIN_CANVAS_PX = 2000
+_IDENTITY_WATCH_MIN_SEEN_PX = 200
+_IDENTITY_WATCH_MAX_RECALL = 0.30
+_IDENTITY_WATCH_PASSES = 2
+_IDENTITY_WATCH_MAX_DISPLACEMENT_PX = 8.0
+
+
+def _identity_watch_enabled():
+    """True so com DRAW_IDENTITY_WATCH=1 (ver o desenho acima)."""
+    return os.environ.get(_ENV_IDENTITY_WATCH_VAR, "").strip() == "1"
+
 
 def _corners_page_matrix(corners, width, height):
     """Homografia camera->pagina de um quad, na grade do mapa.
@@ -934,6 +969,12 @@ class _PageCleanWorker:
         self._identity_recovery_requested = False
         self._identity_defer_count = 0
         self._identity_switch_votes = 0
+        # Vigia de identidade (frente 28): armamento no meio da
+        # geracao + evento de divisao para o app colher.
+        self._identity_armed_mid_generation = False
+        self._identity_arm_reason = None
+        self._identity_split_event = None
+        self._identity_watch_streak = 0
         self._accumulator = _LayeredInkAccumulator(
             threshold=getattr(page_clean, "threshold", 0.7)
         )
@@ -989,6 +1030,10 @@ class _PageCleanWorker:
             self._identity_recovery_requested = bool(preserve_identity)
             self._identity_defer_count = 0
             self._identity_switch_votes = 0
+            self._identity_armed_mid_generation = False
+            self._identity_arm_reason = None
+            self._identity_split_event = None
+            self._identity_watch_streak = 0
             if preserve_identity:
                 reference = self._accumulator._confirmed
                 self._identity_reference = (
@@ -1480,6 +1525,142 @@ class _PageCleanWorker:
             self._turn_event = None
             return canvas
 
+    def arm_identity_check(self, reason):
+        """Arma o juiz de identidade no meio da geracao corrente.
+
+        A referencia do julgamento e o canvas confirmado ate aqui:
+        se as proximas passadas casarem com ele (recall/containment
+        do juiz existente), era a mesma pagina; se o consenso disser
+        pagina nova, o canvas atual fecha como pagina terminada
+        (ver take_identity_split) e a geracao recomeca do zero sem
+        trocar de geracao no app ate ele colher o evento. Devolve
+        True se armou. Sem efeito com a vigia desligada, com um
+        julgamento ja em curso, ou com canvas confirmado abaixo do
+        piso (pagina quase vazia nao tem identidade a defender —
+        o caso degenerado das decisoes contra reference_px = 0).
+        """
+        with self._condition:
+            return self._arm_identity_check_locked(reason)
+
+    def _arm_identity_check_locked(self, reason):
+        if not _identity_watch_enabled():
+            return False
+        if self._identity_reference is not None:
+            return False
+        confirmed = self._accumulator._confirmed
+        if confirmed is None:
+            return False
+        reference_px = int(np.count_nonzero(confirmed > 0))
+        if reference_px < _IDENTITY_WATCH_MIN_CANVAS_PX:
+            return False
+        self._identity_reference = confirmed.copy()
+        self._identity_reference_corners = (
+            None
+            if self._anchor_corners is None
+            else self._anchor_corners.copy()
+        )
+        self._identity_recovery_requested = True
+        self._identity_defer_count = 0
+        self._identity_switch_votes = 0
+        self._identity_armed_mid_generation = True
+        self._identity_arm_reason = reason
+        self._identity_events.append(
+            {
+                "generation": self._generation,
+                "decision": "armed",
+                "reason": reason,
+                "recall": None,
+                "containment": None,
+                "reference_px": reference_px,
+                "visible_reference_px": None,
+                "geometry_registered": False,
+                "threshold": _PAGE_IDENTITY_MIN_RECALL,
+                "containment_threshold": _PAGE_IDENTITY_MIN_CONTAINMENT,
+                "ecc_refine_enabled": _ecc_refinement_enabled(),
+                "quarantine_reason": None,
+                "quarantine_frames": 0,
+                "deferred": False,
+            }
+        )
+        return True
+
+    def take_identity_split(self, generation):
+        """(canvas, motivo) se o juiz dividiu a geracao no meio.
+
+        Veredito new_page de um julgamento ARMADO no meio da
+        geracao: o canvas devolvido e a pagina que acabou (copia,
+        feita antes do reset do acumulador); quem chama salva o
+        snapshot e abre geracao nova, como no evento de virada.
+        None se nao ha divisao pendente pra esta geracao. O timeout
+        de quarentena NAO divide: segue a semantica existente
+        (perda de lock, sem veredito) e nada e guardado aqui.
+        """
+        with self._condition:
+            if (
+                self._identity_split_event is None
+                or self._identity_split_event[0] != generation
+            ):
+                return None
+            _gen, canvas, reason = self._identity_split_event
+            self._identity_split_event = None
+            return canvas, reason
+
+    def _identity_watch_step(self, registered_prob, registered_visible, corners):
+        """Um passo da vigia de conteudo (lock ja segurado).
+
+        Mede o recall dilatado do canvas confirmado na passada
+        registrada — a mesma metrica do juiz, contra o canvas VIVO.
+        Devolve (recall, suspeita): recall None quando a passada
+        nao conta (oclusao da tinta anterior: nao conta e nao zera;
+        os demais casos zeram a sequencia); suspeita True quando a
+        passada mediu ruptura ou o juiz acabou de ser armado — a
+        passada suspeita NAO vota, para a tinta da pagina nova nao
+        confirmar no canvas da antiga antes do veredito (a medicao
+        acontece antes do voto, na mesma passada). Ruptura
+        sustentada arma o juiz via _arm_identity_check_locked; a
+        vigia nunca decide.
+        """
+        confirmed = self._accumulator._confirmed
+        if confirmed is None or corners is None or self._anchor_corners is None:
+            self._identity_watch_streak = 0
+            return None, False
+        prior = confirmed > 0
+        prior_px = int(np.count_nonzero(prior))
+        if prior_px < _IDENTITY_WATCH_MIN_CANVAS_PX:
+            self._identity_watch_streak = 0
+            return None, False
+        displacement = float(
+            np.max(np.linalg.norm(corners - self._anchor_corners, axis=1))
+        )
+        if displacement > _IDENTITY_WATCH_MAX_DISPLACEMENT_PX:
+            self._identity_watch_streak = 0
+            return None, False
+        seen = registered_prob > self._accumulator.threshold
+        if int(np.count_nonzero(seen)) < _IDENTITY_WATCH_MIN_SEEN_PX:
+            self._identity_watch_streak = 0
+            return None, False
+        if registered_visible is not None:
+            prior_visible = prior & registered_visible
+            prior_visible_px = int(np.count_nonzero(prior_visible))
+            if prior_visible_px < max(
+                _IDENTITY_MIN_VISIBLE_PX,
+                int(_IDENTITY_MIN_VISIBLE_FRACTION * prior_px),
+            ):
+                return None, False
+            prior = prior_visible
+            prior_px = prior_visible_px
+        kernel = np.ones((_IDENTITY_DILATION_KERNEL,) * 2, np.uint8)
+        seen_d = cv2.dilate(seen.astype(np.uint8), kernel) > 0
+        recall = float(np.count_nonzero(prior & seen_d) / prior_px)
+        if recall <= _IDENTITY_WATCH_MAX_RECALL:
+            self._identity_watch_streak += 1
+        else:
+            self._identity_watch_streak = 0
+        if self._identity_watch_streak >= _IDENTITY_WATCH_PASSES:
+            self._identity_watch_streak = 0
+            return recall, self._arm_identity_check_locked("content_rupture")
+        return recall, self._identity_watch_streak >= 1
+
     def _work(self):
         while True:
             with self._condition:
@@ -1870,6 +2051,20 @@ class _PageCleanWorker:
                             self._quiet_passes = 0
                             self._still_passes = 0
                         elif not keep_page:
+                            if (
+                                self._identity_armed_mid_generation
+                                and self._accumulator._confirmed is not None
+                            ):
+                                # Divisao no meio da geracao (vigia,
+                                # frente 28): a pagina que acabou sai
+                                # como evento pro app salvar ANTES do
+                                # reset — sem isto o canvas terminado
+                                # se perdia com o reset do veredito.
+                                self._identity_split_event = (
+                                    generation,
+                                    self._accumulator._confirmed.copy(),
+                                    self._identity_arm_reason,
+                                )
                             self._accumulator.reset()
                             self._anchor_corners = corners
                             self._anchor_samples = (
@@ -1884,6 +2079,8 @@ class _PageCleanWorker:
                         self._identity_recovery_requested = False
                         self._identity_defer_count = 0
                         self._identity_switch_votes = 0
+                        self._identity_armed_mid_generation = False
+                        self._identity_arm_reason = None
                 arbitration_abstain = False
                 if anchor_arbitration:
                     arb_status, arb_event = self._anchor_arbitration_step(
@@ -1964,6 +2161,24 @@ class _PageCleanWorker:
                         force_publish = True
                     reg_info["anchor_migration_streak"] = self._migration_streak
                     reg_info["anchor_migrated"] = migration is not None
+                identity_watch_suspect = False
+                if (
+                    _identity_watch_enabled()
+                    and not identity_pending
+                    and not first_pass
+                    and not self._arb_event_open
+                ):
+                    # Vigia de conteudo (frente 28): sem julgamento
+                    # em curso, ruptura sustentada com geometria
+                    # quieta arma o juiz de identidade. A passada
+                    # corrente ainda nao votou neste ponto.
+                    (
+                        reg_info["identity_watch_recall"],
+                        identity_watch_suspect,
+                    ) = self._identity_watch_step(
+                        registered_prob, registered_visible, corners
+                    )
+                    reg_info["identity_watch_streak"] = self._identity_watch_streak
                 if (
                     (first_pass or identity_pending)
                     and not identity_deferred
@@ -1983,6 +2198,13 @@ class _PageCleanWorker:
                 if arbitration_abstain:
                     # Evento de arbitragem aberto: a passada e
                     # registrada e pontuada, mas nao vota.
+                    visible = np.zeros(prob.shape, dtype=bool)
+                if identity_watch_suspect:
+                    # Suspeita de ruptura (vigia): a passada mediu o
+                    # colapso do recall ou armou o juiz; ela nao
+                    # vota, para a tinta da pagina nova nao
+                    # confirmar no canvas da antiga antes do
+                    # veredito de identidade.
                     visible = np.zeros(prob.shape, dtype=bool)
                 result = self._accumulator.add(prob, visible)
                 if (

@@ -159,6 +159,13 @@ class _SheetTracker:
         self.corners = None
         self.verdict = None
         self.missed = False
+        # Salto grande confirmado (fato geometrico, so leitura):
+        # seq monotonica + retrato do ultimo salto, para o app
+        # armar o juiz de identidade quando a pose salta com a
+        # folha presente (frente 28, 2026-11-10). O tracker nao
+        # decide nada com isto — so reporta.
+        self.big_jump_seq = 0
+        self.last_big_jump = None
         self._pending = None
         self._pending_since = None
         self._frames_since_seen = 0
@@ -180,6 +187,8 @@ class _SheetTracker:
             "missed": bool(self.missed),
             "pending": _corners_json(self._pending),
             "pending_since": self._pending_since,
+            "big_jump_seq": int(self.big_jump_seq),
+            "last_big_jump": self.last_big_jump,
             "frames_since_seen": int(self._frames_since_seen),
             "last_seen_at": self._last_seen_at,
             "absent_calls": int(self._absent_calls),
@@ -195,6 +204,15 @@ class _SheetTracker:
         return self._absent_calls % _SHEET_ABSENT_BACKOFF_INTERVAL == 0
 
     def _confirm(self, corners, verdict, now):
+        if self.corners is not None:
+            jump_distance = _corner_distance(self.corners, corners)
+            if jump_distance > _SHEET_BIG_JUMP_PX:
+                self.big_jump_seq += 1
+                self.last_big_jump = {
+                    "seq": self.big_jump_seq,
+                    "distance_px": float(jump_distance),
+                    "at": now,
+                }
         # Confirmacao que SALTA (primeira folha ou candidato a
         # salto) recomeca a janela do filtro na posicao nova: sem
         # isso, a mediana das proximas deteccoes misturaria a

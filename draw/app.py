@@ -799,6 +799,9 @@ def run(
     clean_display_version = 0
     clean_provisional_mask = None
     clean_recovery_pending = False
+    # Vigia de identidade (frente 28): seq do ultimo salto grande
+    # de pose ja sinalizado a trabalhadora.
+    last_big_jump_seq = 0
     # Buffers donos dos canvas renderizados no laco. O acumulado
     # mora em canvas_buffer de um frame de deteccao ao outro, e
     # view_canvas_buffer serve aos canvas transitorios de exibicao.
@@ -951,6 +954,19 @@ def run(
                         # a primeira mascara decide pela tinta se e
                         # re-registro ou pagina nova.
                         clean_recovery_pending = True
+                if tracker.big_jump_seq != last_big_jump_seq:
+                    last_big_jump_seq = tracker.big_jump_seq
+                    if (
+                        ink_worker is not None
+                        and ink_session_open
+                        and os.environ.get("DRAW_IDENTITY_WATCH", "").strip()
+                        == "1"
+                    ):
+                        # Salto grande de pose com a folha presente
+                        # (frente 28): arma o juiz de identidade no
+                        # meio da geracao. Mesma pagina andando
+                        # passa no conteudo; folha trocada divide.
+                        ink_worker.arm_identity_check("pose_jump")
 
                 frame_number += 1
                 # Presenca e o estado do rastreador: warp_sheet com
@@ -1199,6 +1215,36 @@ def run(
                                 turn_path,
                                 ink_module.render_canvas(turn_canvas),
                                 lambda path: print(f"Pagina anterior salva em {path}"),
+                            )
+                        clean_generation = ink_worker.new_generation()
+                        clean_display_version = 0
+                        clean_provisional_mask = None
+                        clean_mask = None
+                        accumulated_canvas = None
+                    # Divisao por identidade (frente 28): o juiz,
+                    # armado no meio da geracao pela vigia (salto de
+                    # pose ou ruptura de conteudo), decidiu pagina
+                    # nova com a folha presente o tempo todo. A
+                    # pagina anterior sai como snapshot (nao se
+                    # perde) e a geracao nova comeca, como na
+                    # virada U3 — sem isto, virar a pagina somava
+                    # as duas no mesmo canvas.
+                    identity_split = ink_worker.take_identity_split(
+                        clean_generation
+                    )
+                    if identity_split is not None:
+                        split_canvas, _split_reason = identity_split
+                        if clean_mask is not None:
+                            save_path.mkdir(parents=True, exist_ok=True)
+                            split_path = save_path / (
+                                f"canvas_page_{int(time.time())}.png"
+                            )
+                            png_writer.save(
+                                split_path,
+                                ink_module.render_canvas(split_canvas),
+                                lambda path: print(
+                                    f"Pagina anterior salva em {path}"
+                                ),
                             )
                         clean_generation = ink_worker.new_generation()
                         clean_display_version = 0

@@ -68,6 +68,8 @@ TRACKER_FIELDS = {
     "missed",
     "pending",
     "pending_since",
+    "big_jump_seq",
+    "last_big_jump",
     "frames_since_seen",
     "last_seen_at",
     "absent_calls",
