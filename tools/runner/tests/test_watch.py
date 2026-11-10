@@ -13,7 +13,12 @@ import sys
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+sys.path.insert(
+    0,
+    os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    ),
+)
 
 from tools.runner.watch import WatchState, detect_collapse
 
@@ -34,15 +39,13 @@ def _history(relative):
 
 
 def test_v2_lrbug_collapses():
-    history = _history(os.path.join("v5-output-v2-lrbug",
-                                    "pairs_metrics.json"))
+    history = _history(os.path.join("v5-output-v2-lrbug", "pairs_metrics.json"))
     verdict = detect_collapse(history)
     assert verdict["collapsed"] is True
 
 
 def test_v3_healthy_run_not_collapsed():
-    history = _history(os.path.join("v5-output-v3",
-                                    "pairs_metrics.json"))
+    history = _history(os.path.join("v5-output-v3", "pairs_metrics.json"))
     verdict = detect_collapse(history)
     assert verdict["collapsed"] is False
 

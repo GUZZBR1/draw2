@@ -38,8 +38,7 @@ class Cycle:
         self.recipe = recipe
         self.workdir = workdir
         os.makedirs(workdir, exist_ok=True)
-        self.state = WatchState(os.path.join(workdir,
-                                             "cycle_state.json"))
+        self.state = WatchState(os.path.join(workdir, "cycle_state.json"))
         self.state.data.setdefault("recipe", recipe.to_dict())
 
     def stage(self):
@@ -51,6 +50,7 @@ class Cycle:
 
     def run(self, poll_s=POLL_S, max_polls=MAX_POLLS):
         from . import runner_kaggle
+
         if self.stage() == "new":
             result = runner_kaggle.push(self.recipe)
             self.set_stage("pushed", push=str(result)[:200])
@@ -66,9 +66,10 @@ class Cycle:
         for _ in range(max_polls):
             status = runner_kaggle.status(self.recipe)
             value = (status or {}).get("status", "unknown")
-            self.set_stage("running" if value not in
-                           ("complete", "error", "cancelled")
-                           else value, kernel_status=value)
+            self.set_stage(
+                "running" if value not in ("complete", "error", "cancelled") else value,
+                kernel_status=value,
+            )
             if value == "complete":
                 self.set_stage("complete")
                 return
@@ -96,10 +97,12 @@ class Cycle:
 
     def _archive(self):
         dest = os.path.join(self.workdir, "output")
-        record = {"id": self.recipe.name,
-                  "recipe": self.recipe.to_dict(),
-                  "status": "complete",
-                  "decision": "pendente"}
+        record = {
+            "id": self.recipe.name,
+            "recipe": self.recipe.to_dict(),
+            "status": "complete",
+            "decision": "pendente",
+        }
         manifest_path = os.path.join(dest, "manifest.json")
         if os.path.exists(manifest_path):
             with open(manifest_path) as f:
@@ -110,8 +113,7 @@ class Cycle:
         metrics_path = os.path.join(dest, "pairs_metrics.json")
         if os.path.exists(metrics_path):
             with open(metrics_path) as f:
-                record["metrics_json"] = json.load(f).get(
-                    "best_iou2_eval")
+                record["metrics_json"] = json.load(f).get("best_iou2_eval")
         Archive().add(record)
         self.set_stage("archived")
 
@@ -128,12 +130,17 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     if args.cmd == "status":
-        state = WatchState(os.path.join(args.workdir,
-                                        "cycle_state.json"))
-        print(json.dumps({"stage": state.data.get("stage"),
-                          "polls": len(state.data.get("polls", [])),
-                          "last": state.data.get("last_status")},
-                         indent=2))
+        state = WatchState(os.path.join(args.workdir, "cycle_state.json"))
+        print(
+            json.dumps(
+                {
+                    "stage": state.data.get("stage"),
+                    "polls": len(state.data.get("polls", [])),
+                    "last": state.data.get("last_status"),
+                },
+                indent=2,
+            )
+        )
         return 0
     recipe = load_recipe(args.recipe)
     cycle = Cycle(recipe, args.workdir)

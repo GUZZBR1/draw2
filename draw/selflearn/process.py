@@ -65,8 +65,7 @@ def scan_sessions(sessions_root):
         session_id = session_dir.name
         manifest_path = session_dir / "manifest.json"
         if not manifest_path.exists():
-            problems.append(
-                f"sessao orfa (sem manifest.json), excluida: {session_id}")
+            problems.append(f"sessao orfa (sem manifest.json), excluida: {session_id}")
             continue
         manifest = _load_json(manifest_path)
         generations = []
@@ -78,32 +77,34 @@ def scan_sessions(sessions_root):
                 rel = files.get(kind)
                 expected = entry.get(f"{kind}_sha256")
                 if rel is None or expected is None:
-                    problems.append(
-                        f"{session_id} gen {gen}: manifesto sem {kind}")
+                    problems.append(f"{session_id} gen {gen}: manifesto sem {kind}")
                     ok = False
                     continue
                 fpath = session_dir / rel
                 if not fpath.exists():
-                    problems.append(
-                        f"{session_id} gen {gen}: arquivo ausente {rel}")
+                    problems.append(f"{session_id} gen {gen}: arquivo ausente {rel}")
                     ok = False
                     continue
                 if session_module.sha256_file(fpath) != expected:
-                    problems.append(
-                        f"{session_id} gen {gen}: sha256 diverge em {rel}")
+                    problems.append(f"{session_id} gen {gen}: sha256 diverge em {rel}")
                     ok = False
             if ok:
-                generations.append({
-                    "generation": gen,
-                    "files": {kind: str(session_dir / files[kind])
-                              for kind in _FILES},
-                })
-        sessions.append({
-            "session_id": session_id,
-            "path": str(session_dir),
-            "generations": generations,
-            "models": manifest.get("models", {}),
-        })
+                generations.append(
+                    {
+                        "generation": gen,
+                        "files": {
+                            kind: str(session_dir / files[kind]) for kind in _FILES
+                        },
+                    }
+                )
+        sessions.append(
+            {
+                "session_id": session_id,
+                "path": str(session_dir),
+                "generations": generations,
+                "models": manifest.get("models", {}),
+            }
+        )
     return sessions, problems
 
 
@@ -112,8 +113,7 @@ def _ink_fraction(final_path, reference_path):
     final = cv2.imread(str(final_path), cv2.IMREAD_COLOR)
     reference = cv2.imread(str(reference_path), cv2.IMREAD_COLOR)
     if final is None or reference is None:
-        raise ValueError(
-            f"warp ilegivel: {final_path} / {reference_path}")
+        raise ValueError(f"warp ilegivel: {final_path} / {reference_path}")
     mask = split_module.draft_independent_label(final, reference)
     return float(np.count_nonzero(mask)) / float(mask.size), mask
 
@@ -122,16 +122,16 @@ def _choose_fraction(sessions, min_holdout_sessions):
     """Menor fracao da escada que sela o minimo de sessoes."""
     chosen = _FRACTION_LADDER[-1]
     for fraction in _FRACTION_LADDER:
-        result = split_module.split_sessions(
-            sessions, holdout_fraction=fraction)
+        result = split_module.split_sessions(sessions, holdout_fraction=fraction)
         chosen = fraction
         if len(result[split_module.HOLDOUT]) >= min_holdout_sessions:
             break
     return chosen
 
 
-def process_pool(sessions_root, out_root,
-                 min_holdout_sessions=gate_module.MIN_HOLDOUT_SESSIONS):
+def process_pool(
+    sessions_root, out_root, min_holdout_sessions=gate_module.MIN_HOLDOUT_SESSIONS
+):
     """Roda a esteira sobre as sessoes gravadas e devolve o placar.
 
     Escreve em out_root: split.json (selo persistido), index.jsonl
@@ -149,8 +149,8 @@ def process_pool(sessions_root, out_root,
         session["has_empty_pages"] = False
         for generation in session["generations"]:
             ink_fraction, _ = _ink_fraction(
-                generation["files"]["final_warp"],
-                generation["files"]["reference_warp"])
+                generation["files"]["final_warp"], generation["files"]["reference_warp"]
+            )
             generation["ink_fraction"] = ink_fraction
             if ink_fraction < _EMPTY_INK_FRACTION:
                 session["has_empty_pages"] = True
@@ -173,11 +173,13 @@ def process_pool(sessions_root, out_root,
         if sid in assignment and assignment[sid] != side:
             if side == split_module.HOLDOUT:
                 raise split_module.LeakageError(
-                    f"sessao selada como holdout cairia no treino: {sid}")
+                    f"sessao selada como holdout cairia no treino: {sid}"
+                )
             assignment[sid] = side
     split_module.assert_no_leakage(
         [s for s, v in assignment.items() if v == split_module.TRAIN],
-        [s for s, v in assignment.items() if v == split_module.HOLDOUT])
+        [s for s, v in assignment.items() if v == split_module.HOLDOUT],
+    )
 
     reviews_path = out / "reviews.json"
     reviews = _load_json(reviews_path) if reviews_path.exists() else {}
@@ -193,8 +195,7 @@ def process_pool(sessions_root, out_root,
         "pages_holdout_draft": 0,
         "pages_holdout_reviewed": 0,
     }
-    holdout_ids = [s for s, v in assignment.items()
-                   if v == split_module.HOLDOUT]
+    holdout_ids = [s for s, v in assignment.items() if v == split_module.HOLDOUT]
     for session in sessions:
         sid = session["session_id"]
         side = assignment[sid]
@@ -212,20 +213,22 @@ def process_pool(sessions_root, out_root,
             if side == split_module.HOLDOUT:
                 _, mask = _ink_fraction(
                     generation["files"]["final_warp"],
-                    generation["files"]["reference_warp"])
+                    generation["files"]["reference_warp"],
+                )
                 draft_rel = Path(sid) / f"gen_{generation['generation']:04d}"
                 draft_path = holdout_dir / draft_rel / "label_draft.png"
                 draft_path.parent.mkdir(parents=True, exist_ok=True)
                 if not cv2.imwrite(str(draft_path), mask):
-                    raise RuntimeError(
-                        f"falha ao gravar o rascunho {draft_path}")
+                    raise RuntimeError(f"falha ao gravar o rascunho {draft_path}")
                 reviewed = bool(reviews.get(key, False))
-                line.update({
-                    "origin": "independent_label",
-                    "label_source": "final_minus_reference",
-                    "label_reviewed": reviewed,
-                    "label_draft": str(draft_path),
-                })
+                line.update(
+                    {
+                        "origin": "independent_label",
+                        "label_source": "final_minus_reference",
+                        "label_reviewed": reviewed,
+                        "label_draft": str(draft_path),
+                    }
+                )
                 counts["pages_holdout_draft"] += 1
                 if reviewed:
                     counts["pages_holdout_reviewed"] += 1
@@ -252,10 +255,9 @@ def process_pool(sessions_root, out_root,
         "gate": {
             "min_sessions": min_holdout_sessions,
             "min_pages": gate_module.MIN_HOLDOUT_PAGES,
-            "sessions_ok": counts["sessions_holdout"]
-                           >= min_holdout_sessions,
+            "sessions_ok": counts["sessions_holdout"] >= min_holdout_sessions,
             "pages_ok": counts["pages_holdout_reviewed"]
-                        >= gate_module.MIN_HOLDOUT_PAGES,
+            >= gate_module.MIN_HOLDOUT_PAGES,
         },
         "problems": problems,
     }

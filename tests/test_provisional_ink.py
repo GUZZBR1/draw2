@@ -128,10 +128,7 @@ def test_worker_display_shows_provisional_before_poll_confirms(
         )
         assert _px(got[1], STRONG) == 0
         confirmed_poll = worker.poll(generation, 0)
-        assert (
-            confirmed_poll is None
-            or _px(confirmed_poll[1], STRONG) == 0
-        )
+        assert confirmed_poll is None or _px(confirmed_poll[1], STRONG) == 0
         _drive_until(
             worker,
             generation,

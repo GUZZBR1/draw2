@@ -41,21 +41,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from draw import config  # noqa: E402
 
 DEFAULT_ONNX = (
-    Path.home()
-    / "workspace/draw-models-2026-11-06/assets/page_clean_unet.onnx"
+    Path.home() / "workspace/draw-models-2026-11-06/assets/page_clean_unet.onnx"
 )
 
 _NEIGHBORS = (
-    (-1, -1), (-1, 0), (-1, 1),
-    (0, -1),           (0, 1),
-    (1, -1),  (1, 0),  (1, 1),
+    (-1, -1),
+    (-1, 0),
+    (-1, 1),
+    (0, -1),
+    (0, 1),
+    (1, -1),
+    (1, 0),
+    (1, 1),
 )
-_DEGREE_KERNEL = np.array(
-    [[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=np.uint8
-)
+_DEGREE_KERNEL = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=np.uint8)
 
 
 # ---------------------------------------------------------------- máscara
+
 
 def ink_mask_model(bgr, onnx_path):
     """Máscara de tinta do app: PageCleanInk (mosaico 256, limiar 0,7).
@@ -75,9 +78,7 @@ def ink_mask_model(bgr, onnx_path):
 def ink_mask_otsu(bgr):
     """Tinta escura por Otsu invertido; devolve também a polaridade."""
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-    _, dark = cv2.threshold(
-        gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-    )
+    _, dark = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     mask = dark > 0
     # Se o "escuro" dominar a página, a polaridade está invertida.
     if mask.mean() > 0.5:
@@ -101,6 +102,7 @@ def filter_microfragments(ink, min_area=4):
 
 # ------------------------------------------------------- afinamento (ZS)
 
+
 def zhang_suen_thin(ink):
     """Esqueleto de 1 px por Zhang-Suen vetorizado (sem cv2.ximgproc)."""
     img = ink.astype(np.uint8)
@@ -118,9 +120,7 @@ def zhang_suen_thin(ink):
             p8 = p[1:-1, :-2]
             p9 = p[:-2, :-2]
             seq = [p2, p3, p4, p5, p6, p7, p8, p9, p2]
-            transitions = sum(
-                ((seq[i] == 0) & (seq[i + 1] == 1)) for i in range(8)
-            )
+            transitions = sum(((seq[i] == 0) & (seq[i + 1] == 1)) for i in range(8))
             b = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9
             if step == 0:
                 m = (p2 * p4 * p6 == 0) & (p4 * p6 * p8 == 0)
@@ -134,6 +134,7 @@ def zhang_suen_thin(ink):
 
 
 # ------------------------------------------------------------ travessia
+
 
 def make_8_minimal(skel):
     """Remove pixels de canto L redundantes preservando a conectividade-8.
@@ -245,16 +246,13 @@ def trace_polylines(skel):
                 if (p, q) not in visited:
                     polylines.append(walk(p, q, nid))
         if not has_external:
-            polylines.append(
-                {"points": np.array([anchors[nid]]), "closed": False}
-            )
+            polylines.append({"points": np.array([anchors[nid]]), "closed": False})
 
     covered = np.zeros(skel_flat.shape, dtype=bool)
     for a, _b in visited:
         covered[a] = True
     remaining = [
-        int(i)
-        for i in np.nonzero(skel_flat & ~covered & (labels_flat == 0))[0]
+        int(i) for i in np.nonzero(skel_flat & ~covered & (labels_flat == 0))[0]
     ]
     seen = set()
     for start in remaining:
@@ -287,6 +285,7 @@ def trace_polylines(skel):
 
 # --------------------------------------------------------- simplificação
 
+
 def simplify_polylines(polylines, epsilon):
     """Douglas-Peucker via cv2.approxPolyDP, linha a linha."""
     out = []
@@ -295,11 +294,15 @@ def simplify_polylines(polylines, epsilon):
         if len(pts) <= 2:
             out.append(line)
             continue
-        approx = cv2.approxPolyDP(
-            pts.reshape(-1, 1, 2).astype(np.float32),
-            float(epsilon),
-            bool(line["closed"]),
-        ).reshape(-1, 2).astype(np.float64)
+        approx = (
+            cv2.approxPolyDP(
+                pts.reshape(-1, 1, 2).astype(np.float32),
+                float(epsilon),
+                bool(line["closed"]),
+            )
+            .reshape(-1, 2)
+            .astype(np.float64)
+        )
         if len(approx) >= 2:
             out.append({"points": approx, "closed": line["closed"]})
         else:
@@ -317,6 +320,7 @@ def median_stroke_width(ink, skel):
 
 # -------------------------------------------------------------- escritas
 
+
 def _export_scale(img_w, img_h, paper_w_mm, paper_h_mm, scale=None):
     if scale is not None:
         return scale
@@ -333,12 +337,18 @@ def _export_scale(img_w, img_h, paper_w_mm, paper_h_mm, scale=None):
     return paper_w_mm / img_w, paper_h_mm / img_h
 
 
-def write_svg(polylines, out_path, img_w, img_h, paper_w_mm, paper_h_mm,
-              stroke_w_mm, scale_mm_per_px=None):
+def write_svg(
+    polylines,
+    out_path,
+    img_w,
+    img_h,
+    paper_w_mm,
+    paper_h_mm,
+    stroke_w_mm,
+    scale_mm_per_px=None,
+):
     """SVG com <path> reais em mm (Y para baixo, como a imagem)."""
-    sx, sy = _export_scale(
-        img_w, img_h, paper_w_mm, paper_h_mm, scale_mm_per_px
-    )
+    sx, sy = _export_scale(img_w, img_h, paper_w_mm, paper_h_mm, scale_mm_per_px)
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         "<!-- Draw vector bridge: polilinhas de centro do canvas, em mm -->",
@@ -367,41 +377,91 @@ def write_svg(polylines, out_path, img_w, img_h, paper_w_mm, paper_h_mm,
     Path(out_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def write_dxf(polylines, out_path, img_w, img_h, paper_w_mm, paper_h_mm,
-              stroke_w_mm, scale_mm_per_px=None):
+def write_dxf(
+    polylines,
+    out_path,
+    img_w,
+    img_h,
+    paper_w_mm,
+    paper_h_mm,
+    stroke_w_mm,
+    scale_mm_per_px=None,
+):
     """DXF mínimo (AC1015) escrito à mão: LWPOLYLINE em mm, Y para cima."""
-    sx, sy = _export_scale(
-        img_w, img_h, paper_w_mm, paper_h_mm, scale_mm_per_px
-    )
+    sx, sy = _export_scale(img_w, img_h, paper_w_mm, paper_h_mm, scale_mm_per_px)
 
     def conv(pts):
         return [(x * sx, paper_h_mm - y * sy) for x, y in pts]
 
     out = [
-        "0", "SECTION", "2", "HEADER",
-        "9", "$ACADVER", "1", "AC1015",
-        "9", "$INSUNITS", "70", "4",
-        "0", "ENDSEC",
-        "0", "SECTION", "2", "TABLES",
-        "0", "TABLE", "2", "LAYER", "70", "1",
-        "0", "LAYER", "2", "INK", "70", "0", "62", "7", "6", "Continuous",
-        "0", "ENDTAB",
-        "0", "ENDSEC",
-        "0", "SECTION", "2", "BLOCKS",
-        "0", "ENDSEC",
-        "0", "SECTION", "2", "ENTITIES",
+        "0",
+        "SECTION",
+        "2",
+        "HEADER",
+        "9",
+        "$ACADVER",
+        "1",
+        "AC1015",
+        "9",
+        "$INSUNITS",
+        "70",
+        "4",
+        "0",
+        "ENDSEC",
+        "0",
+        "SECTION",
+        "2",
+        "TABLES",
+        "0",
+        "TABLE",
+        "2",
+        "LAYER",
+        "70",
+        "1",
+        "0",
+        "LAYER",
+        "2",
+        "INK",
+        "70",
+        "0",
+        "62",
+        "7",
+        "6",
+        "Continuous",
+        "0",
+        "ENDTAB",
+        "0",
+        "ENDSEC",
+        "0",
+        "SECTION",
+        "2",
+        "BLOCKS",
+        "0",
+        "ENDSEC",
+        "0",
+        "SECTION",
+        "2",
+        "ENTITIES",
     ]
     for line in polylines:
         pts = conv(line["points"])
         if len(pts) == 1:
             pts = pts + pts  # LWPOLYLINE degenerada de 1 vértice não é válida
         out += [
-            "0", "LWPOLYLINE",
-            "100", "AcDbEntity", "8", "INK",
-            "100", "AcDbPolyline",
-            "90", str(len(pts)),
-            "70", "1" if line["closed"] else "0",
-            "43", f"{stroke_w_mm:.3f}",
+            "0",
+            "LWPOLYLINE",
+            "100",
+            "AcDbEntity",
+            "8",
+            "INK",
+            "100",
+            "AcDbPolyline",
+            "90",
+            str(len(pts)),
+            "70",
+            "1" if line["closed"] else "0",
+            "43",
+            f"{stroke_w_mm:.3f}",
         ]
         for x, y in pts:
             out += ["10", f"{x:.3f}", "20", f"{y:.3f}"]
@@ -410,6 +470,7 @@ def write_dxf(polylines, out_path, img_w, img_h, paper_w_mm, paper_h_mm,
 
 
 # ------------------------------------------------- prova (round-trip IoU)
+
 
 def parse_svg_paths(svg_path):
     """Lê de volta os <path> do SVG: lista de (Nx2 mm, closed)."""
@@ -455,8 +516,7 @@ def parse_dxf_polylines(dxf_path):
     return out
 
 
-def rasterize(mm_polylines, shape, sx, sy, thickness_px, flip_y=False,
-              paper_h_mm=None):
+def rasterize(mm_polylines, shape, sx, sy, thickness_px, flip_y=False, paper_h_mm=None):
     """Desenha polilinhas (mm) de volta na grade de pixels da página."""
     raster = np.zeros(shape, dtype=np.uint8)
     for pts_mm, closed in mm_polylines:
@@ -468,8 +528,12 @@ def rasterize(mm_polylines, shape, sx, sy, thickness_px, flip_y=False,
             cv2.circle(raster, tuple(px[0]), max(thickness_px // 2, 0), 1, -1)
         else:
             cv2.polylines(
-                raster, [px.reshape(-1, 1, 2)], bool(closed), 1,
-                thickness=max(int(thickness_px), 1), lineType=cv2.LINE_AA,
+                raster,
+                [px.reshape(-1, 1, 2)],
+                bool(closed),
+                1,
+                thickness=max(int(thickness_px), 1),
+                lineType=cv2.LINE_AA,
             )
     return raster > 0
 
@@ -482,8 +546,16 @@ def iou(a, b):
 
 # ------------------------------------------------------------------ core
 
-def export_vectors(bgr, mask_source="model", onnx_path=None, epsilon=1.5,
-                   paper_mm=None, min_area=4, paper_format="a4"):
+
+def export_vectors(
+    bgr,
+    mask_source="model",
+    onnx_path=None,
+    epsilon=1.5,
+    paper_mm=None,
+    min_area=4,
+    paper_format="a4",
+):
     """Imagem na grade da página -> dict com polilinhas, SVG/DXF em memória
     (listas de linhas via writers) e estatísticas da vetorização."""
     img_h, img_w = bgr.shape[:2]
@@ -500,9 +572,7 @@ def export_vectors(bgr, mask_source="model", onnx_path=None, epsilon=1.5,
         sx, sy = paper_w_mm / img_w, paper_h_mm / img_h
     if mask_source == "model":
         if onnx_path is None or not Path(onnx_path).exists():
-            raise FileNotFoundError(
-                f"modelo page-clean nao encontrado: {onnx_path}"
-            )
+            raise FileNotFoundError(f"modelo page-clean nao encontrado: {onnx_path}")
         ink = ink_mask_model(bgr, onnx_path)
     else:
         ink = ink_mask_otsu(bgr)
@@ -533,25 +603,36 @@ def main(argv=None):
     parser.add_argument("input", help="PNG na grade da página (warp ou canvas)")
     parser.add_argument("--out-dir", default="vector-out", help="pasta de saída")
     parser.add_argument(
-        "--mask", choices=["model", "otsu"], default="model",
+        "--mask",
+        choices=["model", "otsu"],
+        default="model",
         help="fonte da máscara de tinta (padrao: model = page-clean titular)",
     )
     parser.add_argument(
-        "--onnx", default=str(DEFAULT_ONNX),
+        "--onnx",
+        default=str(DEFAULT_ONNX),
         help="page-clean .onnx para --mask model",
     )
     parser.add_argument(
-        "--epsilon", type=float, default=1.5,
+        "--epsilon",
+        type=float,
+        default=1.5,
         help="epsilon do Douglas-Peucker em px (padrao 1,5)",
     )
     size = parser.add_mutually_exclusive_group()
     size.add_argument(
-        "--format", choices=list(config.FORMATS), default="a4",
+        "--format",
+        choices=list(config.FORMATS),
+        default="a4",
         help="formato da sessao; escala de draw.config (padrao: a4)",
     )
     size.add_argument(
-        "--paper-mm", type=float, nargs=2, default=None,
-        metavar=("W", "H"), help="dimensoes livres, API legada (sem --format)",
+        "--paper-mm",
+        type=float,
+        nargs=2,
+        default=None,
+        metavar=("W", "H"),
+        help="dimensoes livres, API legada (sem --format)",
     )
     args = parser.parse_args(argv)
 
@@ -579,13 +660,23 @@ def main(argv=None):
     svg_path = out_dir / f"{stem}.svg"
     dxf_path = out_dir / f"{stem}.dxf"
     write_svg(
-        result["polylines"], svg_path, img_w, img_h,
-        paper_w_mm, paper_h_mm, result["stroke_width_mm"],
+        result["polylines"],
+        svg_path,
+        img_w,
+        img_h,
+        paper_w_mm,
+        paper_h_mm,
+        result["stroke_width_mm"],
         scale_mm_per_px=result["scale_mm_per_px"],
     )
     write_dxf(
-        result["polylines"], dxf_path, img_w, img_h,
-        paper_w_mm, paper_h_mm, result["stroke_width_mm"],
+        result["polylines"],
+        dxf_path,
+        img_w,
+        img_h,
+        paper_w_mm,
+        paper_h_mm,
+        result["stroke_width_mm"],
         scale_mm_per_px=result["scale_mm_per_px"],
     )
 
@@ -593,12 +684,15 @@ def main(argv=None):
     sx, sy = result["scale_mm_per_px"]
     thickness = max(int(round(result["stroke_width_px"])), 1)
     ink = result["ink"]
-    raster_svg = rasterize(
-        parse_svg_paths(svg_path), ink.shape, sx, sy, thickness
-    )
+    raster_svg = rasterize(parse_svg_paths(svg_path), ink.shape, sx, sy, thickness)
     raster_dxf = rasterize(
-        parse_dxf_polylines(dxf_path), ink.shape, sx, sy, thickness,
-        flip_y=True, paper_h_mm=paper_h_mm,
+        parse_dxf_polylines(dxf_path),
+        ink.shape,
+        sx,
+        sy,
+        thickness,
+        flip_y=True,
+        paper_h_mm=paper_h_mm,
     )
     iou_svg = iou(raster_svg, ink)
     iou_dxf = iou(raster_dxf, ink)
@@ -606,9 +700,7 @@ def main(argv=None):
     overlay = bgr.copy()
     overlay[raster_svg] = (0, 0, 255)
     cv2.imwrite(str(out_dir / f"{stem}_overlay.png"), overlay)
-    cv2.imwrite(
-        str(out_dir / f"{stem}_mask.png"), (ink.astype(np.uint8) * 255)
-    )
+    cv2.imwrite(str(out_dir / f"{stem}_mask.png"), (ink.astype(np.uint8) * 255))
 
     proof = {
         "input": str(args.input),

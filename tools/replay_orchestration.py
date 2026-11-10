@@ -42,9 +42,7 @@ GROWTH_PASSES = 60
 
 
 def _load_prob_cache():
-    spec = importlib.util.spec_from_file_location(
-        "prob_cache", RULER / "prob_cache.py"
-    )
+    spec = importlib.util.spec_from_file_location("prob_cache", RULER / "prob_cache.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.ProbCache()
@@ -100,17 +98,13 @@ class LayeredPipeline:
 def _recall(mask_bool, ref):
     if not np.any(ref):
         return 0.0
-    return int(np.count_nonzero(mask_bool & ref)) / int(
-        np.count_nonzero(ref)
-    )
+    return int(np.count_nonzero(mask_bool & ref)) / int(np.count_nonzero(ref))
 
 
 def run_desk(make_pipeline, probs, masks):
     pipe = make_pipeline()
     dil5 = np.ones((5, 5), np.uint8)
-    ref04 = masks["f04"] & ~(
-        cv2.dilate(masks["f03"].astype(np.uint8), dil5) > 0
-    )
+    ref04 = masks["f04"] & ~(cv2.dilate(masks["f03"].astype(np.uint8), dil5) > 0)
     union_ref = np.zeros_like(ref04)
     for fid in [f"f{i:02d}" for i in range(4, 31)]:
         union_ref |= masks[fid]
@@ -140,9 +134,7 @@ def run_desk(make_pipeline, probs, masks):
                         ):
                             event[field] = relative
         if index < 3:
-            empty_end_px[fid] = int(
-                np.count_nonzero(last["confirmed"])
-            )
+            empty_end_px[fid] = int(np.count_nonzero(last["confirmed"]))
     return {
         "passes_total": passes,
         "empty_segment_confirmed_px": empty_end_px,
@@ -153,9 +145,7 @@ def run_desk(make_pipeline, probs, masks):
         "final": {
             "confirmed_px": int(np.count_nonzero(last["confirmed"])),
             "display_px": int(np.count_nonzero(last["display"])),
-            "recall_vs_union_ref": round(
-                _recall(last["confirmed"], union_ref), 4
-            ),
+            "recall_vs_union_ref": round(_recall(last["confirmed"], union_ref), 4),
             "confirmed_px_outside_ref": int(
                 np.count_nonzero(last["confirmed"] & ~union_ref)
             ),
@@ -163,8 +153,7 @@ def run_desk(make_pipeline, probs, masks):
             "retracted_px_total": last["retracted_px_total"],
             "provisional_ever_px": last["provisional_ever_px"],
             "retraction_rate": round(
-                last["retracted_px_total"]
-                / max(last["provisional_ever_px"], 1),
+                last["retracted_px_total"] / max(last["provisional_ever_px"], 1),
                 4,
             ),
         },
@@ -184,8 +173,7 @@ def run_growth(make_pipeline, probs):
         "retracted_px_total": last["retracted_px_total"],
         "provisional_ever_px": last["provisional_ever_px"],
         "retraction_rate": round(
-            last["retracted_px_total"]
-            / max(last["provisional_ever_px"], 1),
+            last["retracted_px_total"] / max(last["provisional_ever_px"], 1),
             4,
         ),
     }
@@ -206,8 +194,7 @@ def run_flicker(make_pipeline, probs):
         "retracted_px_total": last["retracted_px_total"],
         "provisional_ever_px": last["provisional_ever_px"],
         "retraction_rate": round(
-            last["retracted_px_total"]
-            / max(last["provisional_ever_px"], 1),
+            last["retracted_px_total"] / max(last["provisional_ever_px"], 1),
             4,
         ),
     }

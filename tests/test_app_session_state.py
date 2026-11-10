@@ -124,15 +124,13 @@ def _run_headless(plan, fake_ink_factory, period_s=0.006):
 def _panels(view):
     """(esquerda = câmera, direita = canvas) da vista composta."""
     width = view.shape[1]
-    return view[:, : int(width * 0.69)], view[:, int(width * 0.72):]
+    return view[:, : int(width * 0.69)], view[:, int(width * 0.72) :]
 
 
 def _marked(panel):
     """Pixels do contorno verde (a folha detectada) na câmera."""
     blue, green, red = panel[:, :, 0], panel[:, :, 1], panel[:, :, 2]
-    return int(np.count_nonzero(
-        (green > 180) & (red < 120) & (blue < 120)
-    ))
+    return int(np.count_nonzero((green > 180) & (red < 120) & (blue < 120)))
 
 
 def _ink(panel):
@@ -158,8 +156,11 @@ def _fake_ink_class(generations, blob_only_first=True, fail=False):
                 raise RuntimeError("modelo explodiu de proposito")
             self.calls += 1
             mask = np.zeros(
-                (app_module.ink_module.config.PAPER_H,
-                 app_module.ink_module.config.PAPER_W), dtype=np.uint8,
+                (
+                    app_module.ink_module.config.PAPER_H,
+                    app_module.ink_module.config.PAPER_W,
+                ),
+                dtype=np.uint8,
             )
             show = (generations[0] <= 1) if blob_only_first else True
             if show:
@@ -215,9 +216,7 @@ def test_new_sheet_does_not_inherit_the_previous_canvas(monkeypatch):
     monkeypatch.setattr(app_module._PageCleanWorker, "poll_display", capture_display)
     monkeypatch.setattr(_SpyGui, "imshow", capture_imshow)
     plan = ["sheet"] * 50 + ["blank"] * 130 + ["sheet"] * 70
-    spy, capture, errors, finished = _run_headless(
-        plan, _fake_ink_class(generations)
-    )
+    spy, capture, errors, finished = _run_headless(plan, _fake_ink_class(generations))
 
     assert finished and not errors, errors
     assert capture.released, "o epílogo precisa liberar a captura"
@@ -231,15 +230,11 @@ def test_new_sheet_does_not_inherit_the_previous_canvas(monkeypatch):
     gap = [i for i, count in enumerate(marked) if count == 0]
     assert gap, "não houve trecho sem folha"
     last_gap = max(gap)
-    after_return = [
-        i for i, count in enumerate(marked)
-        if count > 0 and i > last_gap
-    ]
+    after_return = [i for i, count in enumerate(marked) if count > 0 and i > last_gap]
     assert after_return, "a folha não voltou a ser detectada"
 
     with_ink = [
-        index for index in after_return
-        if _ink(_panels(spy.shown[index])[1]) > 0
+        index for index in after_return if _ink(_panels(spy.shown[index])[1]) > 0
     ]
     assert all(shown_decisions[i] == "deferred_switch_consensus" for i in with_ink)
     committed = [i for i in after_return if shown_decisions[i] == "new_page"]
@@ -265,9 +260,7 @@ def test_same_page_recovery_preserves_canvas_through_app_loop(monkeypatch):
             )
         return result
 
-    monkeypatch.setattr(
-        app_module._PageCleanWorker, "poll_display", capture_display
-    )
+    monkeypatch.setattr(app_module._PageCleanWorker, "poll_display", capture_display)
     plan = ["sheet"] * 50 + ["blank"] * 130 + ["sheet"] * 70
     spy, capture, errors, finished = _run_headless(
         plan, _fake_ink_class(generations, blob_only_first=False)

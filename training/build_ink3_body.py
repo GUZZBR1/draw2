@@ -28,6 +28,7 @@ REPO (cabecalho do modulo + --config/DRAW_CFG), marcados como
 tal. Regenerar = rodar este script; o arquivo gerado tem que
 sair byte a byte igual ao commitado.
 """
+
 import os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -50,13 +51,16 @@ def patch(old, new, count=1):
 patch('STUDENT_TAG = "tri3"', 'STUDENT_TAG = "tri3b"')
 
 # 2. pesos da CE pró-recall
-patch('CLASS_WEIGHTS = (0.3, 3.0, 1.5)  # CE ponderada (DESIGN_TRI.md S.2)',
-      'CLASS_WEIGHTS = (0.3, 2.0, 2.5)  # CE pro-recall (corrida 3class n.2)')
+patch(
+    "CLASS_WEIGHTS = (0.3, 3.0, 1.5)  # CE ponderada (DESIGN_TRI.md S.2)",
+    "CLASS_WEIGHTS = (0.3, 2.0, 2.5)  # CE pro-recall (corrida 3class n.2)",
+)
 
 # 3+4. constantes novas + amostragem de patches
-patch('''PATCH_CENTER_INK = 0.55      # patches: 55% centrados em tinta,
-PATCH_CENTER_PRINT = 0.75    # +20% em impresso (cumul.), resto livre''',
-      '''PATCH_CENTER_INK = 0.60      # patches: 60% centrados em tinta,
+patch(
+    """PATCH_CENTER_INK = 0.55      # patches: 55% centrados em tinta,
+PATCH_CENTER_PRINT = 0.75    # +20% em impresso (cumul.), resto livre""",
+    """PATCH_CENTER_INK = 0.60      # patches: 60% centrados em tinta,
 PATCH_CENTER_PRINT = 0.80    # +20% em impresso (cumul.), resto livre
 # ---- corrida 3class n.2: marcos, limiar calibrável e best ----
 TVERSKY_ALPHA = 0.3          # FP no termo de sobreposicao de tinta
@@ -67,41 +71,48 @@ GATE_FP_MAX = 0.00072        # FP em vazios (fracao de pixels)
 GATE_LEAK_MAX = 0.005        # print leak sintetico
 GATE_INK_RECALL_MIN = 0.60   # veto de recall de tinta
 GATE_INK_MARGIN_MIN = 0.90   # veto de invariancia margem x centro
-BEST = {"key": None, "info": None}''')
+BEST = {"key": None, "info": None}""",
+)
 
 # 5. Dice -> Tversky dentro de masked_loss_mc
-patch('''    p = torch.softmax(logits, dim=1)[:, 2:3] * valid
+patch(
+    """    p = torch.softmax(logits, dim=1)[:, 2:3] * valid
     t = (lab == 2).float().unsqueeze(1) * valid
     inter = (p * t).sum()
     dice = 1 - (2 * inter + 1) / (p.sum() + t.sum() + 1)
-    return ce + dice''',
-      '''    p = torch.softmax(logits, dim=1)[:, 2:3] * valid
+    return ce + dice""",
+    """    p = torch.softmax(logits, dim=1)[:, 2:3] * valid
     t = (lab == 2).float().unsqueeze(1) * valid
     inter = (p * t).sum()
     fp_t = (p * (1 - t)).sum()
     fn_t = ((1 - p) * t).sum()
     tversky = 1 - (inter + 1) / (inter + TVERSKY_ALPHA * fp_t
                                  + TVERSKY_BETA * fn_t + 1)
-    return ce + tversky''')
+    return ce + tversky""",
+)
 
 # 6. self-test: gradiente da classe tinta
-patch('''        log("SELFTEST TRI ok: gradiente da classe impresso > 0")
-    opt.zero_grad()''',
-      '''        log("SELFTEST TRI ok: gradiente da classe impresso > 0")
+patch(
+    """        log("SELFTEST TRI ok: gradiente da classe impresso > 0")
+    opt.zero_grad()""",
+    """        log("SELFTEST TRI ok: gradiente da classe impresso > 0")
     if bool((yb == 2).any()):
         hg = student.head.weight.grad
         assert hg is not None and float(hg[2].norm()) > 0, \\
             "classe tinta sem gradiente na cabeca (3class n.2)"
         log("SELFTEST 3CLASS ok: gradiente da classe tinta > 0")
-    opt.zero_grad()''')
+    opt.zero_grad()""",
+)
 
 # 7. gancho de marco no loop de treino (substitui o mid único)
-patch('''        if ep + 1 == epochs // 2:
+patch(
+    """        if ep + 1 == epochs // 2:
             run_rulers("mid")
-    return recs''',
-      '''        if (ep + 1) % MILESTONE_EVERY == 0 or ep + 1 == epochs:
+    return recs""",
+    """        if (ep + 1) % MILESTONE_EVERY == 0 or ep + 1 == epochs:
             milestone_eval(ep + 1, ema)
-    return recs''')
+    return recs""",
+)
 
 # 8. maquinaria de marco/best, inserida antes da chamada do treino
 MILESTONE_CODE = '''
@@ -250,13 +261,16 @@ def milestone_eval(epoch, ema_model):
 
 
 '''
-patch('''
-# ---- treino MISTO com destilacao, estagio unico ----''',
-      MILESTONE_CODE + '''
-# ---- treino MISTO com destilacao, estagio unico ----''')
+patch(
+    """
+# ---- treino MISTO com destilacao, estagio unico ----""",
+    MILESTONE_CODE
+    + """
+# ---- treino MISTO com destilacao, estagio unico ----""",
+)
 
 # 9. export do BEST antes do DONE final
-best_export = '''
+best_export = """
 # ---- export do BEST composto (se houver): ONNX dinamico +
 # margem, mesmos contratos dos exports principais ----
 try:
@@ -294,7 +308,7 @@ try:
             "principais e crus seguem valendo")
 except Exception as _be:
     log(f"export do BEST falhou: {_be}")
-log("DONE")'''
+log("DONE")"""
 assert src.rstrip().endswith('log("DONE")')
 src = src.rstrip()[: -len('log("DONE")')] + best_export + "\n"
 n_patches += 1
@@ -306,11 +320,15 @@ n_patches += 1
 # pipeline de patches paralelo com prefetch. Desenho da loss,
 # portoes, tau*, reguas e export INTOCADOS.
 # =================================================================
-patch("import subprocess\nimport sys\nimport time\n",
-      "import subprocess\nimport sys\nimport time\nimport zlib\n"
-      "from concurrent.futures import ProcessPoolExecutor\n")
+patch(
+    "import subprocess\nimport sys\nimport time\n",
+    "import subprocess\nimport sys\nimport time\nimport zlib\n"
+    "from concurrent.futures import ProcessPoolExecutor\n",
+)
 
-patch("BATCH = 16\n", '''BATCH = 16
+patch(
+    "BATCH = 16\n",
+    '''BATCH = 16
 
 # ==== v2 agressivo (2026-11-03) ====
 # AMP: treino sob autocast+GradScaler em CUDA; professor,
@@ -394,9 +412,11 @@ def plan_batch(student, teacher, adapters):
         f"LR x{plan['lr_scale']:.2f} (regra linear, teto "
         f"x{LR_SCALE_CAP}) sonda={plan['probe']}")
     return plan
-''')
+''',
+)
 
-patch('''def distill_loss(student, teacher, adapters, xb, yb, wb):
+patch(
+    """def distill_loss(student, teacher, adapters, xb, yb, wb):
     s_logits, s_feats = student.forward_features(xb)
     with torch.no_grad():
         t_logits, t_feats = teacher.forward_features(xb)
@@ -409,8 +429,8 @@ patch('''def distill_loss(student, teacher, adapters, xb, yb, wb):
     total = gt + LAMBDA_LOGIT_KD * lkd + LAMBDA_CHANNEL_KD * ckd \\
         + LAMBDA_CLDICE * cld
     return total, {"gt": gt, "logit_kd": lkd, "channel_kd": ckd,
-                   "cldice": cld}''',
-'''def distill_loss(student, teacher, adapters, xb, yb, wb):
+                   "cldice": cld}""",
+    """def distill_loss(student, teacher, adapters, xb, yb, wb):
     # Professor SEMPRE em FP32 (alvos de KD estaveis); aluno e
     # a composicao da perda sob autocast quando AMP esta
     # ativo. Avaliacao/export nunca entram em autocast.
@@ -429,23 +449,27 @@ patch('''def distill_loss(student, teacher, adapters, xb, yb, wb):
         total = gt + LAMBDA_LOGIT_KD * lkd \\
             + LAMBDA_CHANNEL_KD * ckd + LAMBDA_CLDICE * cld
     return total, {"gt": gt, "logit_kd": lkd, "channel_kd": ckd,
-                   "cldice": cld}''')
+                   "cldice": cld}""",
+)
 
-patch('    log(f"SELFTEST OK total={float(total):.4f} "',
-'''    if USE_AMP:
+patch(
+    '    log(f"SELFTEST OK total={float(total):.4f} "',
+    '''    if USE_AMP:
         with torch.autocast(device_type="cuda", enabled=True):
             _amp_logits, _ = student.forward_features(xb)
         assert _amp_logits.dtype == torch.float16, \\
             f"AMP inativo: logits {_amp_logits.dtype}"
         log("SELFTEST AMP ok: forward do aluno sob autocast "
             "sai fp16 (treino AMP; avaliacao/export FP32)")
-    log(f"SELFTEST OK total={float(total):.4f} "''')
+    log(f"SELFTEST OK total={float(total):.4f} "''',
+)
 
-patch('''def train_stage(root, names, epochs, lr, tag):
+patch(
+    """def train_stage(root, names, epochs, lr, tag):
     params = list(student.parameters()) + list(adapters.parameters())
     opt = torch.optim.AdamW(params, lr=lr)
-    st_loss = selftest(root, names, opt, lr)''',
-'''def train_stage(root, names, epochs, lr, tag):
+    st_loss = selftest(root, names, opt, lr)""",
+    """def train_stage(root, names, epochs, lr, tag):
     plan = plan_batch(student, teacher, adapters)
     lr_eff = lr * plan["lr_scale"]
     if lr_eff != lr:
@@ -459,9 +483,11 @@ patch('''def train_stage(root, names, epochs, lr, tag):
         _PATCH_POOL[0] = ProcessPoolExecutor(
             max_workers=PATCH_WORKERS)
         log(f"pipeline de patches: {PATCH_WORKERS} processos "
-            f"com prefetch de 1 passo")''')
+            f"com prefetch de 1 passo")""",
+)
 
-patch('''        order = py_rng.choices(names, weights=weights, k=len(names))
+patch(
+    """        order = py_rng.choices(names, weights=weights, k=len(names))
         for i in range(0, len(order), BATCH):
             batch = []
             for n in order[i:i + BATCH]:
@@ -475,8 +501,8 @@ patch('''        order = py_rng.choices(names, weights=weights, k=len(names))
             opt.zero_grad()
             loss.backward()
             opt.step()
-            _ema_update()''',
-'''        order = py_rng.choices(names, weights=weights, k=len(names))
+            _ema_update()""",
+    """        order = py_rng.choices(names, weights=weights, k=len(names))
         names_per_step = max(1, plan["patches"] // 2)
         chunks = [order[i:i + names_per_step]
                   for i in range(0, len(order), names_per_step)]
@@ -513,32 +539,40 @@ patch('''        order = py_rng.choices(names, weights=weights, k=len(names))
             scaler.scale(loss).backward()
             scaler.step(opt)
             scaler.update()
-            _ema_update()''')
+            _ema_update()""",
+)
 
-patch("                s_lg = ink_margin(student(xb_r))",
-      "                with torch.autocast(device_type=\"cuda\", "
-      "enabled=USE_AMP):\n"
-      "                    s_lg = ink_margin(student(xb_r))")
-patch("""                opt.zero_grad()
+patch(
+    "                s_lg = ink_margin(student(xb_r))",
+    '                with torch.autocast(device_type="cuda", '
+    "enabled=USE_AMP):\n"
+    "                    s_lg = ink_margin(student(xb_r))",
+)
+patch(
+    """                opt.zero_grad()
                 (LAMBDA_LOGIT_KD * lk_r).backward()
                 opt.step()""",
-      """                opt.zero_grad()
+    """                opt.zero_grad()
                 scaler.scale(LAMBDA_LOGIT_KD * lk_r).backward()
                 scaler.step(opt)
-                scaler.update()""")
-patch("""                opt.zero_grad()
+                scaler.update()""",
+)
+patch(
+    """                opt.zero_grad()
                 loss_n.backward()
                 opt.step()""",
-      """                opt.zero_grad()
+    """                opt.zero_grad()
                 scaler.scale(loss_n).backward()
                 scaler.step(opt)
-                scaler.update()""")
-patch("    return plan\n",
-      "    return plan\n\n\n# ==== fim do bloco v2 ====\n")
-patch("        out = model(t).cpu().numpy()",
-      "        with torch.autocast(device_type=\"cuda\", "
-      "enabled=False):\n"
-      "            out = model(t).cpu().numpy()")
+                scaler.update()""",
+)
+patch("    return plan\n", "    return plan\n\n\n# ==== fim do bloco v2 ====\n")
+patch(
+    "        out = model(t).cpu().numpy()",
+    '        with torch.autocast(device_type="cuda", '
+    "enabled=False):\n"
+    "            out = model(t).cpu().numpy()",
+)
 
 # ==== v3: cache de geracao + resume (2026-11-04) ====
 # A corrida completa nao cabe numa sessao gratuita do Colab
@@ -550,9 +584,10 @@ patch("        out = model(t).cpu().numpy()",
 # resume_state.pt e retomada via DRAW_RESUME=1.
 
 # G1. chave da geracao + run() sombra quando ha cache
-patch('''run([sys.executable, f"{W}/ink-pairs/gen_pairs.py", "--fetch-inputs",
-     "--data-dir", f"{W}/ink-pairs/inputs"])''',
-      '''# ---- cache de geracao (v3): a chave cobre contagens,
+patch(
+    """run([sys.executable, f"{W}/ink-pairs/gen_pairs.py", "--fetch-inputs",
+     "--data-dir", f"{W}/ink-pairs/inputs"])""",
+    """# ---- cache de geracao (v3): a chave cobre contagens,
 # sementes e o flag smoke; dados restaurados com a mesma
 # chave pulam geracao, fusao e CVL (o notebook devolve os
 # diretorios pro W a partir do tar no Drive).
@@ -588,27 +623,31 @@ if _GEN_CACHED:
     def run(cmd):
         log(f"$ (cache) pulando: {cmd[1]}")
 run([sys.executable, f"{W}/ink-pairs/gen_pairs.py", "--fetch-inputs",
-     "--data-dir", f"{W}/ink-pairs/inputs"])''')
+     "--data-dir", f"{W}/ink-pairs/inputs"])""",
+)
 
 # G2. restaura o run() real no fim do bloco de geracao
-patch('''run([sys.executable, f"{W}/page-clean/gen_invariance.py",
+patch(
+    """run([sys.executable, f"{W}/page-clean/gen_invariance.py",
      "--out-dir", f"{W}/data_invariance", "--n", "24",
-     "--seed", "20261103"])''',
-      '''run([sys.executable, f"{W}/page-clean/gen_invariance.py",
+     "--seed", "20261103"])""",
+    """run([sys.executable, f"{W}/page-clean/gen_invariance.py",
      "--out-dir", f"{W}/data_invariance", "--n", "24",
      "--seed", "20261103"])
 if _GEN_CACHED:
-    run = _run_real''')
+    run = _run_real""",
+)
 
 # G3. fusao: com cache, os nomes vem dos diretorios prontos
-patch('''train_names_all = merge_roots(
+patch(
+    """train_names_all = merge_roots(
     [(f"{W}/data_sg_train", "sg"), (f"{W}/data_nb_train", "nb"),
      (f"{W}/data_rb_train", "rb")],
     f"{W}/data_train")
 eval_names_all = merge_roots(
     [(f"{W}/data_sg_eval", "sg"), (f"{W}/data_nb_eval", "nb")],
-    f"{W}/data_eval")''',
-      '''if _GEN_CACHED:
+    f"{W}/data_eval")""",
+    """if _GEN_CACHED:
     train_names_all = list_pages(f"{W}/data_train")
     eval_names_all = list_pages(f"{W}/data_eval")
 else:
@@ -620,13 +659,15 @@ else:
     eval_names_all = merge_roots(
         [(f"{W}/data_sg_eval", "sg"),
          (f"{W}/data_nb_eval", "nb")],
-        f"{W}/data_eval")''')
+        f"{W}/data_eval")""",
+)
 
 # G4. CVL: com cache, ja foi aplicado; sem cache, grava a chave
-patch('''metrics["cvl_pass"] = cvl_pass(f"{W}/data_train", CLIPS_DIR)
+patch(
+    """metrics["cvl_pass"] = cvl_pass(f"{W}/data_train", CLIPS_DIR)
 log(f"CVL pass: {metrics['cvl_pass']}")
-save_metrics()''',
-      '''if _GEN_CACHED:
+save_metrics()""",
+    """if _GEN_CACHED:
     metrics["cvl_pass"] = {"cached": GEN_KEY}
     log(f"CVL pass: cache (chave {GEN_KEY[:12]})")
 else:
@@ -634,11 +675,13 @@ else:
     log(f"CVL pass: {metrics['cvl_pass']}")
     with open(_GEN_DONE_PATH, "w") as _gf:
         _gf.write(GEN_KEY)
-save_metrics()''')
+save_metrics()""",
+)
 
 # R1. resume: metrics anteriores + BEST restaurados no arranque
-patch('''           "teacher_kernel": "guzzbr/draw-page-clean-train-v2"}''',
-      '''           "teacher_kernel": "guzzbr/draw-page-clean-train-v2"}
+patch(
+    """           "teacher_kernel": "guzzbr/draw-page-clean-train-v2"}""",
+    """           "teacher_kernel": "guzzbr/draw-page-clean-train-v2"}
 
 # ---- resume (v3): com DRAW_RESUME=1 e metrics.json presente
 # (restaurado pelo notebook), os registros anteriores voltam
@@ -660,16 +703,18 @@ if RESUME and os.path.exists(f"{W}/metrics.json"):
             f"(marcos={len(metrics.get('milestones', []))}, "
             f"best_ep={metrics.get('best', {}).get('epoch')})")
     except Exception as _re:
-        log(f"RESUME: metrics ilegíveis ({_re}); seguindo sem")''')
+        log(f"RESUME: metrics ilegíveis ({_re}); seguindo sem")""",
+)
 
 # R2. resume: estado completo salvo a cada epoca
-patch('''        try:
+patch(
+    """        try:
             torch.save({"student": student.state_dict(),
                         "ema": ema.state_dict(), "epoch": ep + 1},
                        f"{W}/ckpt_last.pt")
         except Exception as _ce:
-            log(f"ckpt falhou: {_ce}")''',
-      '''        try:
+            log(f"ckpt falhou: {_ce}")""",
+    """        try:
             torch.save({"student": student.state_dict(),
                         "ema": ema.state_dict(), "epoch": ep + 1},
                        f"{W}/ckpt_last.pt")
@@ -683,12 +728,14 @@ patch('''        try:
                         "epoch": ep + 1},
                        f"{W}/resume_state.pt")
         except Exception as _ce:
-            log(f"ckpt falhou: {_ce}")''')
+            log(f"ckpt falhou: {_ce}")""",
+)
 
 # R3. resume: retomada no inicio do laco de epocas
-patch('''    recs = []
-    for ep in range(epochs):''',
-      '''    recs = []
+patch(
+    """    recs = []
+    for ep in range(epochs):""",
+    """    recs = []
     _resume_ep = 0
     if RESUME and os.path.exists(f"{W}/resume_state.pt") \\
             and os.path.exists(f"{W}/ckpt_last.pt"):
@@ -713,14 +760,16 @@ patch('''    recs = []
             _resume_ep = int(_ck["epoch"])
             log(f"{tag}: RESUME da epoca {_resume_ep + 1} "
                 f"(ckpt epoca {_resume_ep}, gstep={gstep[0]})")
-    for ep in range(_resume_ep, epochs):''')
+    for ep in range(_resume_ep, epochs):""",
+)
 
 # R4. resume pos-treino: ckpt ja cobre todas as epocas
 # (sessao morreu no marco final/export) -> direto pro marco
-patch('''        _ck = torch.load(f"{W}/ckpt_last.pt",
+patch(
+    """        _ck = torch.load(f"{W}/ckpt_last.pt",
                          map_location="cpu", weights_only=False)
-        if int(_ck.get("epoch", 0)) < epochs:''',
-      '''        _ck = torch.load(f"{W}/ckpt_last.pt",
+        if int(_ck.get("epoch", 0)) < epochs:""",
+    """        _ck = torch.load(f"{W}/ckpt_last.pt",
                          map_location="cpu", weights_only=False)
         if int(_ck.get("epoch", 0)) >= epochs:
             student.load_state_dict(_ck["student"])
@@ -731,17 +780,20 @@ patch('''        _ck = torch.load(f"{W}/ckpt_last.pt",
                 f"direto pro marco final e export")
             milestone_eval(epochs, ema)
             return recs
-        if int(_ck.get("epoch", 0)) < epochs:''')
+        if int(_ck.get("epoch", 0)) < epochs:""",
+)
 
 # F1. fim de verdade: metrics marca a corrida como terminada
-patch('''except Exception as _be:
+patch(
+    """except Exception as _be:
     log(f"export do BEST falhou: {_be}")
-log("DONE")''',
-      '''except Exception as _be:
+log("DONE")""",
+    """except Exception as _be:
     log(f"export do BEST falhou: {_be}")
 metrics["finished"] = True
 save_metrics()
-log("DONE")''')
+log("DONE")""",
+)
 
 # =================================================================
 # v4: namespace do smoke no metrics (2026-11-04, decisao do
@@ -754,22 +806,27 @@ log("DONE")''')
 # na corrida completa COM as epocas planejadas cumpridas —
 # smoke fecha em smoke_finished.
 # =================================================================
-patch('           "teacher_kernel": "guzzbr/draw-page-clean-train-v2"}',
-      '           "teacher_kernel": "guzzbr/draw-page-clean-train-v2",\n'
-      '           "run_kind": ("smoke" if _CFG.get("smoke") else "full"),\n'
-      '           "planned_epochs": EPOCHS}')
+patch(
+    '           "teacher_kernel": "guzzbr/draw-page-clean-train-v2"}',
+    '           "teacher_kernel": "guzzbr/draw-page-clean-train-v2",\n'
+    '           "run_kind": ("smoke" if _CFG.get("smoke") else "full"),\n'
+    '           "planned_epochs": EPOCHS}',
+)
 
-patch('''        _prev_metrics = json.load(open(f"{W}/metrics.json"))''',
-      '''        _prev_metrics = json.load(open(f"{W}/metrics.json"))
+patch(
+    """        _prev_metrics = json.load(open(f"{W}/metrics.json"))""",
+    """        _prev_metrics = json.load(open(f"{W}/metrics.json"))
         if _prev_metrics.get("run_kind") == "smoke":
             log("RESUME: metrics de SMOKE ignorado (v4) — "
                 "smoke nao e progresso da corrida")
-            _prev_metrics = {}''')
+            _prev_metrics = {}""",
+)
 
-patch('''metrics["finished"] = True
+patch(
+    """metrics["finished"] = True
 save_metrics()
-log("DONE")''',
-      '''# ---- fim (v4): finished SO da corrida completa e SO com
+log("DONE")""",
+    """# ---- fim (v4): finished SO da corrida completa e SO com
 # as epocas planejadas cumpridas (completed_epochs fica no
 # metrics como prova); smoke fecha em smoke_finished.
 _done_eps = [int(_r.get("epoch", 0))
@@ -781,19 +838,22 @@ else:
     metrics["finished"] = bool(
         metrics["completed_epochs"] >= EPOCHS)
 save_metrics()
-log("DONE")''')
+log("DONE")""",
+)
 
 # ================= encaixe no repo (2026-11-05) =================
 # Patch 32 (repo): a config pode vir de --config <path> ou da env
 # DRAW_CFG, nao so de {DRAW_WORK}/cfg.json (o default historico
 # fica intacto quando nenhum dos dois e passado). E assim que os
 # lancadores finos apontam pras configs de training/configs/.
-patch('_cfg_path = os.path.join(W, "cfg.json")',
-      '_cfg_path = os.environ.get("DRAW_CFG", '
-      'os.path.join(W, "cfg.json"))\n'
-      'for _ai, _av in enumerate(sys.argv):\n'
-      '    if _av == "--config" and _ai + 1 < len(sys.argv):\n'
-      '        _cfg_path = sys.argv[_ai + 1]')
+patch(
+    '_cfg_path = os.path.join(W, "cfg.json")',
+    '_cfg_path = os.environ.get("DRAW_CFG", '
+    'os.path.join(W, "cfg.json"))\n'
+    "for _ai, _av in enumerate(sys.argv):\n"
+    '    if _av == "--config" and _ai + 1 < len(sys.argv):\n'
+    "        _cfg_path = sys.argv[_ai + 1]",
+)
 
 # Cabecalho do modulo no repo (comentario puro, nao executa):
 # o corpo historicamente nascia "apos o cabecalho do driver" do
@@ -831,5 +891,4 @@ src = HEADER + src
 
 with open(DST, "w") as f:
     f.write(src)
-print(f"OK: {n_patches} patches ancorados -> {DST} "
-      f"({len(src)} chars)")
+print(f"OK: {n_patches} patches ancorados -> {DST} ({len(src)} chars)")

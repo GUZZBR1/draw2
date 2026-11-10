@@ -90,8 +90,7 @@ def main():
     print(f"passadas medidas: {len(records)}")
     for key in ("queue_wait_s", "pass_s", "submit_to_publish_s"):
         median, p90 = _stats([r[key] for r in records])
-        print(f"{key}: mediana {median * 1000:.1f} ms, p90 "
-              f"{p90 * 1000:.1f} ms")
+        print(f"{key}: mediana {median * 1000:.1f} ms, p90 {p90 * 1000:.1f} ms")
     return 0
 
 

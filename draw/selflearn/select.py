@@ -17,7 +17,8 @@ W_IMPURITY = 0.20
 W_NOVELTY = 0.20
 STRATUM_BONUS = 0.15
 RISK_STRATA = frozenset(
-    {"pautado", "mao", "sombra", "movel_texturizado", "tinta_clara"})
+    {"pautado", "mao", "sombra", "movel_texturizado", "tinta_clara"}
+)
 
 
 def _score(item):
@@ -100,23 +101,21 @@ def rank_examples(items, per_session_cap=3, random_quota=0.2, seed=0):
             sampled = rng.sample(overflow, min(n_random, len(overflow)))
             for entry in sampled:
                 pick = dict(entry)
-                pick["reasons"] = list(entry["reasons"]) \
-                    + ["random_quota"]
+                pick["reasons"] = list(entry["reasons"]) + ["random_quota"]
                 picks.append(pick)
             keep = ranked[: len(ranked) - len(picks)]
         missing = n_random - len(picks)
         if missing > 0 and keep:
             chosen = rng.sample(keep, min(missing, len(keep)))
             chosen_ids = {id(entry) for entry in chosen}
-            keep = [entry for entry in keep
-                    if id(entry) not in chosen_ids]
+            keep = [entry for entry in keep if id(entry) not in chosen_ids]
             for entry in chosen:
                 pick = dict(entry)
-                pick["reasons"] = list(entry["reasons"]) \
-                    + ["random_quota"]
+                pick["reasons"] = list(entry["reasons"]) + ["random_quota"]
                 picks.append(pick)
     result = RankedExamples(keep + picks)
     result.random_quota_requested = n_random
     result.random_quota_unmet = n_random - sum(
-        1 for entry in result if "random_quota" in entry["reasons"])
+        1 for entry in result if "random_quota" in entry["reasons"]
+    )
     return result

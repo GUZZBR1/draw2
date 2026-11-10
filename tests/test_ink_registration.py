@@ -41,15 +41,22 @@ from draw import app as app_module  # noqa: E402
 from draw import ink_layers as ink_layers_module  # noqa: E402
 
 H, W = 60, 80
-Q0 = np.array(
-    [(0, 0), (W, 0), (W, H), (0, H)], dtype=np.float32
+Q0 = np.array([(0, 0), (W, 0), (W, H), (0, H)], dtype=np.float32)
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (None, False),
+        ("0", False),
+        ("false", False),
+        ("2", False),
+        ("1", True),
+        ("true", True),
+        (" YES ", True),
+        ("On", True),
+    ],
 )
-
-
-@pytest.mark.parametrize("value, expected", [
-    (None, False), ("0", False), ("false", False), ("2", False),
-    ("1", True), ("true", True), (" YES ", True), ("On", True),
-])
 def test_identity_chamfer_flag_is_explicit_opt_in(monkeypatch, value, expected):
     monkeypatch.delenv("DRAW_IDENTITY_CHAMFER", raising=False)
     if value is not None:
@@ -64,7 +71,10 @@ def test_identity_chamfer_measures_both_directions_and_all_coverages(monkeypatch
     prior[20, 10] = True
     seen[20, [10, 13, 16, 22, 30]] = True
     fields = ink_layers_module._identity_chamfer_fields(
-        seen, prior, "new_page", {"ecc_rejected": False},
+        seen,
+        prior,
+        "new_page",
+        {"ecc_rejected": False},
     )
     assert fields["chamfer_seen_to_reference_median_px"] == 6.0
     assert fields["chamfer_reference_to_seen_median_px"] == 0.0
@@ -91,20 +101,25 @@ def test_identity_chamfer_is_euclidean_and_coverage_is_inclusive():
 
 @pytest.mark.parametrize("seen_count, prior_count", [(0, 0), (1, 0), (0, 1)])
 def test_identity_chamfer_empty_sets_are_json_null_not_opencv_sentinels(
-    seen_count, prior_count,
+    seen_count,
+    prior_count,
 ):
     seen = np.zeros((10, 10), dtype=bool)
     prior = seen.copy()
     seen.flat[:seen_count] = True
     prior.flat[:prior_count] = True
     fields = ink_layers_module._identity_chamfer_fields(seen, prior, "new_page", {})
-    for direction, count in (("seen_to_reference", seen_count),
-                             ("reference_to_seen", prior_count)):
+    for direction, count in (
+        ("seen_to_reference", seen_count),
+        ("reference_to_seen", prior_count),
+    ):
         assert fields[f"chamfer_{direction}_median_px"] is None
         for k in (2, 4, 8, 16):
             assert fields[f"chamfer_{direction}_coverage_{k}px"] == (
                 0.0 if count else None
             )
+
+
 BLOCK_A = (slice(10, 20), slice(10, 20))
 BLOCK_B = (slice(35, 45), slice(55, 65))
 
@@ -144,17 +159,20 @@ class _WanderingInk:
 
     def ink_prob(self, _warped):
         self.calls += 1
-        return _shift(
-            _content(self.with_b), *self.offset
-        )
+        return _shift(_content(self.with_b), *self.offset)
 
 
 # Deslocamentos de geometria da sequencia: deriva de ida e
 # volta de ate 3 px, sustentada por algumas passadas em cada
 # degrau (o regime medido da cadeia rastreador+mediana).
 WANDER = (
-    [(0, 0)] * 4 + [(1, 0)] * 4 + [(2, 1)] * 4 + [(3, 1)] * 6
-    + [(2, 0)] * 4 + [(1, 0)] * 4 + [(0, 0)] * 4
+    [(0, 0)] * 4
+    + [(1, 0)] * 4
+    + [(2, 1)] * 4
+    + [(3, 1)] * 6
+    + [(2, 0)] * 4
+    + [(1, 0)] * 4
+    + [(0, 0)] * 4
 )
 
 
@@ -201,8 +219,11 @@ def test_registration_matrix_undoes_geometry_shift():
     matrix = app_module._registration_matrix(Q0, corners, (H, W))
     assert not app_module._registration_is_identity(matrix)
     registered = cv2.warpPerspective(
-        prob_pass, matrix, (W, H),
-        flags=cv2.INTER_LINEAR, borderValue=0.0,
+        prob_pass,
+        matrix,
+        (W, H),
+        flags=cv2.INTER_LINEAR,
+        borderValue=0.0,
     )
     inner = (slice(4, -4), slice(4, -4))
     assert np.max(np.abs(registered[inner] - pattern[inner])) < 1e-4
@@ -212,10 +233,8 @@ def test_registration_matrix_undoes_geometry_shift():
 def test_settled_ink_not_reprinted_under_wandering_geometry(
     monkeypatch,
 ):
-    monkeypatch.setattr(
-        ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
-    monkeypatch.setattr(
-        ink_layers_module, "_IDLE_PROBE_SECONDS", 0.02)
+    monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(ink_layers_module, "_IDLE_PROBE_SECONDS", 0.02)
     ink = _WanderingInk()
     worker = app_module._PageCleanWorker(ink).start()
     try:
@@ -225,9 +244,7 @@ def test_settled_ink_not_reprinted_under_wandering_geometry(
         assert got is not None
         _version, canvas = got
         expected = _static_confirmed(len(WANDER))
-        assert int(np.count_nonzero(canvas)) == int(
-            np.count_nonzero(expected)
-        )
+        assert int(np.count_nonzero(canvas)) == int(np.count_nonzero(expected))
         assert np.array_equal(canvas > 0, expected > 0)
     finally:
         worker.stop()
@@ -237,10 +254,8 @@ def test_settled_ink_not_reprinted_under_wandering_geometry(
 def test_new_ink_confirms_fast_under_wandering_geometry(
     monkeypatch,
 ):
-    monkeypatch.setattr(
-        ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
-    monkeypatch.setattr(
-        ink_layers_module, "_IDLE_PROBE_SECONDS", 0.02)
+    monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(ink_layers_module, "_IDLE_PROBE_SECONDS", 0.02)
     ink = _WanderingInk()
     worker = app_module._PageCleanWorker(ink).start()
     try:
@@ -275,10 +290,8 @@ def test_new_ink_confirms_fast_under_wandering_geometry(
 @pytest.mark.lento
 def test_moved_page_recovery_reuses_identical_canvas(monkeypatch):
     """Drop/reaparecimento com geometria nova e so re-registro."""
-    monkeypatch.setattr(
-        ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
-    monkeypatch.setattr(
-        ink_layers_module, "_IDLE_PROBE_SECONDS", 0.02)
+    monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(ink_layers_module, "_IDLE_PROBE_SECONDS", 0.02)
     ink = _WanderingInk()
     worker = app_module._PageCleanWorker(ink).start()
     try:
@@ -298,11 +311,11 @@ def test_moved_page_recovery_reuses_identical_canvas(monkeypatch):
         recovered = worker.poll(generation, 0)
         assert recovered is not None
         assert np.array_equal(recovered[1], canvas_before), (
-            "mover a mesma página deve reusar o canvas sem acumular "
-            "uma cópia deslocada"
+            "mover a mesma página deve reusar o canvas sem acumular uma cópia deslocada"
         )
         identity = next(
-            record for record in worker.telemetry_snapshot()["records"]
+            record
+            for record in worker.telemetry_snapshot()["records"]
             if record["generation"] == generation
             and record["page_identity_decision"] is not None
         )
@@ -320,10 +333,8 @@ def test_moved_page_recovery_reuses_identical_canvas(monkeypatch):
 @pytest.mark.lento
 def test_changed_page_content_starts_a_clean_canvas(monkeypatch):
     """Conteudo sem identidade com o anterior nao herda os tracos."""
-    monkeypatch.setattr(
-        ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
-    monkeypatch.setattr(
-        ink_layers_module, "_IDLE_PROBE_SECONDS", 0.02)
+    monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(ink_layers_module, "_IDLE_PROBE_SECONDS", 0.02)
 
     class _NextPageInk(_WanderingInk):
         next_page = False
@@ -359,7 +370,8 @@ def test_changed_page_content_starts_a_clean_canvas(monkeypatch):
         assert np.count_nonzero(provisional[BLOCK_A]) == 0
         assert np.count_nonzero(provisional[BLOCK_B]) == 100
         identity = next(
-            record for record in worker.telemetry_snapshot()["records"]
+            record
+            for record in worker.telemetry_snapshot()["records"]
             if record["generation"] == generation
             and record["page_identity_decision"] == "new_page"
         )
@@ -377,33 +389,25 @@ def test_without_corners_evidence_stays_unregistered(monkeypatch):
     """Sem cantos, o comportamento antigo segue: a geometria
     que anda re-projeta e a confirmada cresce — o registro e
     dos cantos, nao um efeito colateral da trabalhadora."""
-    monkeypatch.setattr(
-        ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
-    monkeypatch.setattr(
-        ink_layers_module, "_IDLE_PROBE_SECONDS", 0.02)
+    monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(ink_layers_module, "_IDLE_PROBE_SECONDS", 0.02)
     ink = _WanderingInk()
     worker = app_module._PageCleanWorker(ink).start()
     try:
         generation = worker.new_generation()
-        _drive(
-            worker, generation, ink, WANDER, with_corners=False
-        )
+        _drive(worker, generation, ink, WANDER, with_corners=False)
         got = worker.poll(generation, 0)
         assert got is not None
         grown = int(np.count_nonzero(got[1]))
-        assert grown > int(
-            np.count_nonzero(_static_confirmed(len(WANDER)))
-        )
+        assert grown > int(np.count_nonzero(_static_confirmed(len(WANDER))))
     finally:
         worker.stop()
 
 
 @pytest.mark.lento
 def test_malformed_corners_are_ignored(monkeypatch):
-    monkeypatch.setattr(
-        ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
-    monkeypatch.setattr(
-        ink_layers_module, "_IDLE_PROBE_SECONDS", 0.02)
+    monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(ink_layers_module, "_IDLE_PROBE_SECONDS", 0.02)
     ink = _WanderingInk()
     worker = app_module._PageCleanWorker(ink).start()
     try:

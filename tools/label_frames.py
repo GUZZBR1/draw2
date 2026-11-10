@@ -66,8 +66,7 @@ def label_frames(frames_dir, output_dir):
     )
     total = len(labeled) + len(rejected)
     print(
-        f"Resumo: {total} frames, {len(labeled)} rotulados, "
-        f"{len(rejected)} rejeitados."
+        f"Resumo: {total} frames, {len(labeled)} rotulados, {len(rejected)} rejeitados."
     )
     print(f"Rotulos em {output_dir / 'labels.json'}")
     return labels

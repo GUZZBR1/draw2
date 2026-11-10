@@ -77,9 +77,7 @@ def test_hysteresis_enters_at_nine_of_twenty_and_leaves_at_four():
     # tira a tinta: 4 de 20 visíveis ainda seguram o pixel
     step = 0
     for step in range(1, 17):
-        acc.update(
-            _probe_mask(shape, visible=False), visible, t_capture_ms=2000 + step
-        )
+        acc.update(_probe_mask(shape, visible=False), visible, t_capture_ms=2000 + step)
         if not acc.state[100, 100]:
             break
     kept = step

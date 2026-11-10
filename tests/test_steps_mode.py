@@ -82,8 +82,12 @@ def test_ram_buffers_amostram_shapes_do_loop(tmp_path):
     a = _write_pair(tmp_path, "a")
     b = _write_pair(tmp_path, "b")
     replay = RAMImageBuffer.from_pairs(
-        [(a[0], a[1], 1.0), (b[0], b[1], 0.5)], size, "replay",
-        T.load_image_rgb, T.load_mask, cv2,
+        [(a[0], a[1], 1.0), (b[0], b[1], 0.5)],
+        size,
+        "replay",
+        T.load_image_rgb,
+        T.load_mask,
+        cv2,
     )
     assert len(replay) == 2
     images, masks, weights, presence = replay.sample(5, torch.device("cpu"))
@@ -157,5 +161,4 @@ def test_merge_interpolacao_extremos_e_nao_float(tmp_path):
     # tensor não-float vem do alvo, nunca é interpolado
     assert int(mhalf["n"]) == 9
     with pytest.raises(ValueError):
-        mod.check_compatible(base, {"w": torch.zeros(3, 3),
-                                    "n": torch.tensor(1)})
+        mod.check_compatible(base, {"w": torch.zeros(3, 3), "n": torch.tensor(1)})

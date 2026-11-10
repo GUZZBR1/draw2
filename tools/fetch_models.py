@@ -28,9 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 MODELS_DIR = REPO_ROOT / "models"
 MANIFEST_PATH = MODELS_DIR / "MANIFEST.json"
 RELEASE_TAG = "models-2026-11-06"
-DEFAULT_BASE_URL = (
-    "https://github.com/santleme/draw/releases/download/" + RELEASE_TAG
-)
+DEFAULT_BASE_URL = "https://github.com/santleme/draw/releases/download/" + RELEASE_TAG
 _ENV_BASE_URL = "DRAW_MODELS_BASE_URL"
 _CHUNK = 1 << 20
 
@@ -52,9 +50,7 @@ def load_entries(manifest_path=MANIFEST_PATH):
     data = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
     models = data.get("models")
     if not isinstance(models, dict) or not models:
-        raise RuntimeError(
-            f"manifesto sem modelos registrados: {manifest_path}"
-        )
+        raise RuntimeError(f"manifesto sem modelos registrados: {manifest_path}")
     return models
 
 
@@ -69,14 +65,13 @@ def matches(path, entry):
 
 
 def _open(url):
-    request = urllib.request.Request(
-        url, headers={"User-Agent": "draw-fetch-models"}
-    )
+    request = urllib.request.Request(url, headers={"User-Agent": "draw-fetch-models"})
     return urllib.request.urlopen(request)
 
 
-def ensure_model(name, entry, models_dir=MODELS_DIR,
-                 base_url=DEFAULT_BASE_URL, opener=None):
+def ensure_model(
+    name, entry, models_dir=MODELS_DIR, base_url=DEFAULT_BASE_URL, opener=None
+):
     """Garante o modelo em models_dir. Devolve 'ok' se já estava
     presente e conferindo, 'downloaded' se baixou e instalou.
     Levanta RuntimeError se o arquivo baixado não conferir: nesse
@@ -124,11 +119,12 @@ def check_all(models_dir=MODELS_DIR, manifest_path=MANIFEST_PATH):
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Baixa os modelos oficiais registrados em "
-                    "models/MANIFEST.json a partir da Release "
-                    f"{RELEASE_TAG}."
+        "models/MANIFEST.json a partir da Release "
+        f"{RELEASE_TAG}."
     )
     parser.add_argument(
-        "--check", action="store_true",
+        "--check",
+        action="store_true",
         help="so confere os arquivos presentes; nao baixa nada.",
     )
     args = parser.parse_args(argv)

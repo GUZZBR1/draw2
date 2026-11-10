@@ -14,9 +14,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-sys.path.insert(
-    0, str(Path(__file__).resolve().parent.parent / "tools")
-)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
 import fetch_models  # noqa: E402
 
@@ -35,6 +33,7 @@ def _opener_for(payloads, calls=None):
             calls.append(url)
         name = url.rstrip("/").rsplit("/", 1)[-1]
         return io.BytesIO(payloads[name])
+
     return _open
 
 
@@ -42,7 +41,9 @@ def test_download_installs_only_after_matching(tmp_path):
     payload = b"pesos-de-mentira"
     entry = _entry(payload)
     status = fetch_models.ensure_model(
-        "m.onnx", entry, models_dir=tmp_path,
+        "m.onnx",
+        entry,
+        models_dir=tmp_path,
         base_url="https://example.invalid/rel",
         opener=_opener_for({"m.onnx": payload}),
     )
@@ -55,14 +56,26 @@ def test_second_run_is_idempotent_and_downloads_nothing(tmp_path):
     entry = _entry(payload)
     calls = []
     opener = _opener_for({"m.onnx": payload}, calls)
-    assert fetch_models.ensure_model(
-        "m.onnx", entry, models_dir=tmp_path,
-        base_url="https://example.invalid/rel", opener=opener,
-    ) == "downloaded"
-    assert fetch_models.ensure_model(
-        "m.onnx", entry, models_dir=tmp_path,
-        base_url="https://example.invalid/rel", opener=opener,
-    ) == "ok"
+    assert (
+        fetch_models.ensure_model(
+            "m.onnx",
+            entry,
+            models_dir=tmp_path,
+            base_url="https://example.invalid/rel",
+            opener=opener,
+        )
+        == "downloaded"
+    )
+    assert (
+        fetch_models.ensure_model(
+            "m.onnx",
+            entry,
+            models_dir=tmp_path,
+            base_url="https://example.invalid/rel",
+            opener=opener,
+        )
+        == "ok"
+    )
     assert len(calls) == 1
 
 
@@ -70,7 +83,9 @@ def test_divergent_download_is_refused_and_installs_nothing(tmp_path):
     entry = _entry(b"payload-certo")
     with pytest.raises(RuntimeError):
         fetch_models.ensure_model(
-            "m.onnx", entry, models_dir=tmp_path,
+            "m.onnx",
+            entry,
+            models_dir=tmp_path,
             base_url="https://example.invalid/rel",
             opener=_opener_for({"m.onnx": b"payload-errado"}),
         )
@@ -83,7 +98,9 @@ def test_divergent_local_file_is_replaced_by_verified_download(tmp_path):
     entry = _entry(payload)
     (tmp_path / "m.onnx").write_bytes(b"arquivo-velho-errado")
     status = fetch_models.ensure_model(
-        "m.onnx", entry, models_dir=tmp_path,
+        "m.onnx",
+        entry,
+        models_dir=tmp_path,
         base_url="https://example.invalid/rel",
         opener=_opener_for({"m.onnx": payload}),
     )

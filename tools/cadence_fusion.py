@@ -97,14 +97,19 @@ def run_cadence(fps):
 
 
 def main():
-    print("Parametros do One Euro identicos nas tres cadencias: "
-          "mincutoff=0,5 Hz, beta=0,002, dcutoff=1,0 Hz")
-    print("Ruido sintetico: gaussiano, std %.1f px/eixo, semente 123"
-          % NOISE_STD_PX)
-    print("Jitter: std no trecho parado t em [0,5; 2,0). "
-          "Atraso: t50 do degrau de +150 px em y em t=7,5 s (n=1 degrau).\n")
-    header = ("cadencia | n total | n parado | jitter cru x/y (px) | "
-              "jitter filtrado x/y (px) | atraso t50")
+    print(
+        "Parametros do One Euro identicos nas tres cadencias: "
+        "mincutoff=0,5 Hz, beta=0,002, dcutoff=1,0 Hz"
+    )
+    print("Ruido sintetico: gaussiano, std %.1f px/eixo, semente 123" % NOISE_STD_PX)
+    print(
+        "Jitter: std no trecho parado t em [0,5; 2,0). "
+        "Atraso: t50 do degrau de +150 px em y em t=7,5 s (n=1 degrau).\n"
+    )
+    header = (
+        "cadencia | n total | n parado | jitter cru x/y (px) | "
+        "jitter filtrado x/y (px) | atraso t50"
+    )
     print(header)
     print("-" * len(header))
     for fps in (3, 10, 30):

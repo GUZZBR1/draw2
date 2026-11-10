@@ -50,10 +50,15 @@ def _check_real(metrics, label):
             raise ValueError(f"{label}: metrica real sem {field!r}")
 
 
-def judge_candidate(candidate_real, baseline_real, dibco=None,
-                    min_sessions=MIN_HOLDOUT_SESSIONS,
-                    min_pages=MIN_HOLDOUT_PAGES,
-                    promote_margin=0.0, worst_group_tolerance=0.0):
+def judge_candidate(
+    candidate_real,
+    baseline_real,
+    dibco=None,
+    min_sessions=MIN_HOLDOUT_SESSIONS,
+    min_pages=MIN_HOLDOUT_PAGES,
+    promote_margin=0.0,
+    worst_group_tolerance=0.0,
+):
     """Julga um candidato contra o incumbente no replay real.
 
     candidate_real/baseline_real: dicts com primary (metrica
@@ -105,37 +110,42 @@ def judge_candidate(candidate_real, baseline_real, dibco=None,
             f"{sessions} sessoes e {pages} paginas; o minimo "
             f"pre-registrado e {min_sessions} sessoes e "
             f"{min_pages} paginas. Sem poder estatistico, nao ha "
-            f"PASS - coletar mais sessoes seladas antes de julgar.")
+            f"PASS - coletar mais sessoes seladas antes de julgar."
+        )
         return result
 
-    if candidate_real["primary"] < (
-            baseline_real["primary"] + promote_margin):
+    if candidate_real["primary"] < (baseline_real["primary"] + promote_margin):
         result["verdict"] = REJECT
         result["reasons"].append(
             f"replay real: primario do candidato "
             f"({candidate_real['primary']}) abaixo do incumbente "
             f"+ margem ({baseline_real['primary']} + "
-            f"{promote_margin})")
+            f"{promote_margin})"
+        )
     if candidate_real["worst_group"] < (
-            baseline_real["worst_group"] - worst_group_tolerance):
+        baseline_real["worst_group"] - worst_group_tolerance
+    ):
         if result["verdict"] is None:
             result["verdict"] = REJECT
         result["reasons"].append(
             f"pior grupo regrediu: {candidate_real['worst_group']} "
             f"contra {baseline_real['worst_group']} do incumbente "
-            f"(tolerancia {worst_group_tolerance})")
+            f"(tolerancia {worst_group_tolerance})"
+        )
 
     if result["verdict"] is None:
         result["verdict"] = PROMOTE
         result["reasons"].append(
             "replay real selado: primario >= incumbente + margem "
             "e pior grupo sem regressao, com n suficiente "
-            f"({sessions} sessoes, {pages} paginas)")
+            f"({sessions} sessoes, {pages} paginas)"
+        )
 
     if diagnostic is not None and result["verdict"] == REJECT:
         result["reasons"].append(
             "DIBCO e diagnostico e nao entra no veredito: vencer "
-            "nele e perder no real e o padrao da rodada 4")
+            "nele e perder no real e o padrao da rodada 4"
+        )
     return result
 
 
@@ -147,10 +157,13 @@ BOOTSTRAP_ALPHA = 0.05
 BOOTSTRAP_SEED = 20261106
 
 
-def session_bootstrap_delta(candidate_by_session, baseline_by_session,
-                            n_boot=BOOTSTRAP_RESAMPLES,
-                            alpha=BOOTSTRAP_ALPHA,
-                            seed=BOOTSTRAP_SEED):
+def session_bootstrap_delta(
+    candidate_by_session,
+    baseline_by_session,
+    n_boot=BOOTSTRAP_RESAMPLES,
+    alpha=BOOTSTRAP_ALPHA,
+    seed=BOOTSTRAP_SEED,
+):
     """Delta medio candidato - base, com IC por bootstrap de sessao.
 
     Os dois lados sao dicts sessao -> escore (maior melhor) sobre
@@ -169,10 +182,12 @@ def session_bootstrap_delta(candidate_by_session, baseline_by_session,
         raise ValueError(
             "bootstrap por sessao exige as mesmas sessoes dos dois "
             f"lados; candidato tem {sorted(candidate_sessions)}, "
-            f"base tem {sorted(baseline_sessions)}")
+            f"base tem {sorted(baseline_sessions)}"
+        )
     sessions = sorted(candidate_sessions)
-    deltas = [float(candidate_by_session[s]) - float(baseline_by_session[s])
-              for s in sessions]
+    deltas = [
+        float(candidate_by_session[s]) - float(baseline_by_session[s]) for s in sessions
+    ]
     n = len(deltas)
     delta = sum(deltas) / n
     if n == 0:
@@ -190,10 +205,14 @@ def session_bootstrap_delta(candidate_by_session, baseline_by_session,
     return delta, means[low_idx], means[high_idx]
 
 
-def evaluate_rounds(rounds, min_sessions=MIN_HOLDOUT_SESSIONS,
-                    stop_after=STOP_ROUNDS_WITHOUT_GAIN,
-                    n_boot=BOOTSTRAP_RESAMPLES, alpha=BOOTSTRAP_ALPHA,
-                    seed=BOOTSTRAP_SEED):
+def evaluate_rounds(
+    rounds,
+    min_sessions=MIN_HOLDOUT_SESSIONS,
+    stop_after=STOP_ROUNDS_WITHOUT_GAIN,
+    n_boot=BOOTSTRAP_RESAMPLES,
+    alpha=BOOTSTRAP_ALPHA,
+    seed=BOOTSTRAP_SEED,
+):
     """Aplica a regra de parada a uma sequencia de rodadas julgadas.
 
     rounds: lista ordenada de dicts, um por rodada do loop, com
@@ -237,7 +256,8 @@ def evaluate_rounds(rounds, min_sessions=MIN_HOLDOUT_SESSIONS,
                 raise ValueError(
                     f"rodada {label}: a primeira rodada precisa de "
                     "baseline_by_session (o incumbente de quem o "
-                    "campeao herda os escores)")
+                    "campeao herda os escores)"
+                )
             champion_scores = entry["baseline_by_session"]
             champion_sessions = set(champion_scores)
             result["champion_round"] = "incumbente"
@@ -251,16 +271,18 @@ def evaluate_rounds(rounds, min_sessions=MIN_HOLDOUT_SESSIONS,
                 f"rodada {label}: INCONCLUSIVA - {len(candidate)} "
                 f"sessoes seladas abaixo do minimo pre-registrado "
                 f"({min_sessions}); nao conta como ganho nem como "
-                "falta de ganho")
+                "falta de ganho"
+            )
             continue
         if set(candidate) != champion_sessions:
             raise ValueError(
                 f"rodada {label}: sessoes do candidato diferem do "
                 "holdout selado das rodadas anteriores; holdout que "
-                "muda no meio da sequencia e outro pre-registro")
+                "muda no meio da sequencia e outro pre-registro"
+            )
         delta, ci_low, ci_high = session_bootstrap_delta(
-            candidate, champion_scores, n_boot=n_boot, alpha=alpha,
-            seed=seed)
+            candidate, champion_scores, n_boot=n_boot, alpha=alpha, seed=seed
+        )
         record["delta"] = delta
         record["ci"] = [ci_low, ci_high]
         if ci_low > 0:
@@ -271,7 +293,8 @@ def evaluate_rounds(rounds, min_sessions=MIN_HOLDOUT_SESSIONS,
             result["reasons"].append(
                 f"rodada {label}: ganho sobre o campeao (delta "
                 f"{delta:.4f}, IC [{ci_low:.4f}, {ci_high:.4f}] "
-                "exclui o zero); candidato vira o campeao")
+                "exclui o zero); candidato vira o campeao"
+            )
         else:
             record["outcome"] = "NO_GAIN"
             result["consecutive_no_gain"] += 1
@@ -280,14 +303,16 @@ def evaluate_rounds(rounds, min_sessions=MIN_HOLDOUT_SESSIONS,
                 f"{delta:.4f}, IC [{ci_low:.4f}, {ci_high:.4f}] "
                 f"inclui o zero); "
                 f"{result['consecutive_no_gain']} rodada(s) seguida(s) "
-                "sem ganho")
+                "sem ganho"
+            )
         result["per_round"].append(record)
         if result["consecutive_no_gain"] >= stop_after:
             result["should_stop"] = True
             result["reasons"].append(
                 f"PARADA: {stop_after} rodadas seguidas sem ganho no "
                 "holdout selado - o proximo insumo e sessao real "
-                "nova, nao outra rodada sobre o mesmo material")
+                "nova, nao outra rodada sobre o mesmo material"
+            )
             break
     return result
 
@@ -325,12 +350,11 @@ def format_verdict(result):
         f"primario: candidato {real['candidate_primary']} x "
         f"incumbente {real['baseline_primary']}; pior grupo: "
         f"{real['candidate_worst_group']} x "
-        f"{real['baseline_worst_group']}")
+        f"{real['baseline_worst_group']}"
+    )
     diagnostic = result.get("dibco_diagnostic")
     if diagnostic is not None:
-        lines.append(
-            f"DIBCO (so diagnostico, nao promove): IoU "
-            f"{diagnostic['iou']}")
+        lines.append(f"DIBCO (so diagnostico, nao promove): IoU {diagnostic['iou']}")
     for reason in result["reasons"]:
         lines.append(f"- {reason}")
     return "\n".join(lines)

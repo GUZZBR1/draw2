@@ -115,8 +115,7 @@ def _corner_distance(current, detected):
 
 def _blend_corners(current, detected):
     return (
-        (1.0 - _SHEET_BLEND_ALPHA) * current
-        + _SHEET_BLEND_ALPHA * detected
+        (1.0 - _SHEET_BLEND_ALPHA) * current + _SHEET_BLEND_ALPHA * detected
     ).astype(np.float32)
 
 
@@ -162,16 +161,11 @@ class _SheetTracker:
     def should_detect(self, frame_number):
         if self.corners is not None:
             self._absent_calls = 0
-            return (
-                self.missed
-                or frame_number % _SHEET_DETECT_INTERVAL == 0
-            )
+            return self.missed or frame_number % _SHEET_DETECT_INTERVAL == 0
         self._absent_calls += 1
         if self._absent_calls <= _SHEET_ABSENT_BACKOFF_CALLS:
             return True
-        return (
-            self._absent_calls % _SHEET_ABSENT_BACKOFF_INTERVAL == 0
-        )
+        return self._absent_calls % _SHEET_ABSENT_BACKOFF_INTERVAL == 0
 
     def _confirm(self, corners, verdict, now):
         # Confirmacao que SALTA (primeira folha ou candidato a
@@ -193,9 +187,7 @@ class _SheetTracker:
 
     def _filtered(self, detected):
         """Mediana das ultimas deteccoes: apaga o salto de 1 frame."""
-        self._recent.append(
-            np.asarray(detected, dtype=np.float32).copy()
-        )
+        self._recent.append(np.asarray(detected, dtype=np.float32).copy())
         return np.median(np.stack(self._recent), axis=0).astype(np.float32)
 
     def update(self, detected, verdict, ran_detection, now):
@@ -231,8 +223,7 @@ class _SheetTracker:
                 event = "seen"
             elif (
                 self.corners is not None
-                and _corner_distance(self.corners, detected)
-                <= _SHEET_DEADBAND_PX
+                and _corner_distance(self.corners, detected) <= _SHEET_DEADBAND_PX
             ):
                 # Dentro da banda morta: presenca confirmada, quad
                 # NAO se move. Folha parada fica bit-estavel em vez
@@ -241,12 +232,9 @@ class _SheetTracker:
                 event = "seen"
             elif (
                 self.corners is not None
-                and _corner_distance(self.corners, detected)
-                <= _SHEET_NEAR_LIMIT_PX
+                and _corner_distance(self.corners, detected) <= _SHEET_NEAR_LIMIT_PX
             ):
-                self._confirm(
-                    _blend_corners(self.corners, detected), verdict, now
-                )
+                self._confirm(_blend_corners(self.corners, detected), verdict, now)
                 event = "seen"
             else:
                 # Salto de posicao ou candidato ainda sem trava.
@@ -370,22 +358,30 @@ def _lk_track_corners(prev_gray, next_gray, corners):
     confiavel (ponto perdido, ida-e-volta inconsistente ou salto
     maior que _LK_MAX_STEP_PX)."""
     points = np.asarray(corners, dtype=np.float32).reshape(-1, 1, 2)
-    criteria = (
-        cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01
-    )
+    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01)
     # Janela 31x31 e piramide de 2 niveis: com 21x21 e 3 niveis, a
     # volta da checagem divergia em janelas de textura repetitiva
     # mesmo com a ida perfeita (medido no teste sintetico denso e
     # na taxa de rejeicao da validacao em video real).
     tracked, status, _err = cv2.calcOpticalFlowPyrLK(
-        prev_gray, next_gray, points, None,
-        winSize=(31, 31), maxLevel=2, criteria=criteria,
+        prev_gray,
+        next_gray,
+        points,
+        None,
+        winSize=(31, 31),
+        maxLevel=2,
+        criteria=criteria,
     )
     if tracked is None or not np.all(status == 1):
         return None
     back, status_back, _err_b = cv2.calcOpticalFlowPyrLK(
-        next_gray, prev_gray, tracked, None,
-        winSize=(31, 31), maxLevel=2, criteria=criteria,
+        next_gray,
+        prev_gray,
+        tracked,
+        None,
+        winSize=(31, 31),
+        maxLevel=2,
+        criteria=criteria,
     )
     if back is None or not np.all(status_back == 1):
         return None

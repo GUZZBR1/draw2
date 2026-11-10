@@ -5,6 +5,7 @@ O checkpoint antigo nao tem a cabeca de presenca (nova) e pode ter
 tensores de forma incompativel; a carga tem que copiar o que casa,
 manter o resto fresco e relatar os tres grupos — nunca falhar estrito.
 """
+
 import sys
 from pathlib import Path
 
@@ -45,8 +46,10 @@ def test_warm_init_copies_matching_and_reports(tmp_path):
 
 def test_warm_init_skips_mismatched_shape(tmp_path):
     src = _Tiny(with_head=False)
-    bad = {k: (v.clone() if k != "body.weight" else torch.zeros(7, 7))
-           for k, v in src.state_dict().items()}
+    bad = {
+        k: (v.clone() if k != "body.weight" else torch.zeros(7, 7))
+        for k, v in src.state_dict().items()
+    }
     ckpt = tmp_path / "bad.pt"
     torch.save(bad, ckpt)  # state_dict puro, sem invólucro
 

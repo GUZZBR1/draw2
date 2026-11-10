@@ -5,6 +5,7 @@ Layout images/masks (config/notebook) e layout plano do gerador
 Regressão da divergência encontrada no QA do neural-seg-v1:
 o treino rejeitava a saída do gerador.
 """
+
 import sys
 from pathlib import Path
 
@@ -49,7 +50,9 @@ def test_flat_generator_layout(tmp_path):
     pairs = pair_images_masks(split)
     assert len(pairs) == 1
     assert pairs[0][1].name == "scene_train_0000_mask.png"
-    assert pairs[0][2] is not None and pairs[0][2].name == "scene_train_0000_ink_full.png"
+    assert (
+        pairs[0][2] is not None and pairs[0][2].name == "scene_train_0000_ink_full.png"
+    )
 
 
 def test_onnx_export_wrapper_resizes_logits_to_input_contract():
@@ -90,7 +93,7 @@ def test_training_evaluate_aggregates_ink_tolerance_over_every_image():
             return self
 
         def __call__(self, pixel_values):
-            return types.SimpleNamespace(logits=logits[:pixel_values.shape[0]])
+            return types.SimpleNamespace(logits=logits[: pixel_values.shape[0]])
 
     images = torch.zeros((2, 3, 8, 8))
     metrics = evaluate(FixedModel(), [(images, targets)], "cpu")
@@ -104,6 +107,7 @@ def test_flat_layout_missing_mask_fails_instead_of_silently_dropping(tmp_path):
     split = tmp_path / "train"
     _write_img(split / "scene_train_0000.png")
     import pytest
+
     with pytest.raises(FileNotFoundError, match="máscara ausente"):
         pair_images_masks(split)
 
@@ -115,15 +119,14 @@ def test_split_manifest_rejects_source_leakage():
         }
     }
     import pytest
+
     with pytest.raises(ValueError, match="vazamento de fontes"):
         validate_split_manifest(manifest)
 
 
 def test_split_manifest_accepts_disjoint_base_hands():
     manifest = {
-        "splits": {
-            "hands": {"train": ["v0"], "val": ["v1"], "test": ["v2"]}
-        },
+        "splits": {"hands": {"train": ["v0"], "val": ["v1"], "test": ["v2"]}},
         "hand_base_splits": {"train": ["h0"], "val": ["h1"], "test": ["h2"]},
     }
     report = validate_split_manifest(manifest)
@@ -138,6 +141,7 @@ def test_onnx_delivery_requires_executed_successful_validation():
 
 def test_sample_weights_reduce_selected_sample_contribution():
     import pytest
+
     torch = pytest.importorskip("torch")
     if not hasattr(torch, "nn"):
         pytest.skip("PyTorch completo não está instalado")
@@ -148,9 +152,11 @@ def test_sample_weights_reduce_selected_sample_contribution():
     class_weights = torch.tensor([1.0, 2.0, 3.0, 10.0])
     separate = []
     for index in range(2):
-        separate.append(combined_loss(
-            logits[index:index + 1], target[index:index + 1], class_weights
-        ))
+        separate.append(
+            combined_loss(
+                logits[index : index + 1], target[index : index + 1], class_weights
+            )
+        )
     expected = (separate[0] + 0.25 * separate[1]) / 1.25
     actual = combined_loss(
         logits, target, class_weights, sample_weights=torch.tensor([1.0, 0.25])
@@ -161,6 +167,7 @@ def test_sample_weights_reduce_selected_sample_contribution():
 def test_evaluate_can_score_predictions_on_reference_resolution():
     import types
     import pytest
+
     torch = pytest.importorskip("torch")
     if not hasattr(torch, "zeros"):
         pytest.skip("PyTorch completo não está instalado")

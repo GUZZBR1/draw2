@@ -124,8 +124,7 @@ def pair_images_masks(split_dir):
 def _assert_disjoint_source_splits(named_splits, context):
     """Rejeita uma mesma fonte em train/val/test de um manifesto."""
     split_sets = {
-        split: set(named_splits.get(split, []))
-        for split in ("train", "val", "test")
+        split: set(named_splits.get(split, [])) for split in ("train", "val", "test")
     }
     for left, right in (("train", "val"), ("train", "test"), ("val", "test")):
         overlap = split_sets[left] & split_sets[right]
@@ -177,7 +176,9 @@ def validate_mask(mask):
     values = np.unique(mask)
     bad = [int(v) for v in values if v not in (0, 1, 2, 3, IGNORE_INDEX)]
     if bad:
-        raise ValueError(f"máscara com valores inválidos (permitidos: 0..3 e 255=ignorado): {bad}")
+        raise ValueError(
+            f"máscara com valores inválidos (permitidos: 0..3 e 255=ignorado): {bad}"
+        )
     return True
 
 
@@ -227,7 +228,8 @@ def per_class_metrics(pred, target):
         name: {
             metric: report[metric][name]
             for metric in ("iou", "dice", "precision", "recall")
-        } | {"support_px": report["support_px"][name]}
+        }
+        | {"support_px": report["support_px"][name]}
         for name in shared_metrics.CLASSES
     }
 
@@ -309,7 +311,7 @@ def _strip_wrapped_prefix(key):
     sem o prefixo, nos dois sentidos; sem isso o warm init carrega 0
     tensores em silêncio (rodada 1 do loop, 2026-11-07: 0/208).
     """
-    return key[len("base."):] if key.startswith("base.") else key
+    return key[len("base.") :] if key.startswith("base.") else key
 
 
 def load_init_checkpoint(model, path, only_prefixes=None):
@@ -342,9 +344,7 @@ def load_init_checkpoint(model, path, only_prefixes=None):
     if only_prefixes:
         prefixes = tuple(only_prefixes)
         raw_by_bare = {
-            key: value
-            for key, value in raw_by_bare.items()
-            if key.startswith(prefixes)
+            key: value for key, value in raw_by_bare.items() if key.startswith(prefixes)
         }
     target = model.state_dict()
     matched = {}
@@ -452,7 +452,9 @@ def presence_loss(
     pw = None
     if pos_weight is not None:
         pw = torch.as_tensor(
-            [float(pos_weight)], dtype=presence_logit.dtype, device=presence_logit.device
+            [float(pos_weight)],
+            dtype=presence_logit.dtype,
+            device=presence_logit.device,
         )
     per_sample = F.binary_cross_entropy_with_logits(
         presence_logit, targets, reduction="none", pos_weight=pw
@@ -743,9 +745,7 @@ def collate_with_presence(items):
         elif len(item) == 4:
             img, mask, weight, target = item
         else:
-            raise ValueError(
-                f"item de treino com {len(item)} campos (esperado 3 ou 4)"
-            )
+            raise ValueError(f"item de treino com {len(item)} campos (esperado 3 ou 4)")
         images.append(img)
         masks.append(mask)
         weights.append(float(weight))
@@ -844,8 +844,12 @@ def build_pair_dataset(data_dir, split, cfg):
             if change is None:
                 raise FileNotFoundError(f"change ilegível: {cb}")
             change = cv2.resize(change, (size, size), interpolation=cv2.INTER_NEAREST)
-            return img_a, mask_a, img_b, mask_b, torch.from_numpy(
-                (change > 0).astype(np.uint8)
+            return (
+                img_a,
+                mask_a,
+                img_b,
+                mask_b,
+                torch.from_numpy((change > 0).astype(np.uint8)),
             )
 
     return PairDataset()
@@ -933,16 +937,16 @@ def build_real_pair_dataset(pairs_dir, cfg, split="train", augment=False):
             row = rows[i]
             img_a, mask_a = load_frame(row["frame_a"], row["mask_a"])
             img_b, mask_b = load_frame(row["frame_b"], row["mask_b"])
-            change = cv2.imread(
-                str(pairs_dir / row["change"]), cv2.IMREAD_GRAYSCALE
-            )
+            change = cv2.imread(str(pairs_dir / row["change"]), cv2.IMREAD_GRAYSCALE)
             if change is None:
                 raise FileNotFoundError(f"change ilegível: {row['change']}")
-            change = cv2.resize(
-                change, (size, size), interpolation=cv2.INTER_NEAREST
-            )
-            return img_a, mask_a, img_b, mask_b, torch.from_numpy(
-                (change > 0).astype(np.uint8)
+            change = cv2.resize(change, (size, size), interpolation=cv2.INTER_NEAREST)
+            return (
+                img_a,
+                mask_a,
+                img_b,
+                mask_b,
+                torch.from_numpy((change > 0).astype(np.uint8)),
             )
 
     first = load_image_rgb(pairs_dir / rows[0]["frame_a"])
@@ -1162,8 +1166,7 @@ def combined_loss(
     return base
 
 
-def masked_temporal_consistency_loss(logits_a, logits_b, change,
-                                     mode="mse", trim=0.0):
+def masked_temporal_consistency_loss(logits_a, logits_b, change, mode="mse", trim=0.0):
     """Consistência temporal MASCARADA entre dois frames da mesma cena.
 
     Penaliza a predição que muda onde o rótulo NÃO mudou:
@@ -1459,7 +1462,10 @@ def probe_batch_size(
                 logits = _model_logits(model, images)
                 if logits.shape[-2:] != masks.shape[-2:]:
                     logits = F.interpolate(
-                        logits, size=masks.shape[-2:], mode="bilinear", align_corners=False
+                        logits,
+                        size=masks.shape[-2:],
+                        mode="bilinear",
+                        align_corners=False,
                     )
                 loss = combined_loss(
                     logits, masks, class_weights, sample_weights=sample_weights
@@ -1511,7 +1517,9 @@ def probe_batch_size(
     return chosen, report
 
 
-def utilization_receipt(torch, device, epoch_s, steps, batch_size, precision, probe_report=None):
+def utilization_receipt(
+    torch, device, epoch_s, steps, batch_size, precision, probe_report=None
+):
     """Recibo de utilização da 1ª época (mesmo espírito do receipt do TPU).
 
     Tempo/passo e amostras/s sempre; em CUDA, pico de VRAM via torch.cuda
@@ -1523,7 +1531,9 @@ def utilization_receipt(torch, device, epoch_s, steps, batch_size, precision, pr
         "epoch": 0,
         "epoch_s": round(float(epoch_s), 1),
         "s_per_step": round(float(epoch_s) / steps, 3),
-        "samples_s": round(steps * batch_size / float(epoch_s), 2) if epoch_s > 0 else None,
+        "samples_s": round(steps * batch_size / float(epoch_s), 2)
+        if epoch_s > 0
+        else None,
         "batch_size": int(batch_size),
         "precision": precision,
         "device": str(device),
@@ -1700,8 +1710,11 @@ def train_one_epoch(
                         presence_neg_n += int((~pos_sel).sum())
             if use_pair and consistency_weight > 0.0:
                 loss = loss + consistency_weight * masked_temporal_consistency_loss(
-                    logits[:half], logits[half:], change,
-                    mode=consistency_mode, trim=consistency_trim,
+                    logits[:half],
+                    logits[half:],
+                    change,
+                    mode=consistency_mode,
+                    trim=consistency_trim,
                 )
                 if temporal_area_weight > 0.0:
                     loss = loss + temporal_area_weight * temporal_area_loss(
@@ -1715,9 +1728,8 @@ def train_one_epoch(
         else:
             scaled_loss.backward()
         should_step = (
-            (batch_index + 1) % accumulation_steps == 0
-            or batch_index + 1 == num_batches
-        )
+            batch_index + 1
+        ) % accumulation_steps == 0 or batch_index + 1 == num_batches
         if should_step:
             did_step = True
             if scaler is not None:
@@ -1835,8 +1847,14 @@ def train_steps(
     model.train()
     total = torch.zeros((), device=device)
     n = 0
-    pstats = {"total": 0.0, "n": 0, "pos_sum": 0.0, "pos_n": 0,
-              "neg_sum": 0.0, "neg_n": 0}
+    pstats = {
+        "total": 0.0,
+        "n": 0,
+        "pos_sum": 0.0,
+        "pos_n": 0,
+        "neg_sum": 0.0,
+        "neg_n": 0,
+    }
     device_type = torch.device(device).type
 
     phase_acc: dict = {}
@@ -1856,19 +1874,22 @@ def train_steps(
         finally:
             if device_type == "cuda":
                 torch.cuda.synchronize()
-            phase_acc[name] = phase_acc.get(name, 0.0) + (
-                _time.perf_counter() - _t0
-            )
+            phase_acc[name] = phase_acc.get(name, 0.0) + (_time.perf_counter() - _t0)
 
-    def supervised(images_u8, masks, sample_weights, pres_targets, flip,
-                   collect_stats=False, prof=False):
+    def supervised(
+        images_u8,
+        masks,
+        sample_weights,
+        pres_targets,
+        flip,
+        collect_stats=False,
+        prof=False,
+    ):
         with _phase("augment", prof):
             images, masks = augmenter(images_u8, masks, jitter=True, flip=flip)
         with _phase("forward", prof):
             if presence_weight > 0.0:
-                logits, presence_logit = _model_logits_and_presence(
-                    model, images
-                )
+                logits, presence_logit = _model_logits_and_presence(model, images)
                 if presence_logit is None:
                     raise RuntimeError(
                         "presence_weight > 0 mas o modelo não devolveu "
@@ -1880,7 +1901,9 @@ def train_steps(
                 presence_logit = None
             if logits.shape[-2:] != masks.shape[-2:]:
                 logits = F.interpolate(
-                    logits, size=masks.shape[-2:], mode="bilinear",
+                    logits,
+                    size=masks.shape[-2:],
+                    mode="bilinear",
                     align_corners=False,
                 )
         with _phase("loss", prof):
@@ -1950,11 +1973,14 @@ def train_steps(
                     wts.append(w)
                     pres.append(p)
                 main_batch = (
-                    torch.cat(imgs), torch.cat(msks), torch.cat(wts),
+                    torch.cat(imgs),
+                    torch.cat(msks),
+                    torch.cat(wts),
                     torch.cat(pres),
                 )
             loss, _ = supervised(
-                *main_batch, flip=True,
+                *main_batch,
+                flip=True,
                 collect_stats=(step_idx % stats_every == 0),
                 prof=prof,
             )
@@ -1964,10 +1990,15 @@ def train_steps(
                         batch_pairs, device
                     )
                     pair_batch = (
-                        torch.cat([ia, ib]), torch.cat([ma, mb]),
+                        torch.cat([ia, ib]),
+                        torch.cat([ma, mb]),
                     )
                 pair_loss, pair_logits = supervised(
-                    *pair_batch, None, None, flip=False, prof=prof,
+                    *pair_batch,
+                    None,
+                    None,
+                    flip=False,
+                    prof=prof,
                 )
                 loss = loss + pair_loss
                 if consistency_weight > 0.0:
@@ -1975,8 +2006,10 @@ def train_steps(
                         half = ia.shape[0]
                         loss = loss + consistency_weight * (
                             masked_temporal_consistency_loss(
-                                pair_logits[:half], pair_logits[half:],
-                                change, mode=consistency_mode,
+                                pair_logits[:half],
+                                pair_logits[half:],
+                                change,
+                                mode=consistency_mode,
                                 trim=consistency_trim,
                             )
                         )
@@ -2010,9 +2043,7 @@ def train_steps(
             phase_steps += 1
             if device_type == "cuda":
                 torch.cuda.synchronize()
-            step_wall.append(
-                round((_time.perf_counter() - _step_t0) * 1000.0, 2)
-            )
+            step_wall.append(round((_time.perf_counter() - _step_t0) * 1000.0, 2))
         total = total + loss.detach()
         n += 1
     if n == 0:
@@ -2070,7 +2101,9 @@ def evaluate(model, loader, device, target_loader=None):
             if logits.shape[-2:] != masks.shape[-2:]:
                 import torch.nn.functional as F
 
-                logits = F.interpolate(logits, size=masks.shape[-2:], mode="bilinear", align_corners=False)
+                logits = F.interpolate(
+                    logits, size=masks.shape[-2:], mode="bilinear", align_corners=False
+                )
             pred = logits.argmax(dim=1).cpu().numpy()
             target = masks.numpy()
             valid = target != IGNORE_INDEX
@@ -2087,14 +2120,24 @@ def evaluate(model, loader, device, target_loader=None):
                     for key in tolerance_totals[radius]:
                         tolerance_totals[radius][key] += tol[key]
     if supervised_px == 0:
-        raise ValueError("avaliação sem pixels supervisionados: todas as máscaras são 255")
+        raise ValueError(
+            "avaliação sem pixels supervisionados: todas as máscaras são 255"
+        )
     metrics = shared_metrics.evaluate_confusion_matrix(confusion, ignored_px=ignored_px)
     aggregate_tolerance = {}
     for radius, counts in tolerance_totals.items():
         pred_ink, gt_ink = counts["pred_ink"], counts["gt_ink"]
-        precision = counts["matched_pred"] / pred_ink if pred_ink else (1.0 if not gt_ink else 0.0)
-        recall = counts["matched_gt"] / gt_ink if gt_ink else (1.0 if not pred_ink else 0.0)
-        f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+        precision = (
+            counts["matched_pred"] / pred_ink
+            if pred_ink
+            else (1.0 if not gt_ink else 0.0)
+        )
+        recall = (
+            counts["matched_gt"] / gt_ink if gt_ink else (1.0 if not pred_ink else 0.0)
+        )
+        f1 = (
+            2 * precision * recall / (precision + recall) if precision + recall else 0.0
+        )
         aggregate_tolerance[f"radius_{radius}px"] = {
             "precision": precision,
             "recall": recall,
@@ -2212,7 +2255,9 @@ def validate_onnx(model, onnx_path, loader, device, cfg):
         expected_shape=(images.shape[0], classes, size, size),
     )
     if report["status"] == "skipped":
-        print(f"AVISO: validação ONNX não executada: {report['reason']}", file=sys.stderr)
+        print(
+            f"AVISO: validação ONNX não executada: {report['reason']}", file=sys.stderr
+        )
     return report
 
 
@@ -2244,7 +2289,9 @@ def smoke(smoke_dir):
     cv2.imwrite(str(img_dir / "scene_0001.png"), img)
     cv2.imwrite(str(mask_dir / "scene_0001.png"), mask)
     # Imagem 2: só fundo (negativo).
-    cv2.imwrite(str(img_dir / "scene_0002.png"), np.full((64, 64, 3), 90, dtype=np.uint8))
+    cv2.imwrite(
+        str(img_dir / "scene_0002.png"), np.full((64, 64, 3), 90, dtype=np.uint8)
+    )
     cv2.imwrite(str(mask_dir / "scene_0002.png"), np.zeros((64, 64), dtype=np.uint8))
 
     pairs = pair_images_masks(root / "train")
@@ -2256,7 +2303,9 @@ def smoke(smoke_dir):
     weights = compute_class_weights(counts)
     assert len(weights) == NUM_CLASSES and all(w > 0 for w in weights), weights
     pred = load_mask(mask_dir / "scene_0001.png")
-    pred[pred == IGNORE_INDEX] = 0  # predições sempre são classes válidas; só o GT usa 255.
+    pred[pred == IGNORE_INDEX] = (
+        0  # predições sempre são classes válidas; só o GT usa 255.
+    )
     # Predição perfeita exceto 1 px de tinta deslocado: IoU estrita cai,
     # tolerância de 2-3 px deve recuperar.
     pred_shifted = pred.copy()
@@ -2288,9 +2337,13 @@ def smoke(smoke_dir):
 
     try:
         import torch
+
         torch.nn
     except (ImportError, AttributeError):
-        print("AVISO: PyTorch completo ausente; smoke de loss torch com pixel ignorado pulado.", file=sys.stderr)
+        print(
+            "AVISO: PyTorch completo ausente; smoke de loss torch com pixel ignorado pulado.",
+            file=sys.stderr,
+        )
     else:
         # ONNX export receives a CUDA model after Kaggle training. The dummy
         # input must follow that model's device; CPU is still the fallback for
@@ -2299,24 +2352,32 @@ def smoke(smoke_dir):
             probe = torch.nn.Linear(1, 1).to(test_device)
             export_input = _make_onnx_dummy(probe, 8)
             assert export_input.device == next(probe.parameters()).device, (
-                test_device, export_input.device, next(probe.parameters()).device
+                test_device,
+                export_input.device,
+                next(probe.parameters()).device,
             )
         empty_probe = torch.nn.Identity()
         assert _make_onnx_dummy(empty_probe, 8).device.type == "cpu"
         target_t = torch.from_numpy(ignored_target[None].astype(np.int64))
-        logits = torch.zeros((1, NUM_CLASSES, 64, 64), dtype=torch.float32, requires_grad=True)
+        logits = torch.zeros(
+            (1, NUM_CLASSES, 64, 64), dtype=torch.float32, requires_grad=True
+        )
         weights_t = torch.tensor(weights, dtype=torch.float32)
         loss = combined_loss(logits, target_t, weights_t)
         assert torch.isfinite(loss), loss
         loss.backward()
         assert torch.isfinite(logits.grad).all(), "gradiente não finito com pixels 255"
-        assert torch.count_nonzero(logits.grad[:, :, 54:60, 54:60]) == 0, "pixel 255 deve ter gradiente zero"
+        assert torch.count_nonzero(logits.grad[:, :, 54:60, 54:60]) == 0, (
+            "pixel 255 deve ter gradiente zero"
+        )
         all_ignored = torch.full_like(target_t, IGNORE_INDEX)
         ignored_logits = torch.zeros_like(logits.detach(), requires_grad=True)
         ignored_loss = combined_loss(ignored_logits, all_ignored, weights_t)
         assert torch.isfinite(ignored_loss) and ignored_loss.item() == 0.0, ignored_loss
         ignored_loss.backward()
-        assert torch.count_nonzero(ignored_logits.grad) == 0, "lote ignorado deve gerar gradiente zero"
+        assert torch.count_nonzero(ignored_logits.grad) == 0, (
+            "lote ignorado deve gerar gradiente zero"
+        )
 
         predicted_ids = pred.copy()
         predicted_ids[54:60, 54:60] = 3  # falso ink apenas na região ignorada
@@ -2346,21 +2407,38 @@ def smoke(smoke_dir):
         except ValueError as exc:
             assert "sem pixels supervisionados" in str(exc), exc
         else:
-            raise AssertionError("avaliação totalmente ignorada deveria falhar claramente")
+            raise AssertionError(
+                "avaliação totalmente ignorada deveria falhar claramente"
+            )
     # Contrato ONNX: nomes e shapes esperados, sem rodar modelo.
-    contract = {"input_name": "image", "output_name": "logits", "input_shape": [1, 3, 512, 512], "output_shape": [1, 4, 512, 512]}
+    contract = {
+        "input_name": "image",
+        "output_name": "logits",
+        "input_shape": [1, 3, 512, 512],
+        "output_shape": [1, 4, 512, 512],
+    }
     assert contract["output_shape"][1] == NUM_CLASSES
-    print(f"SMOKE OK: {len(pairs)} pares, pixels supervisionados {counts.tolist()}, ignorados {ignored}, pesos {[round(w, 2) for w in weights]}")
-    print(f"SMOKE OK: ink IoU estrita {m['ink']['iou']:.3f}, recall com tolerância 2px {tol['radius_2px']['recall']:.3f}")
-    print("SMOKE OK: pixels 255 excluídos de métricas e contagens; loss com pixel ignorado é verificada quando PyTorch está disponível")
-    print("SMOKE OK: amostra ONNX acompanha o dispositivo do modelo (CPU/meta; CUDA se disponível no runtime)")
+    print(
+        f"SMOKE OK: {len(pairs)} pares, pixels supervisionados {counts.tolist()}, ignorados {ignored}, pesos {[round(w, 2) for w in weights]}"
+    )
+    print(
+        f"SMOKE OK: ink IoU estrita {m['ink']['iou']:.3f}, recall com tolerância 2px {tol['radius_2px']['recall']:.3f}"
+    )
+    print(
+        "SMOKE OK: pixels 255 excluídos de métricas e contagens; loss com pixel ignorado é verificada quando PyTorch está disponível"
+    )
+    print(
+        "SMOKE OK: amostra ONNX acompanha o dispositivo do modelo (CPU/meta; CUDA se disponível no runtime)"
+    )
     print(f"SMOKE OK: contrato ONNX {contract}")
     return 0
 
 
 # ---------------------------------------------------------------- main
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Treino SegFormer-B0 do Draw (4 classes).")
+    parser = argparse.ArgumentParser(
+        description="Treino SegFormer-B0 do Draw (4 classes)."
+    )
     parser.add_argument("--config", default="training/config.json")
     parser.add_argument("--data-dir", default="dataset/synthetic")
     parser.add_argument(
@@ -2400,19 +2478,23 @@ def main(argv=None):
         default=None,
         help="Peso por amostra real extra na loss (padrão: loss.unverified_real_sample_weight).",
     )
-    parser.add_argument("--smoke", action="store_true", help="Smoke test sem GPU, sem treino.")
+    parser.add_argument(
+        "--smoke", action="store_true", help="Smoke test sem GPU, sem treino."
+    )
     parser.add_argument("--smoke-dir", default="/tmp/draw-smoke")
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument(
-        "--precision", choices=("bf16", "fp16", "fp32"), default=None,
+        "--precision",
+        choices=("bf16", "fp16", "fp32"),
+        default=None,
         help="Substitui a precisão mista da config nesta corrida.",
     )
     parser.add_argument(
         "--probe-batch",
         action="store_true",
         help="Dimensiona o batch pela VRAM rodando o passo real de treino (só CUDA); "
-        "equivale a batch_size: \"auto\" na config.",
+        'equivale a batch_size: "auto" na config.',
     )
     parser.add_argument(
         "--compile",
@@ -2474,7 +2556,10 @@ def main(argv=None):
     np.random.seed(tr["seed"])
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if device == "cpu":
-        print("AVISO: sem GPU; o treino completo em CPU é inviável. Use o Kaggle com GPU.", file=sys.stderr)
+        print(
+            "AVISO: sem GPU; o treino completo em CPU é inviável. Use o Kaggle com GPU.",
+            file=sys.stderr,
+        )
 
     out_dir = Path(args.out_dir)
     (out_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
@@ -2521,7 +2606,9 @@ def main(argv=None):
     )
     print(f"pixels de treino por classe: {counts.tolist()}")
     print(f"pesos da config: {cfg['loss']['cross_entropy_class_weights']}")
-    print(f"pesos calculados (referência): {[round(w, 2) for w in compute_class_weights(counts)]}")
+    print(
+        f"pesos calculados (referência): {[round(w, 2) for w in compute_class_weights(counts)]}"
+    )
     if real_pairs:
         print(
             f"peso por amostra real na loss: {real_loss_weight} | "
@@ -2547,7 +2634,9 @@ def main(argv=None):
                 f"de {presence_init_path} — confira o checkpoint da Rodada 2"
             )
     precision, amp_dtype, scaler = configure_mixed_precision(torch, device, tr)
-    class_weights = torch.tensor(cfg["loss"]["cross_entropy_class_weights"], dtype=torch.float32, device=device)
+    class_weights = torch.tensor(
+        cfg["loss"]["cross_entropy_class_weights"], dtype=torch.float32, device=device
+    )
     if probe_requested:
         batch_size, probe_report = probe_batch_size(
             torch,
@@ -2715,9 +2804,7 @@ def main(argv=None):
     max_steps = int(tr.get("max_steps", 1500)) if steps_mode else 0
     eval_interval = int(tr.get("eval_interval_steps", 300)) if steps_mode else 0
     _pw = tr.get("profile_window_steps") if steps_mode else None
-    profile_window = (
-        (int(_pw[0]), int(_pw[1])) if _pw and len(_pw) == 2 else None
-    )
+    profile_window = (int(_pw[0]), int(_pw[1])) if _pw and len(_pw) == 2 else None
     replay_buffer = pool_buffer = pair_buffer = None
     augmenter = None
     batch_replay = batch_pool = batch_pairs = 0
@@ -2744,7 +2831,11 @@ def main(argv=None):
             )
         if args.real_pairs_dir:
             pair_buffer = RAMPairBuffer.from_pairs_dir(
-                args.real_pairs_dir, size, load_image_rgb, load_mask, cv2,
+                args.real_pairs_dir,
+                size,
+                load_image_rgb,
+                load_mask,
+                cv2,
                 split="train",
             )
         norm = cfg["model"]["input"]["normalization"]
@@ -2815,7 +2906,12 @@ def main(argv=None):
         )
         epoch_s = time.perf_counter() - epoch_started
         metrics = evaluate(model, val_loader, device)
-        history_entry = {"epoch": epoch, "train_loss": loss, "val": metrics, "epoch_s": round(epoch_s, 1)}
+        history_entry = {
+            "epoch": epoch,
+            "train_loss": loss,
+            "val": metrics,
+            "epoch_s": round(epoch_s, 1),
+        }
         if real_pair_val_ds is not None:
             fl = flicker_metrics(model, real_pair_val_ds, device)
             history_entry["flicker"] = fl
@@ -2857,9 +2953,7 @@ def main(argv=None):
                 "compile": compile_enabled,
                 "ema_decay": ema.decay if ema is not None else None,
             }
-            receipt["projected_total_min"] = round(
-                epoch_s * epochs / 60, 1
-            )
+            receipt["projected_total_min"] = round(epoch_s * epochs / 60, 1)
             receipt["elapsed_s"] = round(time.perf_counter() - run_started, 1)
             (out_dir / "receipt.json").write_text(
                 json.dumps(receipt, indent=2), encoding="utf-8"
@@ -2886,7 +2980,9 @@ def main(argv=None):
         if ema_backup is not None:
             ema.restore(base_model, ema_backup)
         if bad_epochs >= tr["early_stopping"]["patience_epochs"]:
-            print(f"early stopping na época {epoch} (val_mean_iou sem melhora há {bad_epochs} épocas).")
+            print(
+                f"early stopping na época {epoch} (val_mean_iou sem melhora há {bad_epochs} épocas)."
+            )
             break
 
     steps_steady_s_per_step = None
@@ -2988,9 +3084,7 @@ def main(argv=None):
                     "replay_size": len(replay_buffer),
                 }
                 if "phase_profile_ms" in block_stats:
-                    receipt["phase_profile_ms"] = block_stats[
-                        "phase_profile_ms"
-                    ]
+                    receipt["phase_profile_ms"] = block_stats["phase_profile_ms"]
                     receipt["phase_profile_steps"] = block_stats.get(
                         "phase_profile_steps"
                     )
@@ -3014,15 +3108,11 @@ def main(argv=None):
                 ema_metrics = evaluate(model, val_loader, device)
                 history_entry["val_ema"] = ema_metrics
                 monitor = ema_metrics
-                print(
-                    f"bloco {block}: val_mean_iou EMA {ema_metrics['mean_iou']:.4f}"
-                )
+                print(f"bloco {block}: val_mean_iou EMA {ema_metrics['mean_iou']:.4f}")
             if monitor["mean_iou"] > best_iou:
                 best_iou = monitor["mean_iou"]
                 bad_epochs = 0
-                torch.save(
-                    base_model.state_dict(), out_dir / "checkpoints" / "best.pt"
-                )
+                torch.save(base_model.state_dict(), out_dir / "checkpoints" / "best.pt")
             else:
                 bad_epochs += 1
             if ema_backup is not None:
@@ -3053,13 +3143,18 @@ def main(argv=None):
     # Não-fatal: se a exportação falhar, as métricas e os demais artefatos
     # ainda são escritos, e a falha fica registrada em onnx_validation —
     # antes, uma falha aqui perdia o metrics.json inteiro após o treino.
-    base_model.load_state_dict(torch.load(out_dir / "checkpoints" / "best.pt", map_location=device))
+    base_model.load_state_dict(
+        torch.load(out_dir / "checkpoints" / "best.pt", map_location=device)
+    )
     onnx_path = out_dir / cfg["export"]["onnx"]
     try:
         export_onnx(base_model, str(onnx_path), cfg)
         onnx_check = validate_onnx(base_model, onnx_path, val_loader, device, cfg)
     except Exception as exc:  # noqa: BLE001 - registrar, não perder o treino
-        print(f"AVISO: exportação ONNX falhou ({exc}); métricas serão escritas sem ONNX.", file=sys.stderr)
+        print(
+            f"AVISO: exportação ONNX falhou ({exc}); métricas serão escritas sem ONNX.",
+            file=sys.stderr,
+        )
         onnx_check = {"status": "failed", "error": str(exc)}
     final_metrics = evaluate(base_model, val_loader, device)
     final_metrics["test"] = evaluate(base_model, test_loader, device)
@@ -3076,9 +3171,15 @@ def main(argv=None):
     }
     cfg["data_sources"] = {
         "synthetic_root": str(Path(args.data_dir)),
-        "real_train_root": str(Path(args.real_train_dir)) if args.real_train_dir else None,
-        "presence_pool_root": str(Path(args.presence_pool_dir)) if args.presence_pool_dir else None,
-        "real_pairs_root": str(Path(args.real_pairs_dir)) if args.real_pairs_dir else None,
+        "real_train_root": str(Path(args.real_train_dir))
+        if args.real_train_dir
+        else None,
+        "presence_pool_root": str(Path(args.presence_pool_dir))
+        if args.presence_pool_dir
+        else None,
+        "real_pairs_root": str(Path(args.real_pairs_dir))
+        if args.real_pairs_dir
+        else None,
         "init_presence": (
             {"path": str(presence_init_path), "report": presence_init_report}
             if presence_init_path
@@ -3095,9 +3196,15 @@ def main(argv=None):
         "split_manifest_validation": split_validation,
     }
 
-    (out_dir / "classes.json").write_text(json.dumps(CLASSES, indent=2), encoding="utf-8")
-    (out_dir / "metrics.json").write_text(json.dumps(final_metrics, indent=2), encoding="utf-8")
-    (out_dir / "training_config.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    (out_dir / "classes.json").write_text(
+        json.dumps(CLASSES, indent=2), encoding="utf-8"
+    )
+    (out_dir / "metrics.json").write_text(
+        json.dumps(final_metrics, indent=2), encoding="utf-8"
+    )
+    (out_dir / "training_config.json").write_text(
+        json.dumps(cfg, indent=2), encoding="utf-8"
+    )
     # split_manifest: cópia já validada no início, se o gerador a forneceu.
     if split_manifest is None:
         split_manifest = {
@@ -3109,7 +3216,9 @@ def main(argv=None):
     (out_dir / "split_manifest.json").write_text(
         json.dumps(split_manifest, indent=2), encoding="utf-8"
     )
-    print(f"ONNX: {onnx_path} | métricas: {out_dir / 'metrics.json'} | val_mean_iou: {final_metrics['mean_iou']:.4f}")
+    print(
+        f"ONNX: {onnx_path} | métricas: {out_dir / 'metrics.json'} | val_mean_iou: {final_metrics['mean_iou']:.4f}"
+    )
     if final_metrics["delivery_status"] != "validated":
         print(
             f"ENTREGA BLOQUEADA: validação ONNX={onnx_check.get('status')}; "

@@ -67,19 +67,27 @@ def test_budget_reserve_floor_120s():
 def _dispatcher_args(**over):
     args = argparse.Namespace(
         config="training/configs/base.json",
-        data_dir="dataset/synthetic", real_train_dir=None,
-        allow_unverified_real_train=False, out_dir="out",
-        epochs=18, train_count=3200, val_count=320, test_count=320,
-        budget_min=None, batch_size="auto", precision=None,
-        smoke=False, smoke_dir="/tmp/draw-smoke")
+        data_dir="dataset/synthetic",
+        real_train_dir=None,
+        allow_unverified_real_train=False,
+        out_dir="out",
+        epochs=18,
+        train_count=3200,
+        val_count=320,
+        test_count=320,
+        budget_min=None,
+        batch_size="auto",
+        precision=None,
+        smoke=False,
+        smoke_dir="/tmp/draw-smoke",
+    )
     for k, v in over.items():
         setattr(args, k, v)
     return args
 
 
 def test_dispatcher_forwards_budget_to_torchtpu():
-    cmd = dispatcher.build_command(
-        _dispatcher_args(budget_min=80.0), "torchtpu")
+    cmd = dispatcher.build_command(_dispatcher_args(budget_min=80.0), "torchtpu")
     assert "--budget-min" in cmd
     assert cmd[cmd.index("--budget-min") + 1] == "80.0"
 
@@ -91,13 +99,13 @@ def test_dispatcher_without_budget_omits_flag():
 
 def test_dispatcher_smoke_never_carries_budget():
     cmd = dispatcher.build_command(
-        _dispatcher_args(budget_min=80.0, smoke=True), "torchtpu")
+        _dispatcher_args(budget_min=80.0, smoke=True), "torchtpu"
+    )
     assert "--budget-min" not in cmd
 
 
 def test_launcher_dry_run_plan_shows_budget(capsys):
-    rc = launcher.main(["--dry-run", "--device", "cpu",
-                        "--budget-min", "80"])
+    rc = launcher.main(["--dry-run", "--device", "cpu", "--budget-min", "80"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "--budget-min 80" in out

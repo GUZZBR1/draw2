@@ -10,10 +10,19 @@ import numpy as np
 import pytest
 
 from draw.selflearn.split import (
-    HOLDOUT, TRAIN, LeakageError, assign_split,
-    assert_no_leakage, draft_independent_label, guard_holdout_example,
-    guard_pseudo_labeling, guard_selection_pool,
-    guard_threshold_tuning, guard_train_example, split_sessions)
+    HOLDOUT,
+    TRAIN,
+    LeakageError,
+    assign_split,
+    assert_no_leakage,
+    draft_independent_label,
+    guard_holdout_example,
+    guard_pseudo_labeling,
+    guard_selection_pool,
+    guard_threshold_tuning,
+    guard_train_example,
+    split_sessions,
+)
 
 
 def _sessions(n=40):
@@ -47,9 +56,11 @@ def test_holdout_includes_empty_and_easy_sessions_when_they_exist():
     holdout = set(split[HOLDOUT])
     by_id = {s["session_id"]: s for s in sessions}
     assert any(by_id[s].get("has_empty_pages") for s in holdout), (
-        "holdout sem nenhuma sessao com pagina vazia")
+        "holdout sem nenhuma sessao com pagina vazia"
+    )
     assert any(by_id[s].get("easy") for s in holdout), (
-        "holdout sem nenhuma sessao facil")
+        "holdout sem nenhuma sessao facil"
+    )
 
 
 def test_assert_no_leakage_raises_on_overlap():
@@ -111,22 +122,19 @@ def test_holdout_accepts_independent_reviewed_label():
 
 def test_holdout_rejects_pseudo_label():
     with pytest.raises(LeakageError):
-        guard_holdout_example(
-            _holdout_example(origin="pseudo_ema_r3"))
+        guard_holdout_example(_holdout_example(origin="pseudo_ema_r3"))
 
 
 def test_holdout_rejects_model_correction():
     with pytest.raises(LeakageError):
-        guard_holdout_example(
-            _holdout_example(origin="human_correction"))
+        guard_holdout_example(_holdout_example(origin="human_correction"))
 
 
 def test_holdout_rejects_unreviewed_or_model_sourced_label():
     with pytest.raises(LeakageError):
         guard_holdout_example(_holdout_example(label_reviewed=False))
     with pytest.raises(LeakageError):
-        guard_holdout_example(
-            _holdout_example(label_source="model_prediction"))
+        guard_holdout_example(_holdout_example(label_source="model_prediction"))
 
 
 def test_draft_independent_label_marks_only_darkened_pixels():
@@ -142,5 +150,5 @@ def test_draft_independent_label_marks_only_darkened_pixels():
 def test_draft_independent_label_rejects_shape_mismatch():
     with pytest.raises(ValueError):
         draft_independent_label(
-            np.zeros((4, 4, 3), dtype=np.uint8),
-            np.zeros((5, 5, 3), dtype=np.uint8))
+            np.zeros((4, 4, 3), dtype=np.uint8), np.zeros((5, 5, 3), dtype=np.uint8)
+        )

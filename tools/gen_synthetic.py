@@ -257,7 +257,9 @@ def synthetic_hand_sources(count: int = 5) -> list[HandSource]:
         cv2.line(mask, (95, 220), (45, 165), 255, 26)
         # Sombreado leve só para não ser plano demais.
         shade = rng.integers(-12, 13, size=mask.shape).astype(np.int16)
-        canvas = np.clip(canvas.astype(np.int16) + shade[..., None], 0, 255).astype(np.uint8)
+        canvas = np.clip(canvas.astype(np.int16) + shade[..., None], 0, 255).astype(
+            np.uint8
+        )
         out.append(HandSource(f"synthetic_hand_{i}", canvas, mask, placeholder=True))
     return out
 
@@ -328,7 +330,9 @@ def load_hands(hands_dir: str | Path | None) -> list[HandSource]:
 
 
 def split_sources(
-    source_ids: list[str], seed: int, ratios: tuple[float, float, float] = (0.8, 0.1, 0.1)
+    source_ids: list[str],
+    seed: int,
+    ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
 ) -> dict[str, list[str]]:
     """Divide ids de fonte entre train/val/test, sem vazamento.
 
@@ -391,7 +395,14 @@ def split_hand_sources(hands: list[HandSource], seed: int):
 
 _STROKE_COLORS = [(20, 20, 20), (20, 20, 20), (180, 40, 30), (140, 140, 140)]
 _STROKE_KINDS = [
-    "line", "curve", "circle", "rectangle", "triangle", "scribble", "writing", "arrow",
+    "line",
+    "curve",
+    "circle",
+    "rectangle",
+    "triangle",
+    "scribble",
+    "writing",
+    "arrow",
 ]
 
 
@@ -425,7 +436,11 @@ def _plan_strokes(rng: np.random.Generator, w: int, h: int) -> list:
             specs.append((kind, color, thick, (x0, y0, r)))
         elif kind == "triangle":
             pts = np.array(
-                [[x0, y0], [x1, y1], [int(rng.integers(20, w - 20)), int(rng.integers(20, h - 20))]],
+                [
+                    [x0, y0],
+                    [x1, y1],
+                    [int(rng.integers(20, w - 20)), int(rng.integers(20, h - 20))],
+                ],
                 dtype=np.int32,
             )
             specs.append((kind, color, thick, pts))
@@ -464,8 +479,12 @@ def _apply_stroke(canvas: np.ndarray, ink: np.ndarray, spec) -> None:
         cv2.polylines(canvas, [geo], True, color, thick)
         cv2.polylines(ink, [geo], True, 255, thick)
     elif kind == "arrow":
-        cv2.arrowedLine(canvas, (geo[0], geo[1]), (geo[2], geo[3]), color, thick, tipLength=0.25)
-        cv2.arrowedLine(ink, (geo[0], geo[1]), (geo[2], geo[3]), 255, thick, tipLength=0.25)
+        cv2.arrowedLine(
+            canvas, (geo[0], geo[1]), (geo[2], geo[3]), color, thick, tipLength=0.25
+        )
+        cv2.arrowedLine(
+            ink, (geo[0], geo[1]), (geo[2], geo[3]), 255, thick, tipLength=0.25
+        )
     else:  # writing: escrita simulada, zigue-zague e laços
         x0, y = geo
         for k in range(4):
@@ -481,7 +500,9 @@ def _apply_stroke(canvas: np.ndarray, ink: np.ndarray, spec) -> None:
     _ = h  # h faz parte do contrato visual; w é o usado acima
 
 
-def _draw_strokes(rng: np.random.Generator, canvas: np.ndarray, ink: np.ndarray) -> None:
+def _draw_strokes(
+    rng: np.random.Generator, canvas: np.ndarray, ink: np.ndarray
+) -> None:
     """Desenha traços no canvas do papel e a máscara ink exata."""
     h, w = canvas.shape[:2]
     for spec in _plan_strokes(rng, w, h):
@@ -520,7 +541,9 @@ def _paper_base(
     return canvas, w, h
 
 
-def _paper_canvas(rng: np.random.Generator, style: str) -> tuple[np.ndarray, np.ndarray, int, int]:
+def _paper_canvas(
+    rng: np.random.Generator, style: str
+) -> tuple[np.ndarray, np.ndarray, int, int]:
     """Canvas do papel (antes do warp): RGB + máscara ink, e seu tamanho."""
     canvas, w, h = _paper_base(rng, style)
     ink = np.zeros((h, w), dtype=np.uint8)
@@ -555,7 +578,8 @@ def _fit_background_photo(img: np.ndarray) -> np.ndarray:
     side = min(h, w)
     y0, x0 = (h - side) // 2, (w - side) // 2
     return cv2.resize(
-        img[y0 : y0 + side, x0 : x0 + side], (SIZE, SIZE),
+        img[y0 : y0 + side, x0 : x0 + side],
+        (SIZE, SIZE),
         interpolation=cv2.INTER_AREA,
     )
 
@@ -650,13 +674,21 @@ def _sample_normal_quad(rng: np.random.Generator, w: int, h: int) -> np.ndarray:
     Consumo de RNG idêntico ao ramo "normal" histórico de
     ``_warp_to_scene`` (cx, cy, scale, ang — nesta ordem).
     """
-    cx, cy = SIZE // 2 + int(rng.integers(-40, 41)), SIZE // 2 + int(rng.integers(-40, 41))
+    cx, cy = (
+        SIZE // 2 + int(rng.integers(-40, 41)),
+        SIZE // 2 + int(rng.integers(-40, 41)),
+    )
     scale = float(rng.uniform(0.85, 1.05))
     pw, ph = int(w * scale * SIZE / 560), int(h * scale * SIZE / 560)
     ang = math.radians(float(rng.uniform(-18, 18)))
     ca, sa = math.cos(ang), math.sin(ang)
     corners = np.array(
-        [[-pw // 2, -ph // 2], [pw // 2, -ph // 2], [pw // 2, ph // 2], [-pw // 2, ph // 2]],
+        [
+            [-pw // 2, -ph // 2],
+            [pw // 2, -ph // 2],
+            [pw // 2, ph // 2],
+            [-pw // 2, ph // 2],
+        ],
         dtype=np.float32,
     )
     rot = np.array([[ca, -sa], [sa, ca]], dtype=np.float32)
@@ -677,11 +709,19 @@ def _sample_loguniform_quad(rng: np.random.Generator, w: int, h: int) -> np.ndar
     aspect = w / h
     pw = int(min(560, max(30, round(math.sqrt(area * aspect)))))
     ph = int(min(560, max(30, round(math.sqrt(area / aspect)))))
-    cx, cy = SIZE // 2 + int(rng.integers(-40, 41)), SIZE // 2 + int(rng.integers(-40, 41))
+    cx, cy = (
+        SIZE // 2 + int(rng.integers(-40, 41)),
+        SIZE // 2 + int(rng.integers(-40, 41)),
+    )
     ang = math.radians(float(rng.uniform(-18, 18)))
     ca, sa = math.cos(ang), math.sin(ang)
     corners = np.array(
-        [[-pw // 2, -ph // 2], [pw // 2, -ph // 2], [pw // 2, ph // 2], [-pw // 2, ph // 2]],
+        [
+            [-pw // 2, -ph // 2],
+            [pw // 2, -ph // 2],
+            [pw // 2, ph // 2],
+            [-pw // 2, ph // 2],
+        ],
         dtype=np.float32,
     )
     rot = np.array([[ca, -sa], [sa, ca]], dtype=np.float32)
@@ -710,7 +750,9 @@ def _warp_paper(
     )
     ink_w = cv2.warpPerspective(ink, mat, (SIZE, SIZE), flags=cv2.INTER_NEAREST)
     paper_cov = cv2.warpPerspective(
-        paper_field.astype(np.float32) / 255.0, mat, (SIZE, SIZE),
+        paper_field.astype(np.float32) / 255.0,
+        mat,
+        (SIZE, SIZE),
         flags=cv2.INTER_LINEAR,
     )
     ink_cov = cv2.warpPerspective(
@@ -731,8 +773,12 @@ def _warp_to_scene(
         cx, cy = SIZE // 2, SIZE // 2
         pw, ph = 80, 110
         dst = np.array(
-            [[cx - pw // 2, cy - ph // 2], [cx + pw // 2, cy - ph // 2],
-             [cx + pw // 2, cy + ph // 2], [cx - pw // 2, cy + ph // 2]],
+            [
+                [cx - pw // 2, cy - ph // 2],
+                [cx + pw // 2, cy - ph // 2],
+                [cx + pw // 2, cy + ph // 2],
+                [cx - pw // 2, cy + ph // 2],
+            ],
             dtype=np.float32,
         )
     elif placement == "sheet_out":
@@ -839,7 +885,9 @@ def _warp_spread(
     on_paper = paper_mask > 0
     if on_paper.any():
         line = np.zeros((SIZE, SIZE), dtype=np.uint8)
-        cv2.line(line, tuple(spine_top.astype(int)), tuple(spine_bot.astype(int)), 255, 1)
+        cv2.line(
+            line, tuple(spine_top.astype(int)), tuple(spine_bot.astype(int)), 255, 1
+        )
         dist = cv2.distanceTransform(255 - line, cv2.DIST_L2, 3)
         spread_w = float(np.linalg.norm(tr - tl))
         band = np.clip(1.0 - dist / max(6.0, 0.022 * spread_w), 0.0, 1.0)
@@ -847,7 +895,9 @@ def _warp_spread(
         shade = (1.0 - dip * band * band).astype(np.float32)
         rgb_w = np.where(
             on_paper[..., None],
-            np.clip(rgb_w.astype(np.float32) * shade[..., None], 0, 255).astype(np.uint8),
+            np.clip(rgb_w.astype(np.float32) * shade[..., None], 0, 255).astype(
+                np.uint8
+            ),
             rgb_w,
         )
         n_rings = 24
@@ -862,12 +912,22 @@ def _warp_spread(
             p2 = (c + across * half).astype(int)
             cv2.line(overlay, tuple(p1), tuple(p2), (55, 55, 55), 2)
         rings = np.zeros((SIZE, SIZE), dtype=np.uint8)
-        cv2.line(rings, tuple(spine_top.astype(int)), tuple(spine_bot.astype(int)), 255, int(2 * half) + 4)
+        cv2.line(
+            rings,
+            tuple(spine_top.astype(int)),
+            tuple(spine_bot.astype(int)),
+            255,
+            int(2 * half) + 4,
+        )
         ring_zone = (rings > 0) & on_paper
         rgb_w = np.where(
             ring_zone[..., None],
-            np.clip(overlay.astype(np.float32) * alpha
-                    + rgb_w.astype(np.float32) * (1 - alpha), 0, 255).astype(np.uint8),
+            np.clip(
+                overlay.astype(np.float32) * alpha
+                + rgb_w.astype(np.float32) * (1 - alpha),
+                0,
+                255,
+            ).astype(np.uint8),
             rgb_w,
         )
     return rgb_w, paper_mask, ink_w, base, paper_cov, ink_cov
@@ -890,7 +950,8 @@ def _transform_hand(
     rgb = cv2.resize(hand.rgb, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
     mask = cv2.resize(hand.mask, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
     cov = cv2.resize(
-        hand.mask.astype(np.float32) / 255.0, (new_w, new_h),
+        hand.mask.astype(np.float32) / 255.0,
+        (new_w, new_h),
         interpolation=cv2.INTER_LINEAR,
     )
     if bool(rng.integers(2)):
@@ -918,7 +979,12 @@ def _transform_hand(
 
 
 def _paste_hand(
-    rgb: np.ndarray, mask: np.ndarray, hand_rgb: np.ndarray, hand_mask: np.ndarray, cx: int, cy: int
+    rgb: np.ndarray,
+    mask: np.ndarray,
+    hand_rgb: np.ndarray,
+    hand_mask: np.ndarray,
+    cx: int,
+    cy: int,
 ) -> None:
     """Cola a mão na cena, por cima de tudo: regra hand > ink > paper."""
     hh, hw = hand_mask.shape[:2]
@@ -968,13 +1034,18 @@ def _augment_rgb(
     img = rgb.astype(np.float32)
     # Gradiente de iluminação.
     if float(rng.random()) < 0.7:
-        grad = np.linspace(float(rng.uniform(0.85, 1.0)), float(rng.uniform(1.0, 1.12)), SIZE)
+        grad = np.linspace(
+            float(rng.uniform(0.85, 1.0)), float(rng.uniform(1.0, 1.12)), SIZE
+        )
         img *= grad[None, :, None] if bool(rng.integers(2)) else grad[:, None, None]
     # Sombra: polígono escurecido com borda suave.
     if float(rng.random()) < 0.5:
         shadow = np.zeros((SIZE, SIZE), dtype=np.float32)
         pts = np.array(
-            [[int(rng.integers(0, SIZE)), int(rng.integers(0, SIZE))] for _ in range(4)],
+            [
+                [int(rng.integers(0, SIZE)), int(rng.integers(0, SIZE))]
+                for _ in range(4)
+            ],
             dtype=np.int32,
         )
         cv2.fillPoly(shadow, [pts], 1.0)
@@ -1013,7 +1084,9 @@ def _ambiguity_ignore(
         causes["ink_on_paper"] = (mask == PAPER) & (ink_cov > AMB_LO) & ~hand_dom
     if paper_cov is not None:
         causes["paper_edge_in"] = (mask == PAPER) & (paper_cov < AMB_HI) & ~hand_dom
-        causes["paper_edge_out"] = (mask == BACKGROUND) & (paper_cov > AMB_LO) & ~hand_dom
+        causes["paper_edge_out"] = (
+            (mask == BACKGROUND) & (paper_cov > AMB_LO) & ~hand_dom
+        )
     causes["hand_edge"] = (mask == HAND) & (hand_cov < AMB_HI)
     causes["hand_tint"] = (mask != HAND) & (hand_cov > AMB_LO) & ~hand_dom
     ignore = np.zeros(mask.shape, dtype=bool)
@@ -1073,7 +1146,9 @@ def compose_scene(
     hand_cov = np.zeros((SIZE, SIZE), dtype=np.float32)
     info = {
         "scene_type": scene_type,
-        "paper_style": paper_style if scene_type not in ("empty_table", "hand_no_sheet", "white_object") else None,
+        "paper_style": paper_style
+        if scene_type not in ("empty_table", "hand_no_sheet", "white_object")
+        else None,
         "background_source": background_source,
         "hand_source": hand.source_id if hand else None,
         "hand_base_source": hand.split_id if hand else None,
@@ -1110,26 +1185,32 @@ def compose_scene(
         color = (245, 245, 245) if kind != "monitor" else (30, 30, 30)
         cv2.rectangle(rgb, (x0, y0), (x0 + w, y0 + h), color, -1)
         if kind == "book":
-            cv2.rectangle(rgb, (x0 + 10, y0 + 10), (x0 + w - 10, y0 + h - 10), (230, 230, 235), 2)
+            cv2.rectangle(
+                rgb, (x0 + 10, y0 + 10), (x0 + w - 10, y0 + h - 10), (230, 230, 235), 2
+            )
         return finish(rgb)
 
     paper_quad = None
     if scene_type not in ("hand_no_sheet",):
-        placement = "tiny_sheet" if scene_type == "tiny_sheet" else (
-            "sheet_out" if scene_type == "sheet_out" else (
-                "loguniform" if sheet_scale == "loguniform" else "normal"
+        placement = (
+            "tiny_sheet"
+            if scene_type == "tiny_sheet"
+            else (
+                "sheet_out"
+                if scene_type == "sheet_out"
+                else ("loguniform" if sheet_scale == "loguniform" else "normal")
             )
         )
         if scene_type == "notebook_spread":
             pages = _spread_pages(rng, paper_style)
-            rgb_w, paper_mask, ink_w, paper_quad, paper_cov, ink_cov = (
-                _warp_spread(rng, pages, placement)
+            rgb_w, paper_mask, ink_w, paper_quad, paper_cov, ink_cov = _warp_spread(
+                rng, pages, placement
             )
             info["notebook_spread"] = True
         else:
             paper, ink, _, _ = _paper_canvas(rng, paper_style)
-            rgb_w, paper_mask, ink_w, paper_quad, paper_cov, ink_cov = (
-                _warp_to_scene(rng, paper, ink, placement)
+            rgb_w, paper_mask, ink_w, paper_quad, paper_cov, ink_cov = _warp_to_scene(
+                rng, paper, ink, placement
             )
         on_paper = paper_mask > 0
         rgb[on_paper] = rgb_w[on_paper]
@@ -1144,8 +1225,14 @@ def compose_scene(
     # Mão (ou duas).
     if hand is not None and scene_type not in ("empty_table", "white_object"):
         placements = [
-            "off_sheet", "entering", "edge", "corner", "center",
-            "over_stroke", "covering_much", "partial_out",
+            "off_sheet",
+            "entering",
+            "edge",
+            "corner",
+            "center",
+            "over_stroke",
+            "covering_much",
+            "partial_out",
         ]
         place = hand_placement or str(rng.choice(placements))
         info["hand_placement"] = place
@@ -1154,7 +1241,10 @@ def compose_scene(
             centroid = paper_quad.mean(axis=0)
             corner = paper_quad[int(rng.integers(4))]
         else:
-            centroid, corner = np.array([SIZE / 2, SIZE / 2]), np.array([SIZE / 2, SIZE / 2])
+            centroid, corner = (
+                np.array([SIZE / 2, SIZE / 2]),
+                np.array([SIZE / 2, SIZE / 2]),
+            )
         ink_ys, ink_xs = np.where(ink_full > 0)
         ink_center = (
             np.array([ink_xs.mean(), ink_ys.mean()]) if len(ink_xs) else centroid
@@ -1166,7 +1256,10 @@ def compose_scene(
             cx, cy = int(SIZE * 0.9), int(centroid[1])
             scale = float(rng.uniform(0.7, 1.0))
         elif place == "edge":
-            cx, cy = int(centroid[0]), int(paper_quad[0][1]) if paper_quad is not None else SIZE // 2
+            cx, cy = (
+                int(centroid[0]),
+                int(paper_quad[0][1]) if paper_quad is not None else SIZE // 2,
+            )
             scale = float(rng.uniform(0.7, 1.0))
         elif place == "corner":
             cx, cy = int(corner[0]), int(corner[1])
@@ -1188,13 +1281,17 @@ def compose_scene(
         _paste_coverage(hand_cov, cov1, cx, cy)
         if second_hand is not None:
             hand2_rgb, hand2_mask, cov2 = _transform_hand(rng, second_hand, 0.7)
-            _paste_hand(rgb, mask, hand2_rgb, hand2_mask, int(SIZE * 0.2), int(SIZE * 0.8))
+            _paste_hand(
+                rgb, mask, hand2_rgb, hand2_mask, int(SIZE * 0.2), int(SIZE * 0.8)
+            )
             _paste_coverage(hand_cov, cov2, int(SIZE * 0.2), int(SIZE * 0.8))
 
     return finish(rgb)
 
 
-def _sequence_photometric(rng: np.random.Generator, rgb: np.ndarray, gain: float) -> np.ndarray:
+def _sequence_photometric(
+    rng: np.random.Generator, rgb: np.ndarray, gain: float
+) -> np.ndarray:
     """Fotometria COERENTE de sequência: ganho global (deriva de luz)
     + ruído de sensor novo por frame. NÃO usa ``_augment_rgb``: sombra
     e gradiente sorteados por frame fariam a cena piscar — e piscar
@@ -1270,7 +1367,9 @@ def compose_scene_sequence(
         for spec in specs[:k]:
             _apply_stroke(canvas_t, ink_t, spec)
         quad_t = quad0 + offsets[t]
-        rgb_w, paper_mask, ink_w, paper_cov, ink_cov = _warp_paper(canvas_t, ink_t, quad_t)
+        rgb_w, paper_mask, ink_w, paper_cov, ink_cov = _warp_paper(
+            canvas_t, ink_t, quad_t
+        )
         rgb = bg.copy()
         mask = np.zeros((SIZE, SIZE), dtype=np.uint8)
         on_paper = paper_mask > 0
@@ -1294,7 +1393,11 @@ def compose_scene_sequence(
         final_mask, _causes = _ambiguity_ignore(mask, paper_cov, ink_cov, hand_cov)
         change = None
         if prev_mask is not None:
-            changed = (final_mask != prev_mask) | (final_mask == IGNORE) | (prev_mask == IGNORE)
+            changed = (
+                (final_mask != prev_mask)
+                | (final_mask == IGNORE)
+                | (prev_mask == IGNORE)
+            )
             change = np.where(changed, 255, 0).astype(np.uint8)
         ink_counts.append(int((ink_full > 0).sum()))
         frames_out.append(
@@ -1371,7 +1474,8 @@ def generate_dataset(
         )
     photo_splits = (
         split_sources([pid for pid, _ in photos], seed + 3)
-        if photos else {"train": [], "val": [], "test": []}
+        if photos
+        else {"train": [], "val": [], "test": []}
     )
     photo_by_id = dict(photos)
     hand_splits, hand_base_splits = split_hand_sources(hands, seed)
@@ -1402,8 +1506,11 @@ def generate_dataset(
         ),
     }
     if (
-        bg_dir or bg_real_fraction > 0 or bg_smooth_fraction > 0
-        or sheet_scale != "legacy" or no_paper_fraction > 0
+        bg_dir
+        or bg_real_fraction > 0
+        or bg_smooth_fraction > 0
+        or sheet_scale != "legacy"
+        or no_paper_fraction > 0
         or notebook_fraction > 0
     ):
         manifest["diet"] = {
@@ -1411,9 +1518,7 @@ def generate_dataset(
             "bg_smooth_fraction": bg_smooth_fraction,
             "background_photo_count": len(photos),
             "sheet_scale": sheet_scale,
-            "sheet_area_range": (
-                [0.05, 0.70] if sheet_scale == "loguniform" else None
-            ),
+            "sheet_area_range": ([0.05, 0.70] if sheet_scale == "loguniform" else None),
             "no_paper_fraction": no_paper_fraction,
             "notebook_fraction": notebook_fraction,
             "smooth_background_bases": sorted(SMOOTH_BACKGROUND_BASES),
@@ -1472,7 +1577,8 @@ def generate_dataset(
                 u = float(rng.random())
                 if photo_splits[split] and u < bg_real_fraction:
                     photo_id = photo_splits[split][
-                        int(rng.integers(len(photo_splits[split])))]
+                        int(rng.integers(len(photo_splits[split])))
+                    ]
                     background_img = photo_by_id[photo_id]
                     background_kind = "real_photo"
                     bg = f"photo:{photo_id}"
@@ -1496,8 +1602,7 @@ def generate_dataset(
             # histórico de 1 negativo a cada 5 cenas.
             if no_paper_fraction > 0:
                 if float(rng.random()) < no_paper_fraction:
-                    scene_type = NO_PAPER_TYPES[
-                        int(rng.integers(len(NO_PAPER_TYPES)))]
+                    scene_type = NO_PAPER_TYPES[int(rng.integers(len(NO_PAPER_TYPES)))]
                 else:
                     scene_type = "normal"
             elif i % 5 == 4:
@@ -1512,11 +1617,19 @@ def generate_dataset(
                 scene_type = "notebook_spread"
             second = None
             if two_hands and hand_id and len(hand_pool) > 1:
-                second_id = [h for h in hand_pool if h != hand_id][int(rng.integers(len(hand_pool) - 1))]
+                second_id = [h for h in hand_pool if h != hand_id][
+                    int(rng.integers(len(hand_pool) - 1))
+                ]
                 second = hand_by_id.get(second_id)
             scene = compose_scene(
-                seed, split, i, scene_type, paper_style,
-                hand_by_id.get(hand_id), second, bg,
+                seed,
+                split,
+                i,
+                scene_type,
+                paper_style,
+                hand_by_id.get(hand_id),
+                second,
+                bg,
                 background_img=background_img,
                 background_kind=background_kind,
                 background_sigma=background_sigma,
@@ -1530,7 +1643,11 @@ def generate_dataset(
             entry = {
                 "id": scene_id,
                 "split": split,
-                "files": [f"{scene_id}.png", f"{scene_id}_mask.png", f"{scene_id}_ink_full.png"],
+                "files": [
+                    f"{scene_id}.png",
+                    f"{scene_id}_mask.png",
+                    f"{scene_id}_ink_full.png",
+                ],
                 **scene["info"],
                 "paper_source": paper_src,
             }
@@ -1548,8 +1665,13 @@ def generate_dataset(
             paper_style = paper_src.rsplit("_", 1)[0]
             bg = bg_pool[int(rng.integers(len(bg_pool)))]
             seq = compose_scene_sequence(
-                seed, split, j, temporal_frames, paper_style,
-                hand_by_id.get(hand_id), bg,
+                seed,
+                split,
+                j,
+                temporal_frames,
+                paper_style,
+                hand_by_id.get(hand_id),
+                bg,
             )
             seq_id = f"tseq_{split}_{j:04d}"
             files: list[str] = []
@@ -1577,47 +1699,90 @@ def generate_dataset(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Gerador sintético do Draw (512x512, 4 classes).")
+    parser = argparse.ArgumentParser(
+        description="Gerador sintético do Draw (512x512, 4 classes)."
+    )
     parser.add_argument("--out", required=True, help="Diretório de saída")
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--hands-dir", default=None, help="Diretório com RGB + máscara de mãos")
+    parser.add_argument(
+        "--hands-dir", default=None, help="Diretório com RGB + máscara de mãos"
+    )
     parser.add_argument("--train", type=int, default=20)
     parser.add_argument("--val", type=int, default=3)
     parser.add_argument("--test", type=int, default=3)
-    parser.add_argument("--two-hands", action="store_true", help="Gera algumas cenas com duas mãos")
-    parser.add_argument("--temporal-train", type=int, default=0,
-                        help="Sequências temporais no train (0 = desligado, padrão)")
-    parser.add_argument("--temporal-val", type=int, default=0,
-                        help="Sequências temporais no val (0 = desligado, padrão)")
-    parser.add_argument("--temporal-frames", type=int, default=6,
-                        help="Frames por sequência temporal")
-    parser.add_argument("--bg-dir", default=None,
-                        help="Diretório com fotos reais de fundo (mesa/superfície)")
-    parser.add_argument("--bg-real-fraction", type=float, default=0.0,
-                        help="Fração das cenas com fundo de foto real (0 a 1; default 0)")
-    parser.add_argument("--bg-smooth-fraction", type=float, default=0.0,
-                        help="Fração das cenas com fundo liso de campo suave (0 a 1; default 0)")
-    parser.add_argument("--sheet-scale", choices=["legacy", "loguniform"], default="legacy",
-                        help="Escala da folha: legacy (concentra 45-70) ou "
-                             "loguniform (área 5-70, uniforme no log)")
-    parser.add_argument("--no-paper-fraction", type=float, default=0.0,
-                        help="Fração das cenas SEM folha (0 a 1; default 0 = "
-                             "ciclo histórico de negativos)")
-    parser.add_argument("--notebook-fraction", type=float, default=0.0,
-                        help="Fração das cenas COM papel que viram caderno "
-                             "aberto (dois quads + lombada; 0 a 1; default 0)")
+    parser.add_argument(
+        "--two-hands", action="store_true", help="Gera algumas cenas com duas mãos"
+    )
+    parser.add_argument(
+        "--temporal-train",
+        type=int,
+        default=0,
+        help="Sequências temporais no train (0 = desligado, padrão)",
+    )
+    parser.add_argument(
+        "--temporal-val",
+        type=int,
+        default=0,
+        help="Sequências temporais no val (0 = desligado, padrão)",
+    )
+    parser.add_argument(
+        "--temporal-frames", type=int, default=6, help="Frames por sequência temporal"
+    )
+    parser.add_argument(
+        "--bg-dir",
+        default=None,
+        help="Diretório com fotos reais de fundo (mesa/superfície)",
+    )
+    parser.add_argument(
+        "--bg-real-fraction",
+        type=float,
+        default=0.0,
+        help="Fração das cenas com fundo de foto real (0 a 1; default 0)",
+    )
+    parser.add_argument(
+        "--bg-smooth-fraction",
+        type=float,
+        default=0.0,
+        help="Fração das cenas com fundo liso de campo suave (0 a 1; default 0)",
+    )
+    parser.add_argument(
+        "--sheet-scale",
+        choices=["legacy", "loguniform"],
+        default="legacy",
+        help="Escala da folha: legacy (concentra 45-70) ou "
+        "loguniform (área 5-70, uniforme no log)",
+    )
+    parser.add_argument(
+        "--no-paper-fraction",
+        type=float,
+        default=0.0,
+        help="Fração das cenas SEM folha (0 a 1; default 0 = "
+        "ciclo histórico de negativos)",
+    )
+    parser.add_argument(
+        "--notebook-fraction",
+        type=float,
+        default=0.0,
+        help="Fração das cenas COM papel que viram caderno "
+        "aberto (dois quads + lombada; 0 a 1; default 0)",
+    )
     args = parser.parse_args()
     temporal_counts = None
     if args.temporal_train > 0 or args.temporal_val > 0:
         temporal_counts = {"train": args.temporal_train, "val": args.temporal_val}
     manifest = generate_dataset(
-        args.out, args.seed,
+        args.out,
+        args.seed,
         {"train": args.train, "val": args.val, "test": args.test},
-        args.hands_dir, args.two_hands,
-        temporal_counts, args.temporal_frames,
-        bg_dir=args.bg_dir, bg_real_fraction=args.bg_real_fraction,
+        args.hands_dir,
+        args.two_hands,
+        temporal_counts,
+        args.temporal_frames,
+        bg_dir=args.bg_dir,
+        bg_real_fraction=args.bg_real_fraction,
         bg_smooth_fraction=args.bg_smooth_fraction,
-        sheet_scale=args.sheet_scale, no_paper_fraction=args.no_paper_fraction,
+        sheet_scale=args.sheet_scale,
+        no_paper_fraction=args.no_paper_fraction,
         notebook_fraction=args.notebook_fraction,
     )
     n = len(manifest["scenes"])
@@ -1629,10 +1794,12 @@ def main() -> int:
         print(f"  sequências temporais: {n_seq} ({args.temporal_frames} frames cada)")
     if "diet" in manifest:
         d = manifest["diet"]
-        print(f"  dieta: foto-real={d['bg_real_fraction']} "
-              f"liso={d['bg_smooth_fraction']} escala={d['sheet_scale']} "
-              f"sem-papel={d['no_paper_fraction']} "
-              f"caderno={d.get('notebook_fraction', 0.0)}")
+        print(
+            f"  dieta: foto-real={d['bg_real_fraction']} "
+            f"liso={d['bg_smooth_fraction']} escala={d['sheet_scale']} "
+            f"sem-papel={d['no_paper_fraction']} "
+            f"caderno={d.get('notebook_fraction', 0.0)}"
+        )
     return 0
 
 

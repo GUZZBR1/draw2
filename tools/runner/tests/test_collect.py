@@ -15,7 +15,12 @@ import threading
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+sys.path.insert(
+    0,
+    os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    ),
+)
 
 from tools.runner.collect import collect, sha256_of
 
@@ -47,8 +52,8 @@ class FlakyHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         if start:
             self.send_header(
-                "Content-Range",
-                f"bytes {start}-{len(PAYLOAD) - 1}/{len(PAYLOAD)}")
+                "Content-Range", f"bytes {start}-{len(PAYLOAD) - 1}/{len(PAYLOAD)}"
+            )
         self.end_headers()
         self.wfile.write(body)
 
@@ -61,8 +66,7 @@ def test_resume_recovers_full_file(tmp_path):
     thread.start()
     try:
         url = f"http://127.0.0.1:{port}/model.onnx"
-        manifest = collect([{"name": "model.onnx", "url": url}],
-                           str(tmp_path))
+        manifest = collect([{"name": "model.onnx", "url": url}], str(tmp_path))
     finally:
         server.shutdown()
     target = tmp_path / "model.onnx"

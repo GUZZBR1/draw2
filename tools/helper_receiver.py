@@ -42,9 +42,9 @@ class ProtocolError(Exception):
 
 def pack_record(frame_id, capture_ts_us, payload):
     """Monta um registro completo (cabeçalho + payload) para escrever."""
-    return HEADER.pack(
-        MAGIC, VERSION, 0, frame_id, capture_ts_us, len(payload)
-    ) + payload
+    return (
+        HEADER.pack(MAGIC, VERSION, 0, frame_id, capture_ts_us, len(payload)) + payload
+    )
 
 
 def _read_exact(read, size):
@@ -60,9 +60,7 @@ def _read_exact(read, size):
         if not chunk:
             if not chunks:
                 return None
-            raise ProtocolError(
-                f"fluxo truncado: faltaram {remaining} de {size} bytes"
-            )
+            raise ProtocolError(f"fluxo truncado: faltaram {remaining} de {size} bytes")
         chunks.append(chunk)
         remaining -= len(chunk)
     return b"".join(chunks)
@@ -78,8 +76,8 @@ def _iter_records(read):
         header = _read_exact(read, HEADER_SIZE)
         if header is None:
             return
-        magic, version, _reserved, frame_id, capture_ts_us, payload_len = (
-            HEADER.unpack(header)
+        magic, version, _reserved, frame_id, capture_ts_us, payload_len = HEADER.unpack(
+            header
         )
         if magic != MAGIC:
             raise ProtocolError(
@@ -87,9 +85,7 @@ def _iter_records(read):
                 "fluxo dessincronizado ou arquivo de outro formato"
             )
         if version != VERSION:
-            raise ProtocolError(
-                f"versao {version} nao suportada (esperada {VERSION})"
-            )
+            raise ProtocolError(f"versao {version} nao suportada (esperada {VERSION})")
         payload = _read_exact(read, payload_len)
         if payload is None:
             raise ProtocolError(
@@ -102,18 +98,14 @@ def _iter_records(read):
 def frames_from_file(path):
     """Itera (frame_id, capture_ts_us, jpeg_bytes) de um arquivo gravado."""
     with open(path, "rb") as handle:
-        for frame_id, capture_ts_us, payload, _raw in _iter_records(
-            handle.read
-        ):
+        for frame_id, capture_ts_us, payload, _raw in _iter_records(handle.read):
             yield frame_id, capture_ts_us, payload
 
 
 def frames_from_socket(host, port=DEFAULT_PORT, timeout=None):
     """Itera (frame_id, capture_ts_us, jpeg_bytes) do ajudante via TCP."""
     with socket.create_connection((host, port), timeout=timeout) as sock:
-        for frame_id, capture_ts_us, payload, _raw in _iter_records(
-            sock.recv
-        ):
+        for frame_id, capture_ts_us, payload, _raw in _iter_records(sock.recv):
             yield frame_id, capture_ts_us, payload
 
 
@@ -135,9 +127,7 @@ def decode_jpeg(jpeg_bytes):
     import cv2
     import numpy as np
 
-    return cv2.imdecode(
-        np.frombuffer(jpeg_bytes, dtype=np.uint8), cv2.IMREAD_COLOR
-    )
+    return cv2.imdecode(np.frombuffer(jpeg_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
 
 
 def _synthetic_frames(n, base_id=1000, base_ts_us=5_000_000):
@@ -160,24 +150,17 @@ def _synthetic_frames(n, base_id=1000, base_ts_us=5_000_000):
             (255, 255, 255),
             2,
         )
-        ok, encoded = cv2.imencode(
-            ".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 90]
-        )
+        ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 90])
         if not ok:
             raise RuntimeError("cv2.imencode falhou no selfcheck")
-        frames.append(
-            (base_id + i, base_ts_us + i * 33_333, encoded.tobytes())
-        )
+        frames.append((base_id + i, base_ts_us + i * 33_333, encoded.tobytes()))
     return frames
 
 
 def _check_roundtrip(expected, received, label):
     """Confere ids, timestamps e bytes. Retorna (ok, mensagem)."""
     if len(received) != len(expected):
-        return False, (
-            f"{label}: n esperado {len(expected)}, recebido "
-            f"{len(received)}"
-        )
+        return False, (f"{label}: n esperado {len(expected)}, recebido {len(received)}")
     for want, got in zip(expected, received):
         if want != got:
             return False, (
@@ -219,12 +202,9 @@ def _selfcheck():
             for _frame in frames_from_file(truncated):
                 seen += 1
             failures.append(
-                "arquivo truncado: nenhum erro levantado apos os "
-                f"{seen} frames bons"
+                f"arquivo truncado: nenhum erro levantado apos os {seen} frames bons"
             )
-            print(
-                f"FAIL arquivo truncado: {seen} frames lidos sem erro"
-            )
+            print(f"FAIL arquivo truncado: {seen} frames lidos sem erro")
         except ProtocolError:
             print(
                 f"PASS arquivo truncado: erro de protocolo apos os "
@@ -232,8 +212,7 @@ def _selfcheck():
             )
             if seen != n:
                 failures.append(
-                    f"arquivo truncado: {seen} frames antes do erro, "
-                    f"esperados {n}"
+                    f"arquivo truncado: {seen} frames antes do erro, esperados {n}"
                 )
 
     # Caminho de socket: servidor loopback efêmero numa thread.
@@ -302,9 +281,7 @@ def main():
     if args.record:
         if not args.host or not args.out:
             parser.error("--record exige --host e --out")
-        count = record(
-            args.host, args.port, args.out, max_frames=args.max_frames
-        )
+        count = record(args.host, args.port, args.out, max_frames=args.max_frames)
         print(f"Gravados {count} frames em {args.out}.")
         return 0
 

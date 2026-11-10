@@ -55,17 +55,13 @@ def test_matching_entry_passes(tmp_path):
 
 def test_entry_by_relative_path_also_matches(tmp_path):
     model = _model(tmp_path, "sub/m.onnx")
-    path = _write_manifest(
-        tmp_path, {"sub/m.onnx": _entry(model)}
-    )
+    path = _write_manifest(tmp_path, {"sub/m.onnx": _entry(model)})
     assert manifest.verify_model(model, path) is not None
 
 
 def test_divergence_warns_but_does_not_raise(tmp_path, capsys):
     model = _model(tmp_path)
-    path = _write_manifest(
-        tmp_path, {"m.onnx": {"sha256": "0" * 64, "bytes": 1}}
-    )
+    path = _write_manifest(tmp_path, {"m.onnx": {"sha256": "0" * 64, "bytes": 1}})
     assert manifest.verify_model(model, path) is not None
     printed = capsys.readouterr().out
     assert "DIVERGENTE" in printed
@@ -73,17 +69,13 @@ def test_divergence_warns_but_does_not_raise(tmp_path, capsys):
 
 def test_strict_mode_turns_divergence_into_an_error(tmp_path, monkeypatch):
     model = _model(tmp_path)
-    path = _write_manifest(
-        tmp_path, {"m.onnx": {"sha256": "0" * 64, "bytes": 1}}
-    )
+    path = _write_manifest(tmp_path, {"m.onnx": {"sha256": "0" * 64, "bytes": 1}})
     monkeypatch.setenv("DRAW_MODEL_STRICT", "1")
     with pytest.raises(RuntimeError, match="DIVERGENTE"):
         manifest.verify_model(model, path)
 
 
-def test_size_mismatch_is_reported_even_with_the_right_hash(
-    tmp_path, monkeypatch
-):
+def test_size_mismatch_is_reported_even_with_the_right_hash(tmp_path, monkeypatch):
     model = _model(tmp_path)
     entry = _entry(model)
     entry["bytes"] = 999

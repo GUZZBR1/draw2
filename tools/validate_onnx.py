@@ -164,10 +164,14 @@ def run_onnx_model(onnx_path, dummy_input):
     return _as_logits_array(outputs[0])
 
 
-def validate_onnx(torch_model, onnx_path, dummy_input,
-                  max_diff_tol=DEFAULT_MAX_DIFF_TOL,
-                  min_argmax_iou=DEFAULT_MIN_ARGMAX_IOU,
-                  expected_shape=None):
+def validate_onnx(
+    torch_model,
+    onnx_path,
+    dummy_input,
+    max_diff_tol=DEFAULT_MAX_DIFF_TOL,
+    min_argmax_iou=DEFAULT_MIN_ARGMAX_IOU,
+    expected_shape=None,
+):
     """Valida um ONNX contra o modelo PyTorch original.
 
     Retorna um relatório dict, sempre com ``status``:
@@ -194,12 +198,16 @@ def validate_onnx(torch_model, onnx_path, dummy_input,
         return {"status": "skipped", "reason": str(exc), "degraded": None}
     actual_shape = tuple(torch_out.shape)
     onnx_shape = tuple(onnx_out.shape)
+
     def matches_expected(shape):
         return expected_shape is None or (
             len(shape) == len(expected_shape)
-            and all(expected is None or actual == expected
-                    for actual, expected in zip(shape, expected_shape))
+            and all(
+                expected is None or actual == expected
+                for actual, expected in zip(shape, expected_shape)
+            )
         )
+
     shape_matches = (
         actual_shape == onnx_shape
         and matches_expected(actual_shape)
@@ -210,7 +218,9 @@ def validate_onnx(torch_model, onnx_path, dummy_input,
             "status": "degraded",
             "degraded": True,
             "comparison": None,
-            "expected_shape": list(expected_shape) if expected_shape is not None else None,
+            "expected_shape": list(expected_shape)
+            if expected_shape is not None
+            else None,
             "actual_shape": list(actual_shape),
             "onnx_shape": list(onnx_shape),
             "shape_matches": False,

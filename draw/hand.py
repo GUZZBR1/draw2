@@ -95,9 +95,7 @@ def _hand_polygons(points, frame_shape):
         return polygons
     direction /= norm
     normal = np.array([-direction[1], direction[0]])
-    half_width = max(
-        0.75 * float(np.linalg.norm(points[5] - points[17])), 20.0
-    )
+    half_width = max(0.75 * float(np.linalg.norm(points[5] - points[17])), 20.0)
     frame_h, frame_w = frame_shape[:2]
     length = 1.5 * float(np.hypot(frame_w, frame_h))
     end = wrist + direction * length
@@ -105,9 +103,7 @@ def _hand_polygons(points, frame_shape):
     base_b = wrist + direction * (0.3 * norm) - normal * half_width * 0.8
     end_a = end + normal * half_width
     end_b = end - normal * half_width
-    polygons.append(
-        np.array([base_a, base_b, end_b, end_a]).astype(np.int32)
-    )
+    polygons.append(np.array([base_a, base_b, end_b, end_a]).astype(np.int32))
     return polygons
 
 
@@ -147,18 +143,14 @@ class HandMasker:
             import mediapipe as mp
 
             options = mp.tasks.vision.HandLandmarkerOptions(
-                base_options=mp.tasks.BaseOptions(
-                    model_asset_path=str(path)
-                ),
+                base_options=mp.tasks.BaseOptions(model_asset_path=str(path)),
                 running_mode=running_mode,
                 num_hands=2,
                 min_hand_detection_confidence=_MIN_CONFIDENCE,
                 min_hand_presence_confidence=_MIN_CONFIDENCE,
                 min_tracking_confidence=_MIN_CONFIDENCE,
             )
-            return mp.tasks.vision.HandLandmarker.create_from_options(
-                options
-            )
+            return mp.tasks.vision.HandLandmarker.create_from_options(options)
         except Exception:
             return None
 
@@ -173,9 +165,7 @@ class HandMasker:
             self._unavailable = True
             self._warn_once()
             return False
-        created = self._create_landmarker(
-            mp.tasks.vision.RunningMode.IMAGE
-        )
+        created = self._create_landmarker(mp.tasks.vision.RunningMode.IMAGE)
         if created is None:
             self._unavailable = True
             self._warn_once()
@@ -202,9 +192,7 @@ class HandMasker:
         except Exception:
             self._video_unavailable = True
             return False
-        created = self._create_landmarker(
-            mp.tasks.vision.RunningMode.VIDEO
-        )
+        created = self._create_landmarker(mp.tasks.vision.RunningMode.VIDEO)
         if created is None:
             self._video_unavailable = True
             return False
@@ -226,9 +214,7 @@ class HandMasker:
         exige. Sem carimbo, ou se o modo VIDEO falhar, cai no
         landmarker IMAGE de sempre.
         """
-        use_video = (
-            timestamp_ms is not None and self._ensure_video()
-        )
+        use_video = timestamp_ms is not None and self._ensure_video()
         if not use_video and not self._ensure():
             return None
         import mediapipe as mp
@@ -245,13 +231,9 @@ class HandMasker:
         image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
         result = None
         if use_video:
-            timestamp = max(
-                int(timestamp_ms), self._last_video_ts + 1
-            )
+            timestamp = max(int(timestamp_ms), self._last_video_ts + 1)
             try:
-                result = self._video_landmarker.detect_for_video(
-                    image, timestamp
-                )
+                result = self._video_landmarker.detect_for_video(image, timestamp)
                 self._last_video_ts = timestamp
             except Exception:
                 self._video_unavailable = True

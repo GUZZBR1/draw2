@@ -91,19 +91,14 @@ def _format_block(title, stats, unit, anomalies=0):
     lines.append(f"  n = {stats['n']}")
     if stats["n"] < MIN_PROTOCOL_FRAMES:
         lines.append(
-            f"  AVISO: n abaixo do protocolo "
-            f"(mínimo {MIN_PROTOCOL_FRAMES} frames)"
+            f"  AVISO: n abaixo do protocolo (mínimo {MIN_PROTOCOL_FRAMES} frames)"
         )
     lines.append(f"  mediana = {stats['median']:.3f} {unit}")
     lines.append(f"  p95 = {stats['p95']:.3f} {unit}")
-    lines.append(
-        f"  p95 - mediana (jitter) = {stats['jitter']:.3f} {unit}"
-    )
+    lines.append(f"  p95 - mediana (jitter) = {stats['jitter']:.3f} {unit}")
     lines.append(f"  desvio-padrão = {stats['std']:.3f} {unit}")
     if anomalies:
-        lines.append(
-            f"  anomalias excluidas (diferenca negativa): {anomalies}"
-        )
+        lines.append(f"  anomalias excluidas (diferenca negativa): {anomalies}")
     return lines
 
 
@@ -181,12 +176,9 @@ def _selfcheck():
     for key, want in expected.items():
         got = stats[key]
         if abs(got - want) > 1e-9:
-            failures.append(
-                f"serie exata: {key} esperado {want}, obtido {got}"
-            )
+            failures.append(f"serie exata: {key} esperado {want}, obtido {got}")
     print(
-        "PASS serie exata 0..99: mediana 49.5, p95 94.05, "
-        "jitter 44.55, desvio confere"
+        "PASS serie exata 0..99: mediana 49.5, p95 94.05, jitter 44.55, desvio confere"
         if not failures
         else "FAIL serie exata"
     )
@@ -206,8 +198,7 @@ def _selfcheck():
         if abs(got - want) > tol:
             normal_ok = False
             failures.append(
-                f"normal semeada: {name} esperado ~{want} "
-                f"(tol {tol}), obtido {got:.3f}"
+                f"normal semeada: {name} esperado ~{want} (tol {tol}), obtido {got:.3f}"
             )
     print(
         f"PASS normal semeada (n=100000): mediana "
@@ -235,9 +226,7 @@ def _selfcheck():
         )
     cap_values, _ = _diffs(records, "t_capture_us")
     cap_stats = compute_stats(cap_values)
-    ages = [
-        r["t_receive_us"] / 1000.0 - r["t_screen_ms"] for r in records
-    ]
+    ages = [r["t_receive_us"] / 1000.0 - r["t_screen_ms"] for r in records]
     age_stats = compute_stats(ages)
     e2e_ok = (
         cap_stats["median"] == 33_333
@@ -246,9 +235,7 @@ def _selfcheck():
         and age_stats["jitter"] == 0
     )
     if not e2e_ok:
-        failures.append(
-            f"ponta a ponta sintetico: {cap_stats} / {age_stats}"
-        )
+        failures.append(f"ponta a ponta sintetico: {cap_stats} / {age_stats}")
     print(
         "PASS ponta a ponta sintetico (n=250): intervalo de captura "
         "mediana 33333 us com jitter 0; idade da tela mediana 5 ms"

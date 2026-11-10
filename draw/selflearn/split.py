@@ -60,16 +60,14 @@ def assign_split(session_id, holdout_fraction=0.25, salt=_DEFAULT_SALT):
     """
     if not 0.0 < holdout_fraction < 1.0:
         raise ValueError("holdout_fraction precisa estar em (0, 1)")
-    digest = hashlib.sha256(
-        f"{salt}:{session_id}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"{salt}:{session_id}".encode("utf-8")).hexdigest()
     bucket = int(digest[:8], 16) / 0xFFFFFFFF
     return HOLDOUT if bucket < holdout_fraction else TRAIN
 
 
 def _session_flags(session):
     """(tem pagina vazia, e sessao facil) de um dict de sessao."""
-    empty = bool(session.get("has_empty_pages")) or (
-        session.get("kind") == "empty")
+    empty = bool(session.get("has_empty_pages")) or (session.get("kind") == "empty")
     easy = bool(session.get("easy")) or session.get("kind") == "easy"
     return empty, easy
 
@@ -89,21 +87,15 @@ def split_sessions(sessions, holdout_fraction=0.25, salt=_DEFAULT_SALT):
     if len(ids) != len(set(ids)):
         raise ValueError("session_id duplicado na lista de sessoes")
     by_id = {s["session_id"]: s for s in sessions}
-    assignment = {
-        sid: assign_split(sid, holdout_fraction, salt) for sid in ids
-    }
+    assignment = {sid: assign_split(sid, holdout_fraction, salt) for sid in ids}
 
     def bucket(sid):
-        digest = hashlib.sha256(
-            f"{salt}:{sid}".encode("utf-8")).hexdigest()
+        digest = hashlib.sha256(f"{salt}:{sid}".encode("utf-8")).hexdigest()
         return int(digest[:8], 16)
 
     for flag_index in (0, 1):
-        flagged = [
-            sid for sid in ids if _session_flags(by_id[sid])[flag_index]
-        ]
-        if flagged and not any(
-                assignment[sid] == HOLDOUT for sid in flagged):
+        flagged = [sid for sid in ids if _session_flags(by_id[sid])[flag_index]]
+        if flagged and not any(assignment[sid] == HOLDOUT for sid in flagged):
             candidate = min(flagged, key=bucket)
             assignment[candidate] = HOLDOUT
 
@@ -117,15 +109,14 @@ def _require_lineage(example):
     for field in ("session_id", "origin"):
         if not example.get(field):
             raise LeakageError(
-                f"exemplo sem linhagem obrigatoria: falta {field!r} "
-                f"em {example!r}")
+                f"exemplo sem linhagem obrigatoria: falta {field!r} em {example!r}"
+            )
 
 
 def assert_no_leakage(train_session_ids, holdout_session_ids):
     overlap = set(train_session_ids) & set(holdout_session_ids)
     if overlap:
-        raise LeakageError(
-            f"sessoes nos dois lados da divisao: {sorted(overlap)}")
+        raise LeakageError(f"sessoes nos dois lados da divisao: {sorted(overlap)}")
 
 
 def _raise_if_holdout(session_ids, holdout_session_ids, context):
@@ -133,18 +124,16 @@ def _raise_if_holdout(session_ids, holdout_session_ids, context):
     bad = sorted(set(session_ids) & holdout)
     if bad:
         raise LeakageError(
-            f"{context}: sessao de holdout selado nao pode entrar: "
-            f"{bad}")
+            f"{context}: sessao de holdout selado nao pode entrar: {bad}"
+        )
 
 
 def guard_train_example(example, holdout_session_ids):
     """Um exemplo so entra no treino fora do holdout."""
     _require_lineage(example)
-    _raise_if_holdout(
-        [example["session_id"]], holdout_session_ids, "treino")
+    _raise_if_holdout([example["session_id"]], holdout_session_ids, "treino")
     if example.get("split") == HOLDOUT:
-        raise LeakageError(
-            f"treino: exemplo marcado como holdout: {example!r}")
+        raise LeakageError(f"treino: exemplo marcado como holdout: {example!r}")
     return example
 
 
@@ -154,8 +143,7 @@ def guard_selection_pool(items, holdout_session_ids):
     for item in items:
         _require_lineage(item)
         session_ids.append(item["session_id"])
-    _raise_if_holdout(session_ids, holdout_session_ids,
-                      "selecao por incerteza")
+    _raise_if_holdout(session_ids, holdout_session_ids, "selecao por incerteza")
     return items
 
 
@@ -165,15 +153,13 @@ def guard_pseudo_labeling(examples, holdout_session_ids):
     for example in examples:
         _require_lineage(example)
         session_ids.append(example["session_id"])
-    _raise_if_holdout(session_ids, holdout_session_ids,
-                      "pseudo-rotulacao")
+    _raise_if_holdout(session_ids, holdout_session_ids, "pseudo-rotulacao")
     return examples
 
 
 def guard_threshold_tuning(session_ids, holdout_session_ids):
     """Calibrar limiar em sessao de holdout e consultar o selo."""
-    _raise_if_holdout(session_ids, holdout_session_ids,
-                      "tuning de limiar")
+    _raise_if_holdout(session_ids, holdout_session_ids, "tuning de limiar")
 
 
 def guard_holdout_example(example):
@@ -185,20 +171,21 @@ def guard_holdout_example(example):
     """
     _require_lineage(example)
     if is_pseudo_origin(example["origin"]):
-        raise LeakageError(
-            f"holdout: pseudo-rotulo nunca entra: {example!r}")
+        raise LeakageError(f"holdout: pseudo-rotulo nunca entra: {example!r}")
     if example["origin"] not in HOLDOUT_ALLOWED_ORIGINS:
         raise LeakageError(
             f"holdout: origem {example['origin']!r} nao e rotulo "
-            f"independente; aceito: {sorted(HOLDOUT_ALLOWED_ORIGINS)}")
+            f"independente; aceito: {sorted(HOLDOUT_ALLOWED_ORIGINS)}"
+        )
     if example.get("label_source") != "final_minus_reference":
         raise LeakageError(
             "holdout: o rotulo precisa nascer de final - referencia "
-            f"(label_source), nao da predicao: {example!r}")
+            f"(label_source), nao da predicao: {example!r}"
+        )
     if example.get("label_reviewed") is not True:
         raise LeakageError(
-            f"holdout: subtracao sem revisao manual registrada: "
-            f"{example!r}")
+            f"holdout: subtracao sem revisao manual registrada: {example!r}"
+        )
     return example
 
 
@@ -219,7 +206,8 @@ def draft_independent_label(final_bgr, reference_bgr, darkening_thr=25):
     if final.shape != reference.shape:
         raise ValueError(
             f"final e referencia com formas diferentes: "
-            f"{final.shape} x {reference.shape}")
+            f"{final.shape} x {reference.shape}"
+        )
     final_gray = final.astype(np.int16)
     reference_gray = reference.astype(np.int16)
     if final.ndim == 3:

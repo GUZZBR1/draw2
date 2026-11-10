@@ -89,9 +89,7 @@ def _separable_veto(gray):
         gray_f = gray.astype(np.float32)
         bg_row = np.median(gray_f, axis=1, keepdims=True)
         bg_col = np.median(gray_f, axis=0, keepdims=True)
-        return (gray_f <= bg_row - _VETO_DELTA) & (
-            gray_f <= bg_col - _VETO_DELTA
-        )
+        return (gray_f <= bg_row - _VETO_DELTA) & (gray_f <= bg_col - _VETO_DELTA)
     delta2 = int(round(2.0 * _VETO_DELTA))
     r2 = _twice_median_rows_u8(gray)
     c2 = _twice_median_rows_u8(np.ascontiguousarray(gray.T))
@@ -214,8 +212,7 @@ def align_to_reference(reference_gray, current_gray):
     if _ALIGN_WINDOW is None or _ALIGN_WINDOW.shape != reference_gray.shape:
         h, w = reference_gray.shape
         _ALIGN_WINDOW = cv2.createHanningWindow((w, h), cv2.CV_32F)
-    (sx, sy), response = cv2.phaseCorrelate(
-        reference_gray, current_gray, _ALIGN_WINDOW)
+    (sx, sy), response = cv2.phaseCorrelate(reference_gray, current_gray, _ALIGN_WINDOW)
     shift = float(np.hypot(sx, sy))
     if shift > _ALIGN_MAX_SHIFT_PX:
         return current_gray, (float(sx), float(sy)), float(response), False
@@ -224,9 +221,12 @@ def align_to_reference(reference_gray, current_gray):
     # deslocamento estimado (sx, sy), b = (-sx, -sy).
     m = np.array([[1.0, 0.0, -sx], [0.0, 1.0, -sy]], dtype=np.float32)
     aligned = cv2.warpAffine(
-        current_gray, m,
+        current_gray,
+        m,
         (current_gray.shape[1], current_gray.shape[0]),
-        flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
     return aligned, (float(sx), float(sy)), float(response), True
 
 
@@ -271,23 +271,23 @@ class SessionBaselineInk:
             return
         gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
         self._samples.append(gray)
-        self._sample_vis.append(
-            None if visible is None else visible.astype(bool))
+        self._sample_vis.append(None if visible is None else visible.astype(bool))
         if len(self._samples) >= _SESSION_BASE_SAMPLES:
             stack = np.stack(self._samples).astype(np.float32)
             base_raw = np.median(stack, axis=0).astype(np.float32)
             if any(v is not None for v in self._sample_vis):
-                vis = np.stack([
-                    np.ones(stack.shape[1:], dtype=bool)
-                    if v is None else v
-                    for v in self._sample_vis
-                ])
+                vis = np.stack(
+                    [
+                        np.ones(stack.shape[1:], dtype=bool) if v is None else v
+                        for v in self._sample_vis
+                    ]
+                )
                 count = vis.sum(axis=0)
-                ordered = np.sort(
-                    np.where(vis, stack, np.float32(1e6)), axis=0)
+                ordered = np.sort(np.where(vis, stack, np.float32(1e6)), axis=0)
                 pick = np.clip((count - 1) // 2, 0, stack.shape[0] - 1)
                 picked = np.take_along_axis(
-                    ordered, pick[None].astype(np.int64), axis=0)[0]
+                    ordered, pick[None].astype(np.int64), axis=0
+                )[0]
                 base_raw = np.where(
                     count >= _BASE_MIN_VISIBLE, picked, base_raw
                 ).astype(np.float32)
@@ -327,13 +327,10 @@ class SessionBaselineInk:
         if not self.ready:
             return np.zeros(shape, dtype=np.uint8)
         gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY).astype(np.float32)
-        aligned, _est, _response, _ok = align_to_reference(
-            self.reference, gray)
+        aligned, _est, _response, _ok = align_to_reference(self.reference, gray)
         sub_aligned = aligned[::2, ::2]
         if visible is not None:
-            vis_bool = (
-                visible if visible.dtype == bool else (visible > 0)
-            )
+            vis_bool = visible if visible.dtype == bool else (visible > 0)
             sub_vis = vis_bool[::2, ::2]
             if int(sub_vis.sum()) >= _MIN_GAIN_VISIBLE_SUBSAMPLES:
                 cur_median = float(np.median(sub_aligned[sub_vis]))
@@ -344,8 +341,7 @@ class SessionBaselineInk:
             vis_bool = None
         gain = 1.0
         if cur_median > 1.0 and self._ref_median is not None:
-            gain = float(np.clip(
-                self._ref_median / cur_median, 0.85, 1.18))
+            gain = float(np.clip(self._ref_median / cur_median, 0.85, 1.18))
         scaled = aligned * gain if gain != 1.0 else aligned
         blurred = cv2.GaussianBlur(scaled, (3, 3), 0)
         delta = self._baseline_min - blurred
@@ -436,16 +432,12 @@ class InkAccumulator:
         # ink-optim/check_predicates.py.
         enter_frac = Fraction(float(enter)).limit_denominator(100)
         exit_frac = Fraction(float(exit)).limit_denominator(100)
-        if float(enter_frac) != float(enter) or float(
-            exit_frac
-        ) != float(exit):
+        if float(enter_frac) != float(enter) or float(exit_frac) != float(exit):
             raise ValueError(
                 "enter/exit precisam de fracao exata de denominador "
                 "<= 100 para o julgamento inteiro"
             )
-        self._count_scale = (
-            enter_frac.denominator * exit_frac.denominator
-        )
+        self._count_scale = enter_frac.denominator * exit_frac.denominator
         self._enter_coef = enter_frac.numerator * exit_frac.denominator
         self._exit_coef = exit_frac.numerator * enter_frac.denominator
         self._min_visible = min_visible
@@ -470,9 +462,7 @@ class InkAccumulator:
             self._exit_lut = None
         size = 2 * tolerance + 1
         self._kernel = np.ones((size, size), dtype=np.uint8)
-        self._shape = (
-            (config.PAPER_H, config.PAPER_W) if shape is None else shape
-        )
+        self._shape = (config.PAPER_H, config.PAPER_W) if shape is None else shape
         self.reset()
 
     def reset(self):
@@ -520,10 +510,7 @@ class InkAccumulator:
             visible = visible_mask.copy()
         else:
             visible = visible_mask > 0
-        evidence = (
-            cv2.dilate(ink.astype(np.uint8), self._kernel).astype(bool)
-            & visible
-        )
+        evidence = cv2.dilate(ink.astype(np.uint8), self._kernel).astype(bool) & visible
         if len(self._ink_votes) == self._window:
             self._ink_counts -= self._ink_votes.popleft()
             self._vis_counts -= self._vis_votes.popleft()
@@ -552,7 +539,6 @@ class InkAccumulator:
         canvas = np.empty(self._shape, dtype=np.uint8)
         np.multiply(self.state, 255, out=canvas, dtype=np.uint8)
         return canvas
-
 
     def _update_stamps(self, evidence, visible, t_ms):
         """Mantém first_seen/last_update sobre o estado já atualizado.

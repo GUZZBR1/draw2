@@ -23,8 +23,8 @@ DECISIONS = ("pendente", "aprovado", "reprovado", "descartado")
 STATUSES = ("queued", "running", "complete", "error", "cancelled")
 
 DEFAULT_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "candidates.jsonl")
+    os.path.dirname(os.path.abspath(__file__)), "candidates.jsonl"
+)
 
 
 class Archive:
@@ -58,8 +58,10 @@ class Archive:
 
     def get(self, candidate_id):
         for row in self._read_all():
-            if row.get("id") == candidate_id or \
-                    row.get("recipe", {}).get("name") == candidate_id:
+            if (
+                row.get("id") == candidate_id
+                or row.get("recipe", {}).get("name") == candidate_id
+            ):
                 return row
         return None
 
@@ -73,8 +75,7 @@ def main(argv):
             return 0
         for row in rows:
             name = row.get("recipe", {}).get("name", row.get("id", "?"))
-            print(f"{name}: status={row.get('status')} "
-                  f"decisao={row.get('decision')}")
+            print(f"{name}: status={row.get('status')} decisao={row.get('decision')}")
         return 0
     if len(argv) >= 3 and argv[1] == "show":
         row = archive.get(argv[2])

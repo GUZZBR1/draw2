@@ -125,9 +125,9 @@ def test_streaming_confusion_metrics_match_full_evaluation():
     pred = gt.copy()
     pred[:2, :2] = seg_metrics.BACKGROUND
     pred[7, 7] = 0
-    assert seg_metrics.evaluate_confusion_matrix(seg_metrics.confusion_matrix(pred, gt), 4) == (
-        seg_metrics.evaluate(pred, gt)
-    )
+    assert seg_metrics.evaluate_confusion_matrix(
+        seg_metrics.confusion_matrix(pred, gt), 4
+    ) == (seg_metrics.evaluate(pred, gt))
 
 
 def test_scenario_battery_has_exactly_fifteen():
@@ -158,7 +158,9 @@ def test_scenario_battery_has_exactly_fifteen():
 def test_save_predictions_writes_png_and_manifest(tmp_path):
     pred = _mask_with_all_classes()
     predictions = {"01_clean_sheet": pred}
-    manifest_path = seg_metrics.save_predictions(tmp_path, predictions, model_name="dummy-v1")
+    manifest_path = seg_metrics.save_predictions(
+        tmp_path, predictions, model_name="dummy-v1"
+    )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["model_name"] == "dummy-v1"
     assert "01_clean_sheet" in manifest["scenarios"]

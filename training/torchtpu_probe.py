@@ -22,6 +22,7 @@ import torch
 
 try:
     import torch_tpu
+
     VER = getattr(torch_tpu, "__version__", "?")
 except ImportError:
     VER = None
@@ -31,8 +32,10 @@ if VER is None:
     raise SystemExit(2)
 
 if not torch.accelerator.is_available():
-    print("ERRO: torch.accelerator sem device disponivel — "
-          "a sessao nao tem TPU", flush=True)
+    print(
+        "ERRO: torch.accelerator sem device disponivel — a sessao nao tem TPU",
+        flush=True,
+    )
     raise SystemExit(2)
 
 dev = torch.device("tpu")
@@ -40,14 +43,20 @@ probe = (torch.ones(1, device=dev) + 1).cpu()
 assert float(probe) == 2.0
 props = torch.tpu.get_device_properties()
 world = torch.accelerator.device_count()
-_hbm = getattr(props, "hbm_bytes_per_device", None) \
-    or getattr(props, "hbm_bytes_per_chip", None)
+_hbm = getattr(props, "hbm_bytes_per_device", None) or getattr(
+    props, "hbm_bytes_per_chip", None
+)
 HBM_GIB = round(_hbm / 2**30, 1) if _hbm else None
 NAME = getattr(props, "name", "tpu")
-print("DEV_OK", NAME,
-      f"world={world}",
-      f"hbm_gib={HBM_GIB}",
-      f"torch={torch.__version__}", f"torch_tpu={VER}", flush=True)
+print(
+    "DEV_OK",
+    NAME,
+    f"world={world}",
+    f"hbm_gib={HBM_GIB}",
+    f"torch={torch.__version__}",
+    f"torch_tpu={VER}",
+    flush=True,
+)
 
 torch.manual_seed(0)
 lin = torch.nn.Linear(64, 64).to(dev)
@@ -59,8 +68,17 @@ with torch.autocast(device_type="tpu", dtype=torch.bfloat16):
 loss.backward()
 opt.step()
 torch.accelerator.synchronize()
-print("PROBE_STEP_OK", json.dumps({"loss": round(float(loss), 4)}),
-      flush=True)
-print("PROBE_JSON", json.dumps(
-    {"world": world, "device": NAME, "hbm_gib": HBM_GIB,
-     "torch": torch.__version__, "torch_tpu": VER}), flush=True)
+print("PROBE_STEP_OK", json.dumps({"loss": round(float(loss), 4)}), flush=True)
+print(
+    "PROBE_JSON",
+    json.dumps(
+        {
+            "world": world,
+            "device": NAME,
+            "hbm_gib": HBM_GIB,
+            "torch": torch.__version__,
+            "torch_tpu": VER,
+        }
+    ),
+    flush=True,
+)

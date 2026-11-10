@@ -38,30 +38,36 @@ def test_gate():
     # Dentro da folha (850x1200) vale; fora não vale.
     check("portao dentro", landmark_on_sheet((425.0, 600.0)))
     check("portao fora (pe, y=1500)", not landmark_on_sheet((400.0, 1500.0)))
-    check("portao fora (outra mao, y=2070)",
-          not landmark_on_sheet((300.0, 2070.0)))
+    check("portao fora (outra mao, y=2070)", not landmark_on_sheet((300.0, 2070.0)))
     # Margem: y=1230 está 30 px abaixo da borda inferior.
-    check("portao margem 60 aceita y=1230",
-          landmark_on_sheet((400.0, 1230.0), margin_px=60.0))
-    check("portao margem 0 recusa y=1230",
-          not landmark_on_sheet((400.0, 1230.0), margin_px=0.0))
-    check("portao margem 60 recusa y=1270",
-          not landmark_on_sheet((400.0, 1270.0), margin_px=60.0))
+    check(
+        "portao margem 60 aceita y=1230",
+        landmark_on_sheet((400.0, 1230.0), margin_px=60.0),
+    )
+    check(
+        "portao margem 0 recusa y=1230",
+        not landmark_on_sheet((400.0, 1230.0), margin_px=0.0),
+    )
+    check(
+        "portao margem 60 recusa y=1270",
+        not landmark_on_sheet((400.0, 1270.0), margin_px=60.0),
+    )
     check("portao None nao vale", not landmark_on_sheet(None))
     # Quadrilátero genérico inclinado, margem perpendicular uniforme.
     quad = [(100.0, 100.0), (300.0, 100.0), (300.0, 300.0), (100.0, 300.0)]
-    check("quad generico dentro",
-          point_in_expanded_quad((200.0, 200.0), quad, 0.0))
-    check("quad generico fora sem margem",
-          not point_in_expanded_quad((200.0, 320.0), quad, 0.0))
-    check("quad generico fora com margem 30",
-          point_in_expanded_quad((200.0, 320.0), quad, 30.0))
+    check("quad generico dentro", point_in_expanded_quad((200.0, 200.0), quad, 0.0))
+    check(
+        "quad generico fora sem margem",
+        not point_in_expanded_quad((200.0, 320.0), quad, 0.0),
+    )
+    check(
+        "quad generico fora com margem 30",
+        point_in_expanded_quad((200.0, 320.0), quad, 30.0),
+    )
     # Ordem horária também funciona.
     quad_cw = list(reversed(quad))
-    check("quad horario dentro",
-          point_in_expanded_quad((200.0, 200.0), quad_cw, 0.0))
-    check("quad horario fora",
-          not point_in_expanded_quad((200.0, 320.0), quad_cw, 0.0))
+    check("quad horario dentro", point_in_expanded_quad((200.0, 200.0), quad_cw, 0.0))
+    check("quad horario fora", not point_in_expanded_quad((200.0, 320.0), quad_cw, 0.0))
 
 
 def test_one_euro_still_and_step():
@@ -72,9 +78,7 @@ def test_one_euro_still_and_step():
     truth = np.array([300.0, 300.0])
     samples = truth + rng.normal(0.0, 8.0, size=(n_still, 2))
     filt = OneEuroFilter2D(mincutoff=0.5, beta=0.002, dcutoff=1.0)
-    out = np.array(
-        [filt.filter(i / fps, tuple(p)) for i, p in enumerate(samples)]
-    )
+    out = np.array([filt.filter(i / fps, tuple(p)) for i, p in enumerate(samples)])
     # Descarta as 10 primeiras amostras (assentamento do filtro).
     raw_std = samples[10:].std(axis=0)
     filt_std = out[10:].std(axis=0)

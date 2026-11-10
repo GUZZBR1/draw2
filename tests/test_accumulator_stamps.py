@@ -38,9 +38,9 @@ STROKE_A = (slice(100, 112), slice(100, 300))
 ERASE_B = (slice(100, 112), slice(180, 240))
 STROKE_C = (slice(500, 512), slice(400, 600))
 HAND = (slice(90, 130), slice(130, 170))
-P_HAND = (105, 150)   # tinta de A coberta pela mão na fase 2
+P_HAND = (105, 150)  # tinta de A coberta pela mão na fase 2
 P_ERASE = (105, 200)  # tinta de A apagada na fase 3
-P_C = (505, 500)      # tinta de C, desenhada na fase 4
+P_C = (505, 500)  # tinta de C, desenhada na fase 4
 
 
 def build_sequence():
@@ -87,8 +87,10 @@ def main():
             )
         )
 
-    print(f"regressao de raster: {len(frames)} frames comparados, "
-          f"{frames_divergentes} divergentes")
+    print(
+        f"regressao de raster: {len(frames)} frames comparados, "
+        f"{frames_divergentes} divergentes"
+    )
     assert frames_divergentes == 0, "canvas divergiu da implementacao anterior"
     assert np.array_equal(acc_old.state, acc_new.state)
     print("REGRESSAO OK: canvas byte-identico em todos os frames")
@@ -123,22 +125,24 @@ def main():
     assert fs29[P_HAND] == fs19[P_HAND] and lu29[P_HAND] == lu19[P_HAND], (
         "carimbo mudou sob a mao"
     )
-    print(f"mao: P_HAND congelado (first={fs19[P_HAND]}, last={lu19[P_HAND]}) "
-          "nos frames 20-29")
+    print(
+        f"mao: P_HAND congelado (first={fs19[P_HAND]}, last={lu19[P_HAND]}) "
+        "nos frames 20-29"
+    )
 
     # Renovacao: last_update de P_C acompanha o t dos frames finais e
     # first_seen e o t do frame em que C entrou no canvas.
     state_f, fs_f, lu_f = snapshots[-1]
-    entrada_c = next(
-        i for i, (state, _, _) in enumerate(snapshots) if state[P_C]
-    )
+    entrada_c = next(i for i, (state, _, _) in enumerate(snapshots) if state[P_C])
     t_entrada_c = T0_MS + DT_MS * entrada_c
     assert state_f[P_C]
     assert fs_f[P_C] == t_entrada_c, (fs_f[P_C], t_entrada_c)
     assert lu_f[P_C] == T0_MS + DT_MS * (N_FRAMES - 1)
-    print(f"renovacao: P_C entrou no frame {entrada_c} "
-          f"(first={fs_f[P_C]}), last_update={lu_f[P_C]} "
-          f"= t do ultimo frame")
+    print(
+        f"renovacao: P_C entrou no frame {entrada_c} "
+        f"(first={fs_f[P_C]}), last_update={lu_f[P_C]} "
+        f"= t do ultimo frame"
+    )
 
     # Borracha: P_ERASE sai do canvas e os carimbos zeram no mesmo frame.
     saida = next(
@@ -165,15 +169,17 @@ def main():
     for _ in range(6):
         acc_none.update(obs)
     assert int((acc_none.first_seen_ms() > 0).sum()) > 0
-    print("sem t_capture_ms: carimbos preenchidos pelo relogio de "
-          "processamento (medem processamento, nao captura)")
+    print(
+        "sem t_capture_ms: carimbos preenchidos pelo relogio de "
+        "processamento (medem processamento, nao captura)"
+    )
 
     # Custo de memoria dos dois planos.
-    bytes_planos = (
-        acc_new.first_seen_ms().nbytes + acc_new.last_update_ms().nbytes
+    bytes_planos = acc_new.first_seen_ms().nbytes + acc_new.last_update_ms().nbytes
+    print(
+        f"memoria dos carimbos: {bytes_planos} bytes "
+        f"({bytes_planos / 2**20:.2f} MiB) para {H}x{W} uint32 x2"
     )
-    print(f"memoria dos carimbos: {bytes_planos} bytes "
-          f"({bytes_planos / 2**20:.2f} MiB) para {H}x{W} uint32 x2")
     assert bytes_planos == 2 * H * W * 4
 
     print("TESTE DOS CARIMBOS OK")

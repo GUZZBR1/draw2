@@ -84,19 +84,54 @@ _PRISTINE = {
 def test_default_scenes_byte_identical_to_pristine():
     hands = gs.synthetic_hand_sources()
     cases = [
-        ("normal_wood", dict(scene_type="normal", paper_style="white",
-                             hand=hands[0], background_source="table_wood")),
-        ("normal_light", dict(scene_type="normal", paper_style="ruled",
-                              hand=hands[1], background_source="table_light")),
+        (
+            "normal_wood",
+            dict(
+                scene_type="normal",
+                paper_style="white",
+                hand=hands[0],
+                background_source="table_wood",
+            ),
+        ),
+        (
+            "normal_light",
+            dict(
+                scene_type="normal",
+                paper_style="ruled",
+                hand=hands[1],
+                background_source="table_light",
+            ),
+        ),
         ("empty", dict(scene_type="empty_table", background_source="table_gray")),
-        ("white_object", dict(scene_type="white_object",
-                         background_source="table_dark")),
-        ("tiny", dict(scene_type="tiny_sheet", paper_style="notebook",
-                      hand=hands[2], background_source="table_blue")),
-        ("hand_no_sheet", dict(scene_type="hand_no_sheet", hand=hands[3],
-                              background_source="table_brown")),
-        ("sheet_out", dict(scene_type="sheet_out", paper_style="yellowed",
-                       background_source="table_wood")),
+        (
+            "white_object",
+            dict(scene_type="white_object", background_source="table_dark"),
+        ),
+        (
+            "tiny",
+            dict(
+                scene_type="tiny_sheet",
+                paper_style="notebook",
+                hand=hands[2],
+                background_source="table_blue",
+            ),
+        ),
+        (
+            "hand_no_sheet",
+            dict(
+                scene_type="hand_no_sheet",
+                hand=hands[3],
+                background_source="table_brown",
+            ),
+        ),
+        (
+            "sheet_out",
+            dict(
+                scene_type="sheet_out",
+                paper_style="yellowed",
+                background_source="table_wood",
+            ),
+        ),
     ]
     for name, kw in cases:
         scene = gs.compose_scene(42, "train", 7, **kw)
@@ -136,7 +171,9 @@ def test_smooth_background_unit_sigma_tracks_target():
 def test_smooth_fraction_dataset_covers_low_sigma(tmp_path):
     out = tmp_path / "ds"
     manifest = gs.generate_dataset(
-        out, seed=42, counts={"train": 40, "val": 1, "test": 1},
+        out,
+        seed=42,
+        counts={"train": 40, "val": 1, "test": 1},
         bg_smooth_fraction=1.0,
     )
     assert manifest["diet"]["bg_smooth_fraction"] == 1.0
@@ -162,7 +199,14 @@ def test_loguniform_scale_covers_5_to_70_percent():
     fracs = []
     for i in range(60):
         scene = gs.compose_scene(
-            7, "train", i, "normal", "white", None, None, "table_wood",
+            7,
+            "train",
+            i,
+            "normal",
+            "white",
+            None,
+            None,
+            "table_wood",
             sheet_scale="loguniform",
         )
         fracs.append(scene["info"]["paper_fraction"])
@@ -184,7 +228,9 @@ def test_loguniform_scale_covers_5_to_70_percent():
 def test_no_paper_fraction_is_real_and_clean(tmp_path):
     out = tmp_path / "ds"
     manifest = gs.generate_dataset(
-        out, seed=42, counts={"train": 100, "val": 1, "test": 1},
+        out,
+        seed=42,
+        counts={"train": 100, "val": 1, "test": 1},
         no_paper_fraction=0.3,
     )
     train = [s for s in manifest["scenes"] if s["split"] == "train"]
@@ -200,12 +246,12 @@ def test_no_paper_fraction_is_real_and_clean(tmp_path):
         assert not (mask == gs.INK).any()
 
     manifest_all = gs.generate_dataset(
-        tmp_path / "ds2", seed=42, counts={"train": 10, "val": 1, "test": 1},
+        tmp_path / "ds2",
+        seed=42,
+        counts={"train": 10, "val": 1, "test": 1},
         no_paper_fraction=1.0,
     )
-    assert all(
-        s["scene_type"] in gs.NO_PAPER_TYPES for s in manifest_all["scenes"]
-    )
+    assert all(s["scene_type"] in gs.NO_PAPER_TYPES for s in manifest_all["scenes"])
 
 
 def test_real_photo_backgrounds_split_and_recorded(tmp_path):
@@ -217,8 +263,11 @@ def test_real_photo_backgrounds_split_and_recorded(tmp_path):
         cv2.imwrite(str(pool / f"desk_{k}.png"), img)
     out = tmp_path / "ds"
     manifest = gs.generate_dataset(
-        out, seed=42, counts={"train": 12, "val": 2, "test": 2},
-        bg_dir=pool, bg_real_fraction=1.0,
+        out,
+        seed=42,
+        counts={"train": 12, "val": 2, "test": 2},
+        bg_dir=pool,
+        bg_real_fraction=1.0,
     )
     assert manifest["diet"]["background_photo_count"] == 6
     photo_splits = manifest["splits"]["background_photos"]

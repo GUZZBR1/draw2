@@ -18,15 +18,20 @@ def _passing_measurements():
         "candidate": {"name": "cand-x", "model_sha256": "abc"},
         "dibco": {"iou": 0.20, "thin_recall": 0.45, "pages": 136},
         "empty_warps": {"fp_fractions": [0.0005, 0.0006, 0.0004]},
-        "drawn_warps": {"recall_of_baseline":
-                        {"f04": 0.8, "f05": 0.75, "f08": 0.9}},
-        "print_leak": {"leak_frac": 0.003, "print_px": 50000,
-                       "pages": 12},
-        "invariance": {"print_center_notink": 0.999,
-                       "ink_margin_ratio_min": 0.93, "pairs": 24},
+        "drawn_warps": {"recall_of_baseline": {"f04": 0.8, "f05": 0.75, "f08": 0.9}},
+        "print_leak": {"leak_frac": 0.003, "print_px": 50000, "pages": 12},
+        "invariance": {
+            "print_center_notink": 0.999,
+            "ink_margin_ratio_min": 0.93,
+            "pairs": 24,
+        },
         "real_replay": {
-            "candidate": {"primary": 0.80, "worst_group": 0.70,
-                          "holdout_sessions": 6, "holdout_pages": 30},
+            "candidate": {
+                "primary": 0.80,
+                "worst_group": 0.70,
+                "holdout_sessions": 6,
+                "holdout_pages": 30,
+            },
             "baseline": {"primary": 0.75, "worst_group": 0.70},
         },
     }
@@ -123,25 +128,34 @@ def test_wilson_and_bootstrap_intervals():
 
 def test_adapters_map_lab_formats():
     static = {
-        "dibco": {"aggregate": {"iou": 0.19, "recall_thin": 0.41,
-                                "pages": 136},
-                  "pages": [{"iou": 0.5, "recall_thin": 0.6},
-                            {"iou": 0.1, "recall_thin": 0.2}]},
-        "desk_warps": [{"id": "f01", "role": "empty",
-                        "ink_fraction_at_0.7": 0.0005},
-                       {"id": "f04", "role": "drawn",
-                        "ink_fraction_at_0.7": 0.009}],
+        "dibco": {
+            "aggregate": {"iou": 0.19, "recall_thin": 0.41, "pages": 136},
+            "pages": [
+                {"iou": 0.5, "recall_thin": 0.6},
+                {"iou": 0.1, "recall_thin": 0.2},
+            ],
+        },
+        "desk_warps": [
+            {"id": "f01", "role": "empty", "ink_fraction_at_0.7": 0.0005},
+            {"id": "f04", "role": "drawn", "ink_fraction_at_0.7": 0.009},
+        ],
     }
     m = judge.from_static_results(static)
     assert m["dibco"]["iou"] == 0.19 and m["dibco"]["pages"] == 136
     assert m["empty_warps"]["fp_fractions"] == [0.0005]
     assert "drawn_warps" not in m  # fracao de tinta nao e recall
 
-    tri = {"rulers_ema": {
-        "PRINT": {"pages": 9, "print_px": 40000, "leak_frac": 0.004,
-                  "gate_le_0.005": True},
-        "INV": {"print_center_notink": 0.999,
-                "ink_margin_ratio_min": 0.95}}}
+    tri = {
+        "rulers_ema": {
+            "PRINT": {
+                "pages": 9,
+                "print_px": 40000,
+                "leak_frac": 0.004,
+                "gate_le_0.005": True,
+            },
+            "INV": {"print_center_notink": 0.999, "ink_margin_ratio_min": 0.95},
+        }
+    }
     m = judge.from_tri_metrics(tri)
     assert m["print_leak"]["leak_frac"] == 0.004
     assert m["invariance"]["pairs"] is None
@@ -156,12 +170,24 @@ def test_tri_adapter_new_format_unlocks_wilson_ci():
     # O corpo TRI passou a emitir leak_px e as contagens do
     # impresso no centro: o adaptador repassa, e os portoes TRI
     # ganham o IC95 de Wilson que faltava via --tri-metrics.
-    tri = {"rulers_ema": {
-        "PRINT": {"pages": 9, "print_px": 40000, "leak_px": 160,
-                  "leak_frac": 0.004, "gate_le_0.005": True},
-        "INV": {"print_center_notink": 0.999,
-                "ink_margin_ratio_min": 0.95, "pairs": 24,
-                "print_center_px": 40000, "print_center_leak_px": 40}}}
+    tri = {
+        "rulers_ema": {
+            "PRINT": {
+                "pages": 9,
+                "print_px": 40000,
+                "leak_px": 160,
+                "leak_frac": 0.004,
+                "gate_le_0.005": True,
+            },
+            "INV": {
+                "print_center_notink": 0.999,
+                "ink_margin_ratio_min": 0.95,
+                "pairs": 24,
+                "print_center_px": 40000,
+                "print_center_leak_px": 40,
+            },
+        }
+    }
     m = judge.from_tri_metrics(tri)
     assert m["print_leak"]["leak_px"] == 160
     assert m["invariance"]["pairs"] == 24

@@ -104,10 +104,12 @@ class _MediaPipeHandPresence:
             # por set_hand_presence, e marcar movimento aqui so
             # reseta o relogio de quietude da mao — conservador.
             return True, True
-        centroid_step = float(np.hypot(
-            signature[1] - previous[1],
-            signature[2] - previous[2],
-        ))
+        centroid_step = float(
+            np.hypot(
+                signature[1] - previous[1],
+                signature[2] - previous[2],
+            )
+        )
         area_step = abs(signature[0] - previous[0]) / previous[0]
         moved = (
             centroid_step > _HAND_MOVE_CENTROID_PX
@@ -179,9 +181,7 @@ class _HandPresenceWorker:
                 frame, timestamp_ms = self._pending
                 self._pending = None
             try:
-                present, moved = self._presence.sample(
-                    frame, timestamp_ms
-                )
+                present, moved = self._presence.sample(frame, timestamp_ms)
             except Exception as error:  # noqa: BLE001 - vai para o laco
                 with self._condition:
                     self._error = error

@@ -59,7 +59,9 @@ def test_consistency_l1_and_kl_differ_from_mse_but_vanish_on_equal():
     kl = tr.masked_temporal_consistency_loss(a, b, change, mode="kl")
     assert l1.item() > 0 and kl.item() > 0
     assert not torch.allclose(l1, mse)
-    assert tr.masked_temporal_consistency_loss(a, a.clone(), change, mode="kl").item() == pytest.approx(0.0, abs=1e-6)
+    assert tr.masked_temporal_consistency_loss(
+        a, a.clone(), change, mode="kl"
+    ).item() == pytest.approx(0.0, abs=1e-6)
 
 
 def test_trim_drops_the_largest_terms():
@@ -111,11 +113,16 @@ def _write_pairs_fixture(root):
         cv2.imwrite(str(masks / f"{a}.png"), mask)
         cv2.imwrite(str(masks / f"{b}.png"), mask_b)
         cv2.imwrite(str(masks / f"{a}_{b}_change.png"), change)
-        rows.append({
-            "frame_a": f"frames/{a}.png", "frame_b": f"frames/{b}.png",
-            "mask_a": f"masks/{a}.png", "mask_b": f"masks/{b}.png",
-            "change": f"masks/{a}_{b}_change.png", "split": split,
-        })
+        rows.append(
+            {
+                "frame_a": f"frames/{a}.png",
+                "frame_b": f"frames/{b}.png",
+                "mask_a": f"masks/{a}.png",
+                "mask_b": f"masks/{b}.png",
+                "change": f"masks/{a}_{b}_change.png",
+                "split": split,
+            }
+        )
     with (root / "pairs.csv").open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
         w.writeheader()

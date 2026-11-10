@@ -7,6 +7,7 @@ passo morre com "GET was unable to find an engine to execute this
 computation". A seleção tem que exigir capability >= 8 além do teste
 do torch. O `torch` é injetado na função, então o teste usa um dublê.
 """
+
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,8 +17,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "training"))
 from train import configure_mixed_precision, cuda_bf16_supported  # noqa: E402
 
 
-def _fake_torch(device_type="cuda", bf16=True, capability=(8, 0),
-                capability_raises=False):
+def _fake_torch(
+    device_type="cuda", bf16=True, capability=(8, 0), capability_raises=False
+):
     def _capability(_device):
         if capability_raises:
             raise RuntimeError("sem device")

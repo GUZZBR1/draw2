@@ -25,12 +25,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sessions", default="captures/sessions")
     parser.add_argument("--out", default="captures/pool")
-    parser.add_argument("--min-holdout-sessions", type=int,
-                        default=gate.MIN_HOLDOUT_SESSIONS)
+    parser.add_argument(
+        "--min-holdout-sessions", type=int, default=gate.MIN_HOLDOUT_SESSIONS
+    )
     args = parser.parse_args()
     summary = process.process_pool(
-        args.sessions, args.out,
-        min_holdout_sessions=args.min_holdout_sessions)
+        args.sessions, args.out, min_holdout_sessions=args.min_holdout_sessions
+    )
     print(process.format_summary(summary))
     return 0
 

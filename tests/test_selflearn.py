@@ -8,8 +8,13 @@ import pytest
 
 from draw.selflearn.collect import ExampleRecorder
 from draw.selflearn.monitor import (
-    classic_witness, divergence, entropy_map, margin, suspicion,
-    temporal_violations)
+    classic_witness,
+    divergence,
+    entropy_map,
+    margin,
+    suspicion,
+    temporal_violations,
+)
 from draw.selflearn.select import rank_examples
 from draw.selflearn.teacher import pseudo_label, temporal_aggregate
 
@@ -74,8 +79,7 @@ def test_recorder_writes_files_and_manifest_hash_matches(tmp_path):
     digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
     assert digest == row["sha256"]
 
-    lines = (tmp_path / "collected" / "manifest.jsonl") \
-        .read_text().strip().splitlines()
+    lines = (tmp_path / "collected" / "manifest.jsonl").read_text().strip().splitlines()
     assert len(lines) == 1
     saved = json.loads(lines[0])
     assert saved["session_id"] == "sess1"
@@ -85,8 +89,7 @@ def test_recorder_writes_files_and_manifest_hash_matches(tmp_path):
     assert saved["corners"] == corners
 
 
-def test_recorder_concurrent_same_millisecond_never_overwrites(
-        tmp_path, monkeypatch):
+def test_recorder_concurrent_same_millisecond_never_overwrites(tmp_path, monkeypatch):
     # Dois gravadores, mesmo diretorio, mesma sessao, mesmo
     # milissegundo (issue #21): nomes unicos, nenhum arquivo
     # sobrescrito, e cada linha do manifesto bate com o seu arquivo.
@@ -131,8 +134,7 @@ def _item(session, tta, novelty=0.0):
 
 
 def test_ranking_orders_high_disagreement_first_and_respects_cap():
-    items = [_item("a", 0.9), _item("a", 0.8), _item("a", 0.7),
-             _item("b", 0.6)]
+    items = [_item("a", 0.9), _item("a", 0.8), _item("a", 0.7), _item("b", 0.6)]
     ranked = rank_examples(items, per_session_cap=2, random_quota=0.0)
     sessions = [r["session_id"] for r in ranked]
     assert sessions.count("a") <= 2
@@ -143,10 +145,14 @@ def test_ranking_orders_high_disagreement_first_and_respects_cap():
 
 
 def test_ranking_random_quota_filled_from_remainder():
-    items = [_item("a", 0.9), _item("a", 0.8), _item("a", 0.7),
-             _item("a", 0.6), _item("a", 0.5)]
-    ranked = rank_examples(items, per_session_cap=4, random_quota=0.25,
-                           seed=3)
+    items = [
+        _item("a", 0.9),
+        _item("a", 0.8),
+        _item("a", 0.7),
+        _item("a", 0.6),
+        _item("a", 0.5),
+    ]
+    ranked = rank_examples(items, per_session_cap=4, random_quota=0.25, seed=3)
     quota = [r for r in ranked if "random_quota" in r["reasons"]]
     assert len(ranked) == 4
     assert len(quota) == 1
@@ -156,10 +162,8 @@ def test_ranking_random_quota_filled_from_remainder():
 def test_ranking_random_quota_filled_without_overflow():
     # Coleta pequena: nenhuma sessao estoura o teto, nao ha overflow,
     # e mesmo assim a cota aleatoria tem de ser cumprida (issue #20).
-    items = [_item("a", 0.9), _item("a", 0.8), _item("b", 0.7),
-             _item("b", 0.6)]
-    ranked = rank_examples(items, per_session_cap=2, random_quota=0.5,
-                           seed=1)
+    items = [_item("a", 0.9), _item("a", 0.8), _item("b", 0.7), _item("b", 0.6)]
+    ranked = rank_examples(items, per_session_cap=2, random_quota=0.5, seed=1)
     quota = [r for r in ranked if "random_quota" in r["reasons"]]
     assert len(ranked) == 4
     assert len(quota) == 2
@@ -176,8 +180,7 @@ def test_ranking_random_quota_unmet_is_recorded():
     # Cota maior que a populacao candidata: o nao atendido fica
     # registrado explicitamente em vez de sumir em silencio.
     items = [_item("a", 0.9), _item("b", 0.8)]
-    ranked = rank_examples(items, per_session_cap=3, random_quota=1.5,
-                           seed=0)
+    ranked = rank_examples(items, per_session_cap=3, random_quota=1.5, seed=0)
     quota = [r for r in ranked if "random_quota" in r["reasons"]]
     assert ranked.random_quota_requested == 3
     assert len(quota) == 2

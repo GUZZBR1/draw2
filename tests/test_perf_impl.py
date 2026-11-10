@@ -23,6 +23,7 @@ from draw import hand as hand_module  # noqa: E402
 
 # --- T10: referencia empilhada do voto (a implementacao anterior) ---
 
+
 class _ReferenceAccumulator:
     def __init__(self, threshold=0.7):
         self.threshold = float(threshold)
@@ -48,8 +49,7 @@ class _ReferenceAccumulator:
         canvas_before = int(np.count_nonzero(self._confirmed))
         mask_now = prob > self.threshold
         turn = False
-        if canvas_before >= app_module._INK_TURN_MIN_CANVAS_PX \
-                and not self._turn_fired:
+        if canvas_before >= app_module._INK_TURN_MIN_CANVAS_PX and not self._turn_fired:
             covered = int(np.count_nonzero(mask_now & confirmed_before))
             if covered <= app_module._INK_TURN_MAX_OVERLAP * canvas_before:
                 self._low_overlap_streak += 1
@@ -87,18 +87,12 @@ class _ReferenceAccumulator:
         seen_in_window = np.max(stack, axis=0) > self.threshold
         provisional_now = seen_in_window & ~confirmed_now
         previous_provisional = self._provisional > 0
-        retracted = (
-            previous_provisional & ~provisional_now & ~confirmed_now
-        )
+        retracted = previous_provisional & ~provisional_now & ~confirmed_now
         if np.any(retracted):
             self._retracted_ever |= retracted
         self._provisional_ever |= provisional_now
-        provisional_changed = bool(
-            np.any(provisional_now != previous_provisional)
-        )
-        self._provisional = np.where(
-            provisional_now, 255, 0
-        ).astype(np.uint8)
+        provisional_changed = bool(np.any(provisional_now != previous_provisional))
+        self._provisional = np.where(provisional_now, 255, 0).astype(np.uint8)
         return {
             "confirmed": self._confirmed.copy(),
             "provisional": self._provisional.copy(),
@@ -107,12 +101,8 @@ class _ReferenceAccumulator:
             "new_confirmed_px": new_confirmed_px,
             "confirmed_px": int(np.count_nonzero(self._confirmed)),
             "provisional_px": int(np.count_nonzero(self._provisional)),
-            "provisional_ever_px": int(
-                np.count_nonzero(self._provisional_ever)
-            ),
-            "retracted_px_total": int(
-                np.count_nonzero(self._retracted_ever)
-            ),
+            "provisional_ever_px": int(np.count_nonzero(self._provisional_ever)),
+            "retracted_px_total": int(np.count_nonzero(self._retracted_ever)),
             "turn": turn,
         }
 
@@ -137,14 +127,20 @@ def test_accumulator_buffered_matches_stacked_reference():
         for key in ("confirmed", "provisional"):
             assert np.array_equal(got[key], want[key]), (step, key)
         for key in (
-            "confirmed_changed", "provisional_changed",
-            "new_confirmed_px", "confirmed_px", "provisional_px",
-            "provisional_ever_px", "retracted_px_total", "turn",
+            "confirmed_changed",
+            "provisional_changed",
+            "new_confirmed_px",
+            "confirmed_px",
+            "provisional_px",
+            "provisional_ever_px",
+            "retracted_px_total",
+            "turn",
         ):
             assert got[key] == want[key], (step, key)
 
 
 # --- T3: presenca por assinatura ---
+
 
 class _SignatureMasker:
     def __init__(self, signatures):
@@ -161,13 +157,15 @@ class _SignatureMasker:
 
 def test_presence_adapter_uses_signature_without_mask():
     frame = np.zeros((10, 10, 3), dtype=np.uint8)
-    masker = _SignatureMasker([
-        None,
-        (0.0, 0.0, 0.0),
-        (1000.0, 100.0, 100.0),
-        (1000.0, 101.0, 100.0),
-        (1000.0, 130.0, 100.0),
-    ])
+    masker = _SignatureMasker(
+        [
+            None,
+            (0.0, 0.0, 0.0),
+            (1000.0, 100.0, 100.0),
+            (1000.0, 101.0, 100.0),
+            (1000.0, 130.0, 100.0),
+        ]
+    )
     adapter = app_module._MediaPipeHandPresence(masker)
     assert adapter.sample(frame) == (None, False)
     assert adapter.sample(frame) == (False, False)
@@ -179,35 +177,33 @@ def test_presence_adapter_uses_signature_without_mask():
 
 def test_hand_signature_geometry(monkeypatch):
     points = np.array(
-        [[0.0, 0.0], [40.0, 0.0], [40.0, 20.0], [0.0, 20.0]]
-        + [[10.0, 10.0]] * 17,
+        [[0.0, 0.0], [40.0, 0.0], [40.0, 20.0], [0.0, 20.0]] + [[10.0, 10.0]] * 17,
         dtype=np.float32,
     )
     masker = hand_module.HandMasker()
     monkeypatch.setattr(
         masker, "_landmarks", lambda frame, max_width=None, timestamp_ms=None: [points]
     )
-    area, cx, cy = masker.presence_signature(
-        np.zeros((100, 100, 3), dtype=np.uint8)
-    )
+    area, cx, cy = masker.presence_signature(np.zeros((100, 100, 3), dtype=np.uint8))
     assert area == 800.0
     assert abs(cx - float(points[:, 0].mean())) < 1e-6
     assert abs(cy - float(points[:, 1].mean())) < 1e-6
     monkeypatch.setattr(
         masker, "_landmarks", lambda frame, max_width=None, timestamp_ms=None: []
     )
-    assert masker.presence_signature(
-        np.zeros((100, 100, 3), dtype=np.uint8)
-    ) == (0.0, 0.0, 0.0)
+    assert masker.presence_signature(np.zeros((100, 100, 3), dtype=np.uint8)) == (
+        0.0,
+        0.0,
+        0.0,
+    )
     monkeypatch.setattr(
         masker, "_landmarks", lambda frame, max_width=None, timestamp_ms=None: None
     )
-    assert masker.presence_signature(
-        np.zeros((100, 100, 3), dtype=np.uint8)
-    ) is None
+    assert masker.presence_signature(np.zeros((100, 100, 3), dtype=np.uint8)) is None
 
 
 # --- T8: backoff sem folha ---
+
 
 def test_tracker_backoff_under_sustained_absence():
     tracker = app_module._SheetTracker()
@@ -229,11 +225,7 @@ def test_tracker_present_sheet_keeps_interval_cadence():
     )
     tracker.update(corners, "paper", True, 1000.0)
     assert tracker.corners is not None
-    hits = [
-        n for n in range(1, 21)
-        if tracker.should_detect(n)
-    ]
+    hits = [n for n in range(1, 21) if tracker.should_detect(n)]
     assert hits == [
-        n for n in range(1, 21)
-        if n % app_module._SHEET_DETECT_INTERVAL == 0
+        n for n in range(1, 21) if n % app_module._SHEET_DETECT_INTERVAL == 0
     ]

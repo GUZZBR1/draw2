@@ -66,7 +66,9 @@ def test_ecc_exact_parameters_mask_and_affine_fallback(monkeypatch):
         return 0.99, warp
 
     monkeypatch.setattr(cv2, "findTransformECC", ecc)
-    monkeypatch.setattr(cv2, "GaussianBlur", lambda *a, **k: pytest.fail("blur externo"))
+    monkeypatch.setattr(
+        cv2, "GaussianBlur", lambda *a, **k: pytest.fail("blur externo")
+    )
     aligned, matrix, info = ink._refine_ink_ecc(ref, obs, mask)
     np.testing.assert_allclose(matrix, [[1, 0, -14], [0, 1, 0], [0, 0, 1]])
     assert calls == [cv2.MOTION_HOMOGRAPHY, cv2.MOTION_AFFINE]
@@ -78,12 +80,15 @@ def test_ecc_exact_parameters_mask_and_affine_fallback(monkeypatch):
     assert info["ecc_converged"]
 
 
-@pytest.mark.parametrize("estimated", [
-    [[1, 0, 28], [0, 1, 0], [0, 0, 1]],
-    [[-1, 0, 0], [0, 1, 0], [0, 0, 1]],
-    [[0, 0, 0], [0, 1, 0], [0, 0, 1]],
-    [[1, 0, float("nan")], [0, 1, 0], [0, 0, 1]],
-])
+@pytest.mark.parametrize(
+    "estimated",
+    [
+        [[1, 0, 28], [0, 1, 0], [0, 0, 1]],
+        [[-1, 0, 0], [0, 1, 0], [0, 0, 1]],
+        [[0, 0, 0], [0, 1, 0], [0, 0, 1]],
+        [[1, 0, float("nan")], [0, 1, 0], [0, 0, 1]],
+    ],
+)
 def test_ecc_rejects_unsafe_homography_without_affine_retry(monkeypatch, estimated):
     def ecc(*args):
         assert args[3] == cv2.MOTION_HOMOGRAPHY
@@ -119,9 +124,14 @@ def test_ecc_low_ink_bypasses_optimizer_and_failed_fallback_is_safe(monkeypatch)
 
 
 @pytest.mark.parametrize("side", ["reference", "observed"])
-@pytest.mark.parametrize("count, probability", [(0, 0.95), (499, 0.95), (500, 0.7), (2000, 0.6)])
+@pytest.mark.parametrize(
+    "count, probability", [(0, 0.95), (499, 0.95), (500, 0.7), (2000, 0.6)]
+)
 def test_ecc_bypasses_when_either_map_has_less_than_500_active_pixels(
-    monkeypatch, side, count, probability,
+    monkeypatch,
+    side,
+    count,
+    probability,
 ):
     ref = np.zeros((120, 85), dtype=np.float32)
     obs = ref.copy()
@@ -195,10 +205,15 @@ def test_visibility_follows_anchor_and_residual_warps(monkeypatch):
     visible[100:200, 300:400] = False
     geometry = ink._registration_matrix(corners, current, prob.shape)
     align = np.float64([[1, 0, -14], [0, 1, 5], [0, 0, 1]])
-    anchor_visible = cv2.warpPerspective(
-        visible.astype(np.uint8), geometry, (850, 1200),
-        flags=cv2.INTER_NEAREST,
-    ) > 0
+    anchor_visible = (
+        cv2.warpPerspective(
+            visible.astype(np.uint8),
+            geometry,
+            (850, 1200),
+            flags=cv2.INTER_NEAREST,
+        )
+        > 0
+    )
 
     def refine(reference, observed, hand_mask=None):
         np.testing.assert_array_equal(hand_mask, ~anchor_visible)
@@ -217,10 +232,15 @@ def test_visibility_follows_anchor_and_residual_warps(monkeypatch):
     _aligned, aligned_visible, _info = ink._register_ink_probability(
         prob, corners, current, prob, visible
     )
-    expected = cv2.warpPerspective(
-        anchor_visible.astype(np.uint8), align, (850, 1200),
-        flags=cv2.INTER_NEAREST,
-    ) > 0
+    expected = (
+        cv2.warpPerspective(
+            anchor_visible.astype(np.uint8),
+            align,
+            (850, 1200),
+            flags=cv2.INTER_NEAREST,
+        )
+        > 0
+    )
     np.testing.assert_array_equal(aligned_visible, expected)
     # Um residuo nao pode reabrir a faixa que o registro recortou.
     assert not aligned_visible[10, 840]
@@ -241,8 +261,11 @@ def test_anchor_registration_keeps_ecc_disabled_by_default(monkeypatch):
         prob, corners, current, reference
     )
     expected = cv2.warpPerspective(
-        prob, ink._registration_matrix(corners, current, prob.shape),
-        (85, 120), flags=cv2.INTER_LINEAR, borderValue=0.0,
+        prob,
+        ink._registration_matrix(corners, current, prob.shape),
+        (85, 120),
+        flags=cv2.INTER_LINEAR,
+        borderValue=0.0,
     )
     np.testing.assert_array_equal(registered, expected)
     assert visible is None
@@ -264,20 +287,27 @@ def test_anchor_registration_refines_only_with_explicit_environment_opt_in(monke
 
     def refine(ref, observed, hand_mask=None):
         calls.append((ref.copy(), observed.copy(), hand_mask))
-        return observed, np.eye(3), {
-            "ecc_ms": 2.0,
-            "ecc_mode": "homography",
-            "ecc_rejected": False,
-            "ecc_converged": True,
-        }
+        return (
+            observed,
+            np.eye(3),
+            {
+                "ecc_ms": 2.0,
+                "ecc_mode": "homography",
+                "ecc_rejected": False,
+                "ecc_converged": True,
+            },
+        )
 
     monkeypatch.setattr(ink, "_refine_ink_ecc", refine)
     registered, _visible, info = ink._register_ink_probability(
         prob, corners, current, reference
     )
     expected = cv2.warpPerspective(
-        prob, ink._registration_matrix(corners, current, prob.shape),
-        (85, 120), flags=cv2.INTER_LINEAR, borderValue=0.0,
+        prob,
+        ink._registration_matrix(corners, current, prob.shape),
+        (85, 120),
+        flags=cv2.INTER_LINEAR,
+        borderValue=0.0,
     )
     np.testing.assert_array_equal(calls[0][0], reference)
     np.testing.assert_array_equal(calls[0][1], expected)
@@ -298,7 +328,11 @@ def test_worker_refines_after_anchor_registration_against_confirmed_canvas(monke
     def refine(reference, observed, hand_mask=None):
         assert not worker._condition._is_owned(), "ECC nao pode bloquear submit/poll"
         calls.append((None if reference is None else reference.copy(), observed.copy()))
-        return observed, np.eye(3), {"ecc_ms": 1.0, "ecc_rejected": False, "ecc_mode": "bypass"}
+        return (
+            observed,
+            np.eye(3),
+            {"ecc_ms": 1.0, "ecc_rejected": False, "ecc_mode": "bypass"},
+        )
 
     class Model:
         threshold = 0.7
@@ -328,21 +362,29 @@ def test_worker_refines_after_anchor_registration_against_confirmed_canvas(monke
         generation = worker.new_generation()
         submit(ref, generation, corners)
         assert calls[-1][0] is None
-        shifted = cv2.warpPerspective(ref, np.float32([[1, 0, -8], [0, 1, 0], [0, 0, 1]]), (850, 1200))
+        shifted = cv2.warpPerspective(
+            ref, np.float32([[1, 0, -8], [0, 1, 0], [0, 0, 1]]), (850, 1200)
+        )
         submit(shifted, generation, corners + np.float32([8, 0]))
         np.testing.assert_allclose(calls[-1][1], ref, atol=1e-5)
         assert calls[-1][0].dtype == np.float32
         assert not np.any(calls[-1][0])
         confirmed = worker._accumulator._confirmed.copy()
         submit(ref, generation, corners)
-        np.testing.assert_array_equal(calls[-1][0], confirmed.astype(np.float32) / 255.0)
+        np.testing.assert_array_equal(
+            calls[-1][0], confirmed.astype(np.float32) / 255.0
+        )
         assert np.any(calls[-1][0] == 1.0)
         assert not hasattr(worker, "_ecc_reference")
         confirmed = worker._accumulator._confirmed.copy()
         generation = worker.new_generation(preserve_identity=True)
         submit(ref, generation, corners)
-        assert worker.telemetry_snapshot()["page_identity_events"][-1]["threshold"] == 0.65
-        np.testing.assert_array_equal(calls[-1][0], confirmed.astype(np.float32) / 255.0)
+        assert (
+            worker.telemetry_snapshot()["page_identity_events"][-1]["threshold"] == 0.65
+        )
+        np.testing.assert_array_equal(
+            calls[-1][0], confirmed.astype(np.float32) / 255.0
+        )
         generation = worker.new_generation()
         submit(ref, generation, corners)
         assert calls[-1][0] is None

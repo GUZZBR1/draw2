@@ -26,8 +26,7 @@ def test_detector_default_is_three(monkeypatch):
 
 def test_opencv_cap_applies_default_and_env(monkeypatch):
     applied = []
-    monkeypatch.setattr(
-        app_module.cv2, "setNumThreads", applied.append)
+    monkeypatch.setattr(app_module.cv2, "setNumThreads", applied.append)
     monkeypatch.delenv("DRAW_OPENCV_THREADS", raising=False)
     monkeypatch.setattr(app_module.os, "cpu_count", lambda: 16)
     assert app_module._apply_opencv_thread_cap() == 4
@@ -40,8 +39,7 @@ def test_opencv_cap_applies_default_and_env(monkeypatch):
 
 def test_opencv_cap_never_exceeds_the_host(monkeypatch):
     applied = []
-    monkeypatch.setattr(
-        app_module.cv2, "setNumThreads", applied.append)
+    monkeypatch.setattr(app_module.cv2, "setNumThreads", applied.append)
     monkeypatch.delenv("DRAW_OPENCV_THREADS", raising=False)
     monkeypatch.setattr(app_module.os, "cpu_count", lambda: 2)
     assert app_module._apply_opencv_thread_cap() == 2

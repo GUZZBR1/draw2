@@ -44,10 +44,15 @@ def _has_module(name: str) -> bool:
 
 
 def _has_tpu_device() -> bool:
-    if any(os.environ.get(key) for key in (
-        "TPU_NAME", "TPU_PROCESS_ADDRESSES", "CLOUD_TPU_TASK_ID",
-        "COLAB_TPU_ADDR",
-    )):
+    if any(
+        os.environ.get(key)
+        for key in (
+            "TPU_NAME",
+            "TPU_PROCESS_ADDRESSES",
+            "CLOUD_TPU_TASK_ID",
+            "COLAB_TPU_ADDR",
+        )
+    ):
         return True
     return any(Path("/dev").glob("accel*"))
 
@@ -92,8 +97,16 @@ def build_command(args: argparse.Namespace, backend: str) -> list[str]:
     out = str(Path(args.out_dir).expanduser())
 
     if backend in ("cuda", "cpu"):
-        cmd = [py, str(HERE / "train.py"), "--config", args.config,
-               "--data-dir", data, "--out-dir", out]
+        cmd = [
+            py,
+            str(HERE / "train.py"),
+            "--config",
+            args.config,
+            "--data-dir",
+            data,
+            "--out-dir",
+            out,
+        ]
         if args.real_train_dir:
             cmd += ["--real-train-dir", args.real_train_dir]
         if args.allow_unverified_real_train:
@@ -117,20 +130,29 @@ def build_command(args: argparse.Namespace, backend: str) -> list[str]:
     if backend == "xla":
         if args.real_train_dir:
             raise ValueError("este adaptador TPU ainda não aceita --real-train-dir")
-        cmd = [py, str(HERE / "train_tpu.py"), "--data-dir", data,
-               "--out-dir", out]
+        cmd = [py, str(HERE / "train_tpu.py"), "--data-dir", data, "--out-dir", out]
         if args.smoke:
             smoke_root = Path(args.smoke_dir)
             cmd[cmd.index("--data-dir") + 1] = str(smoke_root / "data")
             cmd[cmd.index("--out-dir") + 1] = str(smoke_root / "out")
-            cmd += ["--epochs", "1", "--train-count", "96",
-                    "--val-count", "16", "--test-count", "16"]
+            cmd += [
+                "--epochs",
+                "1",
+                "--train-count",
+                "96",
+                "--val-count",
+                "16",
+                "--test-count",
+                "16",
+            ]
         elif args.epochs is not None:
             cmd += ["--epochs", str(args.epochs)]
         if not args.smoke:
-            for flag, value in (("--train-count", args.train_count),
-                                ("--val-count", args.val_count),
-                                ("--test-count", args.test_count)):
+            for flag, value in (
+                ("--train-count", args.train_count),
+                ("--val-count", args.val_count),
+                ("--test-count", args.test_count),
+            ):
                 if value is not None:
                     cmd += [flag, str(value)]
         if args.batch_size != "auto":
@@ -142,14 +164,24 @@ def build_command(args: argparse.Namespace, backend: str) -> list[str]:
     if backend == "torchtpu":
         if args.real_train_dir:
             raise ValueError("este adaptador TPU ainda não aceita --real-train-dir")
-        cmd = [py, str(HERE / "run_t7.py"), "--data-dir", data,
-               "--out-dir", out, "--smoke-out-dir", args.smoke_dir]
+        cmd = [
+            py,
+            str(HERE / "run_t7.py"),
+            "--data-dir",
+            data,
+            "--out-dir",
+            out,
+            "--smoke-out-dir",
+            args.smoke_dir,
+        ]
         if not args.smoke and args.epochs is not None:
             cmd += ["--epochs", str(args.epochs)]
         if not args.smoke:
-            for flag, value in (("--train-count", args.train_count),
-                                ("--val-count", args.val_count),
-                                ("--test-count", args.test_count)):
+            for flag, value in (
+                ("--train-count", args.train_count),
+                ("--val-count", args.val_count),
+                ("--test-count", args.test_count),
+            ):
                 if value is not None:
                     cmd += [flag, str(value)]
             if args.budget_min is not None:
@@ -170,53 +202,90 @@ def main(argv: list[str] | None = None) -> int:
         description="Treino Draw com detecção automática de GPU/TPU."
     )
     parser.add_argument(
-        "--backend", choices=("auto", "cuda", "xla", "torchtpu", "cpu"),
-        default="auto", help="auto detecta o runtime; use um valor para fixá-lo.",
+        "--backend",
+        choices=("auto", "cuda", "xla", "torchtpu", "cpu"),
+        default="auto",
+        help="auto detecta o runtime; use um valor para fixá-lo.",
     )
     parser.add_argument("--config", default="training/configs/base.json")
     parser.add_argument("--data-dir", default="dataset/synthetic")
     parser.add_argument("--real-train-dir", default=None)
     parser.add_argument("--allow-unverified-real-train", action="store_true")
-    parser.add_argument("--real-loss-weight", type=float, default=None,
-                        help="Peso por amostra do pacote --real-train-dir "
-                             "na loss (0, 1]. Ausente = o da config "
-                             "(loss.unverified_real_sample_weight). Use 1.0 "
-                             "para pacotes com ground truth verificado "
-                             "(ex.: SmartDoc convertido de quads oficiais).")
+    parser.add_argument(
+        "--real-loss-weight",
+        type=float,
+        default=None,
+        help="Peso por amostra do pacote --real-train-dir "
+        "na loss (0, 1]. Ausente = o da config "
+        "(loss.unverified_real_sample_weight). Use 1.0 "
+        "para pacotes com ground truth verificado "
+        "(ex.: SmartDoc convertido de quads oficiais).",
+    )
     parser.add_argument("--out-dir", default="out")
     parser.add_argument("--epochs", type=int, default=None)
-    parser.add_argument("--budget-min", type=float, default=None,
-                        help="Só rota TorchTPU (Colab): teto de "
-                             "parede em minutos; o corpo para no "
-                             "fim de uma época e entrega o melhor "
-                             "checkpoint (ausente = sem teto).")
-    parser.add_argument("--train-count", type=int, default=None,
-                        help="Só rotas TPU (dados gerados em sessão): "
-                             "imagens de treino (padrão do corpo: 4000).")
-    parser.add_argument("--val-count", type=int, default=None,
-                        help="Só rotas TPU: imagens de validação (400).")
-    parser.add_argument("--test-count", type=int, default=None,
-                        help="Só rotas TPU: imagens de teste (400).")
     parser.add_argument(
-        "--batch-size", type=_batch_size, default="auto",
+        "--budget-min",
+        type=float,
+        default=None,
+        help="Só rota TorchTPU (Colab): teto de "
+        "parede em minutos; o corpo para no "
+        "fim de uma época e entrega o melhor "
+        "checkpoint (ausente = sem teto).",
+    )
+    parser.add_argument(
+        "--train-count",
+        type=int,
+        default=None,
+        help="Só rotas TPU (dados gerados em sessão): "
+        "imagens de treino (padrão do corpo: 4000).",
+    )
+    parser.add_argument(
+        "--val-count",
+        type=int,
+        default=None,
+        help="Só rotas TPU: imagens de validação (400).",
+    )
+    parser.add_argument(
+        "--test-count",
+        type=int,
+        default=None,
+        help="Só rotas TPU: imagens de teste (400).",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=_batch_size,
+        default="auto",
         help="auto usa a sonda de VRAM em CUDA; em TPU mantém o lote padrão.",
     )
     parser.add_argument(
-        "--precision", choices=("bf16", "fp16", "fp32"), default=None,
+        "--precision",
+        choices=("bf16", "fp16", "fp32"),
+        default=None,
     )
     parser.add_argument(
-        "--compile", dest="compile", action="store_true", default=None,
+        "--compile",
+        dest="compile",
+        action="store_true",
+        default=None,
         help="Só rota CUDA/CPU: liga torch.compile no treino.",
     )
     parser.add_argument(
-        "--no-compile", dest="compile", action="store_false",
+        "--no-compile",
+        dest="compile",
+        action="store_false",
         help="Só rota CUDA/CPU: desliga torch.compile.",
     )
-    parser.add_argument("--smoke", action="store_true",
-                        help="Executa a etapa curta/prova do adaptador selecionado.")
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="Executa a etapa curta/prova do adaptador selecionado.",
+    )
     parser.add_argument("--smoke-dir", default="/tmp/draw-smoke")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Mostra o backend e o comando sem iniciar o treino.")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Mostra o backend e o comando sem iniciar o treino.",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -235,8 +304,11 @@ def main(argv: list[str] | None = None) -> int:
             hardware = "BACKEND cuda | hardware ainda não consultado (dry-run)"
         else:
             import torch
+
             if not torch.cuda.is_available():
-                parser.error("backend CUDA selecionado, mas torch.cuda.is_available() é falso")
+                parser.error(
+                    "backend CUDA selecionado, mas torch.cuda.is_available() é falso"
+                )
             device = torch.cuda.get_device_properties(0)
             hardware = (
                 f"BACKEND cuda | {torch.cuda.get_device_name(0)} | "

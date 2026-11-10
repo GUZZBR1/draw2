@@ -51,13 +51,16 @@ THINNING_TYPES = {
 }
 
 _NEIGHBORS = (
-    (-1, -1), (-1, 0), (-1, 1),
-    (0, -1),           (0, 1),
-    (1, -1),  (1, 0),  (1, 1),
+    (-1, -1),
+    (-1, 0),
+    (-1, 1),
+    (0, -1),
+    (0, 1),
+    (1, -1),
+    (1, 0),
+    (1, 1),
 )
-_DEGREE_KERNEL = np.array(
-    [[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=np.uint8
-)
+_DEGREE_KERNEL = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=np.uint8)
 
 
 def load_ink(path):
@@ -331,9 +334,7 @@ def _make_8_minimal(skel):
     return s
 
 
-def prune_skeleton_spurs(
-    skel, ink, max_spur_ratio=2.4, min_spur_px=7.0, passes=2
-):
+def prune_skeleton_spurs(skel, ink, max_spur_ratio=2.4, min_spur_px=7.0, passes=2):
     """Remove cantos L redundantes e esporões curtos guiado por distanceTransform."""
     dt = cv2.distanceTransform(ink.astype(np.uint8), cv2.DIST_L2, 5)
     cleaned = _make_8_minimal(skel)
@@ -441,9 +442,7 @@ def stitch_junctions(polylines, max_turn_deg=32.0, stamps=None):
     passthrough = []
     for item in polylines:
         if item["closed"] or len(item["points"]) < 2:
-            passthrough.append(
-                {"points": item["points"], "closed": item["closed"]}
-            )
+            passthrough.append({"points": item["points"], "closed": item["closed"]})
         else:
             open_edges.append(
                 {
@@ -555,9 +554,7 @@ def annotate_and_order_polylines(polylines, stamps=None):
             valid = vals[vals > 0]
             if len(valid) > 0:
                 t_start = int(np.percentile(valid, 10))
-                lvals = (
-                    last_plane[ys, xs] if last_plane is not None else vals
-                )
+                lvals = last_plane[ys, xs] if last_plane is not None else vals
                 lvalid = lvals[lvals > 0]
                 t_end = int(np.percentile(lvalid, 90)) if len(lvalid) > 0 else t_start
                 # Orienta polilinha aberta do menor para o maior carimbo.
@@ -646,9 +643,7 @@ def _dp_open(points, epsilon):
         if norm == 0:
             dists = np.hypot(seg[:, 0] - pa[0], seg[:, 1] - pa[1])
         else:
-            cross = np.abs(
-                ab[0] * (pa[1] - seg[:, 1]) - (pa[0] - seg[:, 0]) * ab[1]
-            )
+            cross = np.abs(ab[0] * (pa[1] - seg[:, 1]) - (pa[0] - seg[:, 0]) * ab[1])
             dists = cross / norm
         i = int(np.argmax(dists))
         if dists[i] > epsilon:
@@ -772,9 +767,7 @@ def classify_primitive(polyline):
 
     # 2. Círculo (fechado ou quase fechado):
     end_gap = 0.0 if closed else float(np.hypot(*(pts[-1] - pts[0])))
-    perim = _polyline_arc_length(
-        np.vstack([pts, pts[:1]]) if closed else pts
-    )
+    perim = _polyline_arc_length(np.vstack([pts, pts[:1]]) if closed else pts)
     if (closed or end_gap <= max(8.0, 0.08 * perim)) and len(dense) >= 16:
         fit = _fit_circle_kasa(dense)
         if fit is not None:
@@ -808,9 +801,7 @@ def classify_primitive(polyline):
         coarse = _dp_open(np.vstack([pts, pts[:1]]), epsilon=3.0)
         corners = _merge_collinear_closed_vertices(coarse)
         if len(corners) == 4:
-            sides = [
-                corners[(i + 1) % 4] - corners[i] for i in range(4)
-            ]
+            sides = [corners[(i + 1) % 4] - corners[i] for i in range(4)]
             lengths = [float(np.hypot(s[0], s[1])) for s in sides]
             if min(lengths) >= 10.0:
                 angles_ok = True
@@ -849,9 +840,7 @@ def classify_primitive(polyline):
                 ):
                     w_px = 0.5 * (lengths[0] + lengths[2])
                     h_px = 0.5 * (lengths[1] + lengths[3])
-                    ang_deg = math.degrees(
-                        math.atan2(sides[0][1], sides[0][0])
-                    )
+                    ang_deg = math.degrees(math.atan2(sides[0][1], sides[0][0]))
                     center = corners.mean(axis=0)
                     return {
                         "type": "rectangle",
@@ -954,12 +943,8 @@ def dense_samples(points, closed, step=1.0):
 
 def distance_stats(ink, polylines):
     """Distâncias polilinha<->tinta nos dois sentidos, em px e mm."""
-    dt_to_ink = cv2.distanceTransform(
-        (~ink).astype(np.uint8), cv2.DIST_L2, 5
-    )
-    samples = [
-        dense_samples(line["points"], line["closed"]) for line in polylines
-    ]
+    dt_to_ink = cv2.distanceTransform((~ink).astype(np.uint8), cv2.DIST_L2, 5)
+    samples = [dense_samples(line["points"], line["closed"]) for line in polylines]
     samples = np.vstack(samples) if samples else np.zeros((0, 2))
     h, w = ink.shape
     if len(samples) > 0:
@@ -983,9 +968,7 @@ def distance_stats(ink, polylines):
                 thickness=1,
                 lineType=cv2.LINE_8,
             )
-    dt_to_poly = cv2.distanceTransform(
-        (raster == 0).astype(np.uint8), cv2.DIST_L2, 5
-    )
+    dt_to_poly = cv2.distanceTransform((raster == 0).astype(np.uint8), cv2.DIST_L2, 5)
     d_bwd = dt_to_poly[ink]
 
     def summary(d):
@@ -1037,17 +1020,13 @@ def write_svg(polylines, out_path, epsilon, thinning, primitives=None):
                     f'stroke-width="0.35"/>'
                 )
             elif kind == "rectangle":
-                coords = " ".join(
-                    f"{x:.2f},{y:.2f}" for x, y in prim["corners_mm"]
-                )
+                coords = " ".join(f"{x:.2f},{y:.2f}" for x, y in prim["corners_mm"])
                 lines.append(
                     f'<polygon data-primitive="rectangle" points="{coords}" '
                     f'fill="none" stroke="#000" stroke-width="0.35"/>'
                 )
             else:
-                coords = " ".join(
-                    f"{x:.2f},{y:.2f}" for x, y in prim["points_mm"]
-                )
+                coords = " ".join(f"{x:.2f},{y:.2f}" for x, y in prim["points_mm"])
                 tag = "polygon" if kind == "polygon" else "polyline"
                 lines.append(
                     f'<{tag} points="{coords}" fill="none" stroke="#000" '
@@ -1123,9 +1102,7 @@ def _selfcheck():
         return float(np.hypot(*(pnt - (a + t * ab))))
 
     def dist_to_shapes(p):
-        d_rect = min(
-            seg_dist(p, a, b) for a, b in zip(rect, rect[1:] + rect[:1])
-        )
+        d_rect = min(seg_dist(p, a, b) for a, b in zip(rect, rect[1:] + rect[:1]))
         d_circ = abs(float(np.hypot(p[0] - 620, p[1] - 250)) - 110.0)
         d_x = min(
             seg_dist(p, (150, 700), (450, 1000)),

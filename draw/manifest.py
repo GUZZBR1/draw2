@@ -95,7 +95,10 @@ def load_manifest(path=None):
 
 def _strict():
     return os.environ.get(_ENV_STRICT_VAR, "").strip().lower() in (
-        "1", "true", "yes", "on",
+        "1",
+        "true",
+        "yes",
+        "on",
     )
 
 
@@ -118,9 +121,11 @@ def verify_model(model_path, manifest_path=None):
     entry = models.get(path.name)
     if entry is None:
         try:
-            relative = path.resolve().relative_to(
-                resolved_manifest.parent.resolve()
-            ).as_posix()
+            relative = (
+                path.resolve()
+                .relative_to(resolved_manifest.parent.resolve())
+                .as_posix()
+            )
         except ValueError:
             relative = None
         if relative is not None:
@@ -130,8 +135,7 @@ def verify_model(model_path, manifest_path=None):
     expected = str(entry.get("sha256", "")).strip().lower()
     if not expected:
         raise RuntimeError(
-            f"entrada {path.name!r} do manifesto não tem sha256: "
-            f"{resolved_manifest}"
+            f"entrada {path.name!r} do manifesto não tem sha256: {resolved_manifest}"
         )
     actual = sha256_of(path)
     size_expected = entry.get("bytes")
@@ -145,7 +149,8 @@ def verify_model(model_path, manifest_path=None):
         return entry
     message = (
         f"MODELO DIVERGENTE do manifesto {resolved_manifest.name}: "
-        f"{path.name} — " + "; ".join(problems)
+        f"{path.name} — "
+        + "; ".join(problems)
         + ". O arquivo em disco não é o modelo que a régua aprovou."
     )
     if _strict():

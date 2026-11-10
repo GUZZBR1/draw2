@@ -29,8 +29,13 @@ def _tiny_dataset(tmp_path):
     mask[10:50, 10:50] = 1
     cv2.imwrite(str(root / "train" / "images" / "a.png"), img)
     cv2.imwrite(str(root / "train" / "masks" / "a.png"), mask)
-    cv2.imwrite(str(root / "train" / "images" / "b.png"), np.full((64, 64, 3), 90, dtype=np.uint8))
-    cv2.imwrite(str(root / "train" / "masks" / "b.png"), np.zeros((64, 64), dtype=np.uint8))
+    cv2.imwrite(
+        str(root / "train" / "images" / "b.png"),
+        np.full((64, 64, 3), 90, dtype=np.uint8),
+    )
+    cv2.imwrite(
+        str(root / "train" / "masks" / "b.png"), np.zeros((64, 64), dtype=np.uint8)
+    )
     return root
 
 

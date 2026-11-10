@@ -65,7 +65,9 @@ CLIP_CATEGORIES = {
 }
 
 
-def load_metadata(session: Path) -> tuple[dict[str, dict[str, str]], dict[int, dict[str, str]]]:
+def load_metadata(
+    session: Path,
+) -> tuple[dict[str, dict[str, str]], dict[int, dict[str, str]]]:
     frames: dict[str, dict[str, str]] = {}
     frame_index: dict[int, dict[str, str]] = {}
     path = session / "frames.csv"
@@ -104,7 +106,9 @@ def hamming(a: int, b: int) -> int:
     return (a ^ b).bit_count()
 
 
-def image_features(path: Path, include_sheet_detector: bool = False) -> dict[str, object]:
+def image_features(
+    path: Path, include_sheet_detector: bool = False
+) -> dict[str, object]:
     image = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if image is None:
         return {"decode_ok": False}
@@ -126,9 +130,12 @@ def image_features(path: Path, include_sheet_detector: bool = False) -> dict[str
     sheet_verdict = "not_run"
     if include_sheet_detector:
         from draw.paper import detect_sheet_with_confidence
+
         sheet_corners, sheet_verdict = detect_sheet_with_confidence(image)
         if sheet_corners is not None:
-            detected_sheet_ratio = float(abs(cv2.contourArea(sheet_corners)) / (width * height))
+            detected_sheet_ratio = float(
+                abs(cv2.contourArea(sheet_corners)) / (width * height)
+            )
     return {
         "decode_ok": True,
         "width": width,
@@ -140,7 +147,9 @@ def image_features(path: Path, include_sheet_detector: bool = False) -> dict[str
         "paper_candidate_ratio": round(paper_ratio, 5),
         "paper_edge_ratio": round(paper_edge_ratio, 5),
         "existing_sheet_detector": sheet_verdict or "none",
-        "detected_sheet_area_ratio": round(detected_sheet_ratio, 5) if detected_sheet_ratio is not None else "",
+        "detected_sheet_area_ratio": round(detected_sheet_ratio, 5)
+        if detected_sheet_ratio is not None
+        else "",
         "phash": perceptual_hash(gray),
     }
 
@@ -174,17 +183,35 @@ def load_clip(model_name: str, pretrained: str):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--session", action="append", type=Path, help="session folder; repeatable")
-    parser.add_argument("--output", type=Path, default=ROOT / "captures/triage/frames.csv")
-    parser.add_argument("--takes-output", type=Path, default=ROOT / "captures/triage/takes.csv")
-    parser.add_argument("--limit", type=int, help="process only first N frames per session (smoke/benchmark)")
+    parser.add_argument(
+        "--session", action="append", type=Path, help="session folder; repeatable"
+    )
+    parser.add_argument(
+        "--output", type=Path, default=ROOT / "captures/triage/frames.csv"
+    )
+    parser.add_argument(
+        "--takes-output", type=Path, default=ROOT / "captures/triage/takes.csv"
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        help="process only first N frames per session (smoke/benchmark)",
+    )
     parser.add_argument("--every", type=int, default=1, help="process every Nth frame")
-    parser.add_argument("--clip", action="store_true", help="add optional OpenCLIP semantic candidate scores")
+    parser.add_argument(
+        "--clip",
+        action="store_true",
+        help="add optional OpenCLIP semantic candidate scores",
+    )
     parser.add_argument("--clip-batch-size", type=int, default=16)
     parser.add_argument("--clip-model", default="ViT-B-32")
     parser.add_argument("--clip-pretrained", default="laion2b_s34b_b79k")
     parser.add_argument("--phash-distance", type=int, default=3)
-    parser.add_argument("--sheet-detector", action="store_true", help="also run the slower existing quadrilateral detector")
+    parser.add_argument(
+        "--sheet-detector",
+        action="store_true",
+        help="also run the slower existing quadrilateral detector",
+    )
     args = parser.parse_args()
     if args.every < 1 or args.clip_batch_size < 1:
         parser.error("--every and --clip-batch-size must be positive")
@@ -202,21 +229,24 @@ def main() -> int:
         frame_meta, take_starts = load_metadata(session)
         paths = sorted(session.glob("frame_*.jpg"))
         if args.every > 1:
-            paths = paths[::args.every]
+            paths = paths[:: args.every]
         if args.limit is not None:
-            paths = paths[:args.limit]
+            paths = paths[: args.limit]
         print(f"Scanning {session.name}: {len(paths)} frames", file=sys.stderr)
         previous: dict[str, object] | None = None
 
         # OpenCLIP batches avoid repeated model overhead, but keep a modest
         # batch in memory for this host's limited RAM.
         for offset in range(0, len(paths), args.clip_batch_size if clip_state else 1):
-            batch = paths[offset: offset + (args.clip_batch_size if clip_state else 1)]
-            features_batch = [image_features(path, args.sheet_detector) for path in batch]
+            batch = paths[offset : offset + (args.clip_batch_size if clip_state else 1)]
+            features_batch = [
+                image_features(path, args.sheet_detector) for path in batch
+            ]
             clip_scores_batch: list[dict[str, float] | None] = [None] * len(batch)
             if clip_state:
                 model, preprocess, text, prompt_offsets, torch = clip_state
                 from PIL import Image
+
                 tensors = []
                 for path in batch:
                     with Image.open(path) as image:
@@ -224,7 +254,10 @@ def main() -> int:
                 image_tensor = torch.stack(tensors)
                 with torch.no_grad():
                     image_features_tensor = model.encode_image(image_tensor)
-                    image_features_tensor = image_features_tensor / image_features_tensor.norm(dim=-1, keepdim=True)
+                    image_features_tensor = (
+                        image_features_tensor
+                        / image_features_tensor.norm(dim=-1, keepdim=True)
+                    )
                     similarities = (image_features_tensor @ text.T).cpu().numpy()
                 for i, scores in enumerate(similarities):
                     clip_scores_batch[i] = {
@@ -232,21 +265,39 @@ def main() -> int:
                         for category, indices in prompt_offsets.items()
                     }
 
-            for path, features, clip_scores in zip(batch, features_batch, clip_scores_batch):
+            for path, features, clip_scores in zip(
+                batch, features_batch, clip_scores_batch
+            ):
                 filename = path.name
                 meta = frame_meta.get(filename, {})
                 try:
                     frame_index = int(meta.get("frame_index", path.stem.split("_")[-1]))
                 except ValueError:
                     frame_index = -1
-                take = take_for(frame_index, take_starts) if take_starts and frame_index > 0 else None
+                take = (
+                    take_for(frame_index, take_starts)
+                    if take_starts and frame_index > 0
+                    else None
+                )
                 take_id = str(take.get("take", "")) if take else ""
                 batch_id = str(take.get("batch", "")) if take else ""
                 phash = features.get("phash")
-                if previous and (previous.get("take_id") != take_id or previous.get("batch_id") != batch_id):
+                if previous and (
+                    previous.get("take_id") != take_id
+                    or previous.get("batch_id") != batch_id
+                ):
                     previous = None
-                duplicate_distance = hamming(int(phash), int(previous["phash"])) if previous and features.get("decode_ok") and previous.get("decode_ok") else None
-                adjacent_duplicate = duplicate_distance is not None and duplicate_distance <= args.phash_distance
+                duplicate_distance = (
+                    hamming(int(phash), int(previous["phash"]))
+                    if previous
+                    and features.get("decode_ok")
+                    and previous.get("decode_ok")
+                    else None
+                )
+                adjacent_duplicate = (
+                    duplicate_distance is not None
+                    and duplicate_distance <= args.phash_distance
+                )
 
                 if not features.get("decode_ok"):
                     category = "decode_error"
@@ -260,11 +311,22 @@ def main() -> int:
                     if clip_scores:
                         category = max(clip_scores, key=clip_scores.get)
                     else:
-                        category = "paper_candidate" if paper_ratio >= 0.06 else "background_candidate"
-                    semantic_useful = bool(clip_scores and category in {
-                        "paper_with_user_marks", "hand_over_paper", "hand_elsewhere",
-                        "blank_paper", "printed_paper",
-                    })
+                        category = (
+                            "paper_candidate"
+                            if paper_ratio >= 0.06
+                            else "background_candidate"
+                        )
+                    semantic_useful = bool(
+                        clip_scores
+                        and category
+                        in {
+                            "paper_with_user_marks",
+                            "hand_over_paper",
+                            "hand_elsewhere",
+                            "blank_paper",
+                            "printed_paper",
+                        }
+                    )
                     if adjacent_duplicate:
                         productive_candidate = "lower_priority_near_duplicate"
                     elif semantic_useful or paper_ratio >= 0.06:
@@ -280,7 +342,9 @@ def main() -> int:
                     "take_id": take_id,
                     "take_status": take.get("status", "") if take else "",
                     "filename": filename,
-                    "source_path": str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else str(path),
+                    "source_path": str(path.relative_to(ROOT))
+                    if path.is_relative_to(ROOT)
+                    else str(path),
                     **{k: v for k, v in features.items() if k != "phash"},
                     "adjacent_phash_distance": duplicate_distance,
                     "adjacent_near_duplicate_candidate": adjacent_duplicate,
@@ -293,19 +357,39 @@ def main() -> int:
                     row.update({f"clip_{k}": v for k, v in clip_scores.items()})
                     ranked_scores = sorted(clip_scores.values(), reverse=True)
                     row["clip_top_score"] = ranked_scores[0]
-                    row["clip_margin_top2"] = round(ranked_scores[0] - ranked_scores[1], 6)
+                    row["clip_margin_top2"] = round(
+                        ranked_scores[0] - ranked_scores[1], 6
+                    )
                 output_rows.append(row)
 
                 if take_id:
-                    acc = take_acc.setdefault((session.name, batch_id, take_id), {"frames": 0, "decode_ok": 0, "paper": 0, "quality": 0, "duplicates": 0, "categories": {}})
+                    acc = take_acc.setdefault(
+                        (session.name, batch_id, take_id),
+                        {
+                            "frames": 0,
+                            "decode_ok": 0,
+                            "paper": 0,
+                            "quality": 0,
+                            "duplicates": 0,
+                            "categories": {},
+                        },
+                    )
                     acc["frames"] += 1
                     acc["decode_ok"] += int(bool(features.get("decode_ok")))
-                    acc["paper"] += int(bool(features.get("decode_ok")) and float(features.get("paper_candidate_ratio", 0)) >= 0.06)
+                    acc["paper"] += int(
+                        bool(features.get("decode_ok"))
+                        and float(features.get("paper_candidate_ratio", 0)) >= 0.06
+                    )
                     acc["duplicates"] += int(bool(adjacent_duplicate))
                     cats = acc["categories"]
                     cats[category] = cats.get(category, 0) + 1
                 if features.get("decode_ok"):
-                    previous = {"phash": phash, "decode_ok": True, "take_id": take_id, "batch_id": batch_id}
+                    previous = {
+                        "phash": phash,
+                        "decode_ok": True,
+                        "take_id": take_id,
+                        "batch_id": batch_id,
+                    }
                 else:
                     previous = None
 
@@ -319,10 +403,13 @@ def main() -> int:
     sharpness_by_session: dict[str, list[float]] = {}
     for row in output_rows:
         if row.get("decode_ok"):
-            sharpness_by_session.setdefault(str(row["session_id"]), []).append(float(row["sharpness_laplacian"]))
+            sharpness_by_session.setdefault(str(row["session_id"]), []).append(
+                float(row["sharpness_laplacian"])
+            )
     sharpness_floor = {
         session: float(np.percentile(values, 10))
-        for session, values in sharpness_by_session.items() if values
+        for session, values in sharpness_by_session.items()
+        if values
     }
     take_quality: dict[tuple[str, str, str], int] = {}
     for row in output_rows:
@@ -335,7 +422,9 @@ def main() -> int:
             sharpness >= sharpness_floor.get(str(row["session_id"]), 0)
             and 35 <= brightness <= 235
         )
-        row["quality_candidate"] = "quality_candidate" if quality_ok else "review_quality"
+        row["quality_candidate"] = (
+            "quality_candidate" if quality_ok else "review_quality"
+        )
         if row.get("batch_id") and row.get("take_id"):
             key = (str(row["session_id"]), str(row["batch_id"]), str(row["take_id"]))
             take_quality[key] = take_quality.get(key, 0) + int(quality_ok)
@@ -354,7 +443,18 @@ def main() -> int:
         frame_count = int(acc["frames"])
         cats = acc["categories"]
         paper_fraction = acc["paper"] / frame_count if frame_count else 0
-        clip_count = sum(value for name, value in cats.items() if name.startswith("paper_") or name in {"printed_paper", "hand_over_paper", "hand_elsewhere", "pen_without_hand"})
+        clip_count = sum(
+            value
+            for name, value in cats.items()
+            if name.startswith("paper_")
+            or name
+            in {
+                "printed_paper",
+                "hand_over_paper",
+                "hand_elsewhere",
+                "pen_without_hand",
+            }
+        )
         clip_fraction = clip_count / frame_count if frame_count else 0
         if clip_state is not None:
             if clip_fraction >= 0.5:
@@ -369,32 +469,46 @@ def main() -> int:
             take_candidate = "mixed_review"
         else:
             take_candidate = "lower_priority_candidate"
-        take_rows.append({
-            "session_id": session_id,
-            "batch_id": batch_id,
-            "take_id": take_id,
-            "frames_scanned": frame_count,
-            "decode_ok": acc["decode_ok"],
-            "paper_candidate_frames": acc["paper"],
-            "quality_candidate_frames": acc["quality"],
-            "adjacent_duplicate_candidates": acc["duplicates"],
-            "paper_candidate_fraction": round(acc["paper"] / frame_count, 5) if frame_count else 0,
-            "semantic_useful_candidate_fraction": round(clip_fraction, 5) if clip_count else "",
-            "quality_candidate_fraction": round(acc["quality"] / frame_count, 5) if frame_count else 0,
-            "semantic_candidate_counts": json.dumps(cats, sort_keys=True),
-            "take_triage_candidate": take_candidate,
-            "review_status": "unreviewed_candidate",
-        })
+        take_rows.append(
+            {
+                "session_id": session_id,
+                "batch_id": batch_id,
+                "take_id": take_id,
+                "frames_scanned": frame_count,
+                "decode_ok": acc["decode_ok"],
+                "paper_candidate_frames": acc["paper"],
+                "quality_candidate_frames": acc["quality"],
+                "adjacent_duplicate_candidates": acc["duplicates"],
+                "paper_candidate_fraction": round(acc["paper"] / frame_count, 5)
+                if frame_count
+                else 0,
+                "semantic_useful_candidate_fraction": round(clip_fraction, 5)
+                if clip_count
+                else "",
+                "quality_candidate_fraction": round(acc["quality"] / frame_count, 5)
+                if frame_count
+                else 0,
+                "semantic_candidate_counts": json.dumps(cats, sort_keys=True),
+                "take_triage_candidate": take_candidate,
+                "review_status": "unreviewed_candidate",
+            }
+        )
     with args.takes_output.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=list(take_rows[0]) if take_rows else ["session_id", "take_id"])
+        writer = csv.DictWriter(
+            f, fieldnames=list(take_rows[0]) if take_rows else ["session_id", "take_id"]
+        )
         writer.writeheader()
         writer.writerows(take_rows)
 
     elapsed = time.monotonic() - start_time
-    print(f"Frames indexed: {len(output_rows)}; elapsed: {elapsed:.1f}s; output: {args.output}; takes: {args.takes_output}")
+    print(
+        f"Frames indexed: {len(output_rows)}; elapsed: {elapsed:.1f}s; output: {args.output}; takes: {args.takes_output}"
+    )
     if output_rows and elapsed > 0:
         rate = len(output_rows) / elapsed
-        print(f"Observed rate: {rate:.2f} frames/s; estimated full 15,845-frame scan: {15845 / rate / 3600:.2f}h")
+        print(
+            f"Observed rate: {rate:.2f} frames/s; estimated full 15,845-frame scan: {15845 / rate / 3600:.2f}h"
+        )
     return 0
 
 
