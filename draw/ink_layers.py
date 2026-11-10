@@ -1271,7 +1271,20 @@ class _PageCleanWorker:
             score_camera = 0.0
             cyclic = (0.0, 0.0, 0.0)
         else:
-            score_page = float(np.sum(raw_prob * snapshot) / raw_total)
+            # Com roll parado (frente 27): a evidencia da pagina e o
+            # S_roll da familia ciclica, reclassificado — o warp
+            # entregue ja esta em coordenadas da pagina e a unica
+            # coisa errada nele e a rotacao parada (permutacao
+            # pura), entao a hipotese-pagina le a prob des-rotada
+            # pelo roll corrente. Medido na era 3 capturada: 0,193
+            # contra 0,002 do Sc. Os ciclicos de rotacao NOVA
+            # seguem zerados (segunda rotacao = abstencao).
+            page_prob = (
+                raw_prob
+                if self._anchor_roll == 0
+                else _permute_prob(raw_prob, -self._anchor_roll)
+            )
+            score_page = float(np.sum(page_prob * snapshot) / raw_total)
             score_camera = float(np.sum(registered_prob * snapshot) / registered_total)
             # Colocacoes ciclicas (frentes 23/24): a hipotese "a
             # folha assentou rodada de k x 90 graus" pontuada como a
@@ -1337,6 +1350,7 @@ class _PageCleanWorker:
             "score_camera": mean_camera,
             "scores_cyclic": [mean_camera, *mean_cyclic],
             "rotation_k": rotation_k,
+            "score_page_roll_compensated": self._anchor_roll != 0,
             "canvas_px": canvas_px,
             "pass_mass_px": mean_mass,
             "displacement_px": displacement,
@@ -1351,11 +1365,16 @@ class _PageCleanWorker:
                 # a mesma permutacao que venceu a pontuacao. O estado
                 # nao se move (a v3 inteira e troca de ancora).
                 new_anchor = np.roll(new_anchor, rotation_k, axis=0)
+            elif self._anchor_roll != 0:
+                # Pouso comum (ou default) sobre a grade rolada
+                # (frente 27, item 3): a mediana posicional do
+                # streak rolada pelo roll parado — sem isso o par
+                # ancora/roll fica incoerente e o pareamento do
+                # voto e do gatilho quebra.
+                new_anchor = np.roll(new_anchor, self._anchor_roll, axis=0)
             self._anchor_corners = new_anchor
-            # So o pouso rodado muda a rotulacao: nos demais
-            # vereditos a mediana do streak ja esta na rotulacao
-            # corrente (os cantos chegam pareados), e o roll se
-            # preserva.
+            # So o pouso rodado muda a rotulacao; nos demais
+            # vereditos o roll parado se preserva.
             if verdict == "landing_rotated":
                 self._anchor_roll = rotation_k
             if reg_anchor_median:

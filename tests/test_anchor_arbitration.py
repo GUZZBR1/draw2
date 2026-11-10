@@ -255,6 +255,44 @@ def test_rotated_landing_relabels_anchor_by_k(fast, k):
 
 
 @pytest.mark.lento
+def test_straight_landing_after_rotated_landing(fast):
+    # Frente 27 (pousos_3_rot): a era 3 — pouso RETO sobre a grade
+    # rolada — julga-se pela hipotese-pagina compensada (a prob
+    # des-rotada pelo roll parado: 0,193 medidos na captura contra
+    # 0,002 do Sc) e a ancora nova e a mediana do streak rolada
+    # pelo roll parado, que se preserva. Gemeo dos contratos de
+    # pouso rodado, mesma construcao fisica.
+    full = np.array(
+        [[0.0, 0.0], [199.0, 0.0], [199.0, 99.0], [0.0, 99.0]], dtype=np.float32
+    )
+    moved = full + np.array([30.0, 10.0], dtype=np.float32)
+    moved2 = full + np.array([70.0, 25.0], dtype=np.float32)
+    content = np.zeros(SHAPE, dtype=np.float32)
+    content[15:22, 30:110] = 1.0
+    content[45:70, 55:63] = 1.0
+    content[75:82, 120:180] = 1.0
+    rotated = _permute(content, 2)
+    sequence = (
+        [(content, full.copy()) for _ in range(3)]
+        + [(rotated, moved.copy()) for _ in range(6)]
+        + [(rotated, moved2.copy()) for _ in range(6)]
+    )
+    worker, confirmed, _provisional = _run(sequence)
+    snapshot = worker.telemetry_snapshot()
+    assert snapshot["anchor_arbitration_actions"] == 2
+    events = snapshot["anchor_arbitration_events"]
+    assert [e["verdict"] for e in events] == ["landing_rotated", "landing"]
+    assert events[1]["score_page_roll_compensated"] is True
+    assert worker._anchor_roll == 2
+    np.testing.assert_allclose(worker._anchor_corners, np.roll(moved2, 2, axis=0))
+    _tw, truth, _p2 = _run([(content, full.copy()) for _ in range(3)])
+    assert np.count_nonzero(truth & ~confirmed) == 0
+    inter = np.count_nonzero(confirmed & truth)
+    union = np.count_nonzero(confirmed | truth)
+    assert inter / union >= 0.85
+
+
+@pytest.mark.lento
 def test_no_mass_defaults_to_anchor_swap(fast):
     content = _content()
     empty = np.zeros(SHAPE, np.float32)

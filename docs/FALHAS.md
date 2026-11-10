@@ -570,17 +570,33 @@ idêntica à régua da frente 25. Ressalva registrada: dup de
 evento = 2 px em rot_90/rot_180 contra o portão absoluto de
 zero — diagnóstico por fase mostra borda de ~1 px/fase do voto
 através da âncora permutada (0 px na passada do veredito), não
-segunda cópia. **Limite aberto: pouso DEPOIS de pouso rodado na
-mesma geração (pousos_3_rot reprova)** — na era reta seguinte os
-escores leem ~0 (Sp 0,0017, Sc 0,0023), o evento fecha
-`indeterminate` e as passadas de fecho plantam a cópia
-permutada (1.635 px; perda 0, como sempre nesta família). A
-correção indicada pela frente 26 (parear os cantos por −roll no
-registro) foi tentada e medida na miniatura: planta a cópia já
-na era rodada — a decomposição correta sai de diagnóstico
-sobre passadas capturadas da bancada (frente seguinte), não de
-derivação. Rotação pura no lugar, sem deslocamento que abra
-evento, segue invisível ao gatilho — limite declarado.
+segunda cópia. **Pouso depois de pouso rodado (pousos_3_rot): corrigido
+(frente 27).** Correção à leitura da frente 26: na baseline a
+era 3 **não planta cópia** — o canvas não muda um pixel na era
+(os 1.635 px eram artefato do juiz na grade da âncora final com
+a âncora atrasada; o fim da era 2 já lia 1.635 nessa grade). O
+dano real era outro: âncora atrasada em 51 px e **611 px de
+conteúdo legítimo que nunca confirmavam**. A decomposição,
+medida sobre passadas capturadas: a evidência da era 3 é o
+próprio S_roll (a prob entregue des-rotada pelo roll parado)
+lido como **hipótese-página** — 0,193 contra 0,002 do Sc —
+porque o warp entregue já está em coordenadas da página e só a
+rotação parada está errada nele (permutação pura); parear
+cantos no registro (a correção indicada pela F26) ataca o mapa
+das passadas de voto e planta a cópia, medido na miniatura. A
+correção implementada: com roll ≠ 0, `score_page` é o escore
+compensado (com marca na telemetria do evento) e a ação do
+pouso comum/default troca a âncora pela mediana do streak
+**rolada pelo roll parado**, que se preserva. Suíte da F26
+re-corrida: idêntica em tudo, exceto pousos_3_rot, que passa
+(3/3 ações, 0 eventos após a última ação; os 611 px confirmam,
+IoU canônico 0,832 → 0,856, ao custo de +15 px de dup na era);
+restam só os FAILs pré-existentes de 2 px. Limites que ficam:
+pouso reto com roll parado ímpar (1 ou 3) não medido; isca com
+roll ≠ 0 sem série; segunda rotação na mesma geração segue
+abstenção — agora com consequência benigna comprovada (sem
+corrupção, só âncora latente). Rotação pura no lugar, sem
+deslocamento que abra evento, segue invisível ao gatilho.
 
 **Física da bancada (frente 25, 2026-11-10) — a disciplina
 re-medida sob a física do app.** O app retifica cada frame pelo
