@@ -514,6 +514,42 @@ def _anchor_arbitration_enabled():
     return value in {"1", "true", "yes", "on"}
 
 
+# Mobilidade da ancora por divergencia assentada (frente 34,
+# 2026-11-10; draw-lab/live-audit-2026-11-10/34-desenho-ancora-
+# movel.md): a vigia v3 fechou o split errado do puxao e, ao
+# fechar, expos a pergunta que nenhum mecanismo respondia — quem
+# move a ancora quando ninguem divide a pagina? Sem resposta, a
+# ancora congela na pose de abertura, a vigia de identidade fica
+# cega a ~150 px pelo resto da geracao (F33, G1/G3) e a
+# arbitragem cicla sem veredito com o canvas congelado (o
+# livelock da F33). O FOLLOW e a regra do Lucas (2026-11-01) como
+# mecanismo: mover o caderno = so re-registro por substituicao.
+# Divergencia assentada sustentada (deslocamento da grade >
+# _FOLLOW_DISPLACEMENT_PX, degrau entre quads consecutivos <=
+# _FOLLOW_SETTLE_PX por _FOLLOW_PASSES passadas) sem decisao de
+# identidade pendente RE-ANCORA: ancora := mediana dos quads do
+# streak, estado do acumulador INTOCADO — a grade ja e a da
+# folha, e o carry que deforma o estado pela homografia do raio
+# da camera e o da migracao v1, reprovado no FALHAS M2. Enquanto
+# o evento esta aberto a passada nao vota (a copia deslocada e o
+# defeito que a abstencao da arbitragem ja fechou). Precedencia:
+# a arbitragem tem o primeiro veredito de cada passada — veredito
+# decisivo com acao pre-empta; spurious retem o FOLLOW pelo
+# episodio inteiro; indeterminate ou ausencia de veredito
+# (creep: a consistencia par-a-par nunca fecha) deixam a
+# geometria decidir. Atras de DRAW_ANCHOR_FOLLOW (padrao 0);
+# com ele ligado, o passo da migracao v1 nao roda.
+_ANCHOR_FOLLOW_ENV = "DRAW_ANCHOR_FOLLOW"
+_FOLLOW_DISPLACEMENT_PX = _ANCHOR_MIGRATION_DISPLACEMENT_PX
+_FOLLOW_PASSES = _ANCHOR_MIGRATION_PASSES
+_FOLLOW_SETTLE_PX = 6.0
+
+
+def _anchor_follow_enabled():
+    value = os.environ.get(_ANCHOR_FOLLOW_ENV, "0").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 def _matrix_grid_displacement(matrix, shape):
     """Deslocamento medio (px) de uma grade densa da pagina sob matrix."""
     height, width = shape
@@ -976,6 +1012,15 @@ class _PageCleanWorker:
         self._arb_snapshot = None
         self._arb_actions = 0
         self._arb_events = deque(maxlen=128)
+        # Mobilidade da ancora (flag DRAW_ANCHOR_FOLLOW): o evento
+        # de divergencia assentada, o streak de quads assentados e
+        # a retencao por veredito spurious da arbitragem.
+        self._follow_event_open = False
+        self._follow_streak = 0
+        self._follow_streak_quads = []
+        self._follow_hold = False
+        self._anchor_reanchors = 0
+        self._follow_events = deque(maxlen=128)
         # Rotulacao ciclica que a ancora corrente carrega em relacao
         # aos quads posicionais (0 = posicional; k = cantos rolados
         # por k apos um pouso rodado julgado pela arbitragem).
@@ -1075,6 +1120,10 @@ class _PageCleanWorker:
             self._arb_streak_quads = []
             self._arb_scores = []
             self._arb_snapshot = None
+            self._follow_event_open = False
+            self._follow_streak = 0
+            self._follow_streak_quads = []
+            self._follow_hold = False
             self._anchor_roll = 0
             self._still_passes = 0
             self._generation_passes = 0
@@ -1264,6 +1313,12 @@ class _PageCleanWorker:
         self._arb_scores = []
         self._arb_snapshot = None
 
+    def _follow_close_event(self):
+        self._follow_event_open = False
+        self._follow_streak = 0
+        self._follow_streak_quads = []
+        self._follow_hold = False
+
     def _anchor_arbitration_step(
         self,
         generation,
@@ -1449,6 +1504,116 @@ class _PageCleanWorker:
         self._arb_close_event()
         return "verdict", event
 
+    def _anchor_follow_step(
+        self,
+        generation,
+        corners,
+        shape,
+        identity_owned,
+        reg_anchor_median,
+        reg_deadband,
+        step_px,
+        arb_event,
+    ):
+        """Avanca o evento de divergencia assentada; re-ancora no
+        fecho do streak.
+
+        Chamado sob a Condition, com DRAW_ANCHOR_FOLLOW ligada, DEPOIS
+        do passo da arbitragem (arb_event e o veredito dela nesta
+        passada, ou None). Devolve (status, evento): "closed" (sem
+        evento; a passada vota), "open" (divergencia assentada em
+        curso sem re-ancoragem; a passada NAO vota) ou "reanchored"
+        (a ancora trocou nesta passada; ela vota, re-registrada na
+        ancora nova pelo chamador). O desenho e a precedencia estao
+        no comentario das constantes _FOLLOW_* e em
+        34-desenho-ancora-movel.md.
+        """
+        old_anchor = self._anchor_corners
+        if identity_owned or corners is None or old_anchor is None:
+            self._follow_close_event()
+            return "closed", None
+        # Precedencia da arbitragem (veredito DESTA passada): quem
+        # decidiu por conteudo nao e atravessado pela geometria.
+        if arb_event is not None and arb_event["verdict"] != "indeterminate":
+            if arb_event["action"]:
+                # A ancora ja se moveu pelo conteudo (pouso, pouso
+                # rodado ou default): a divergencia acabou.
+                self._follow_close_event()
+                return "closed", None
+            # spurious: o conteudo decidiu que a folha nao se
+            # moveu — o episodio e do juizo de conteudo e o FOLLOW
+            # fica retido (sem fogo, sem abstencao propria) ate ele
+            # fechar.
+            self._follow_event_open = False
+            self._follow_streak = 0
+            self._follow_streak_quads = []
+            self._follow_hold = True
+            return "closed", None
+        # O gatilho compara em termos POSICIONAIS, como o da
+        # arbitragem: o roll parado nao e deslocamento de pose.
+        trigger_anchor = (
+            old_anchor
+            if self._anchor_roll == 0
+            else np.roll(old_anchor, -self._anchor_roll, axis=0)
+        )
+        matrix = _registration_matrix(trigger_anchor, corners, shape)
+        displacement = _matrix_grid_displacement(matrix, shape)
+        if displacement <= _FOLLOW_DISPLACEMENT_PX:
+            self._follow_close_event()
+            return "closed", None
+        if self._follow_hold:
+            # Episodio retido pelo veredito spurious: a geometria
+            # nao decide nem abstee enquanto o episodio durar.
+            return "closed", None
+        self._follow_event_open = True
+        if step_px is not None and step_px <= _FOLLOW_SETTLE_PX:
+            self._follow_streak += 1
+            self._follow_streak_quads.append(corners.copy())
+        else:
+            # A folha ainda esta andando: o evento segue aberto
+            # (a passada abstee), o streak recomeca.
+            self._follow_streak = 0
+            self._follow_streak_quads = []
+        if self._follow_streak < _FOLLOW_PASSES:
+            return "open", None
+        new_anchor = _median_anchor(self._follow_streak_quads)
+        if self._anchor_roll != 0:
+            # Pouso comum sobre a grade rolada: a mediana
+            # posicional rolada pelo roll parado (a coerencia
+            # ancora/roll da arbitragem); o FOLLOW nunca cria roll.
+            new_anchor = np.roll(new_anchor, self._anchor_roll, axis=0)
+        closed_arb_event = self._arb_event_open
+        if closed_arb_event:
+            # A divergencia que a arbitragem julgava foi resolvida
+            # pela geometria; ela recomeca contra a ancora nova.
+            self._arb_close_event()
+        self._anchor_corners = new_anchor
+        if reg_anchor_median:
+            self._anchor_samples = [
+                quad.copy() for quad in self._follow_streak_quads
+            ]
+        if reg_deadband:
+            self._reg_frozen_corners = new_anchor.copy()
+            self._reg_deadband_over = 0
+        # A geometria sob a vigia mudou: a sequencia dela recomeca
+        # (o recall por passada segue valido; a ancora nova e o
+        # referencial corrente que o portao dela pressupoe).
+        self._identity_watch_streak = 0
+        self._anchor_reanchors += 1
+        event = {
+            "generation": generation,
+            "pass_index": self._generation_passes,
+            "displacement_px": displacement,
+            "streak": self._follow_streak,
+            "anchor_delta_px": float(
+                np.max(np.linalg.norm(new_anchor - old_anchor, axis=1))
+            ),
+            "closed_arb_event": closed_arb_event,
+        }
+        self._follow_events.append(event)
+        self._follow_close_event()
+        return "reanchored", event
+
     def telemetry_snapshot(self):
         """Copia da telemetria por etapa (somente leitura).
 
@@ -1486,6 +1651,11 @@ class _PageCleanWorker:
                 snapshot["anchor_arbitration_actions"] = self._arb_actions
                 snapshot["anchor_arbitration_events"] = [
                     dict(event) for event in self._arb_events
+                ]
+            if _anchor_follow_enabled() or self._anchor_reanchors:
+                snapshot["anchor_reanchors"] = self._anchor_reanchors
+                snapshot["anchor_reanchor_events"] = [
+                    dict(event) for event in self._follow_events
                 ]
             return snapshot
 
@@ -1755,6 +1925,7 @@ class _PageCleanWorker:
             reg_deadband = _reg_deadband_enabled()
             anchor_migration = _anchor_migration_enabled()
             anchor_arbitration = _anchor_arbitration_enabled()
+            anchor_follow = _anchor_follow_enabled()
             force_publish = False
             reg_info = {}
             ecc_info = {
@@ -2088,6 +2259,10 @@ class _PageCleanWorker:
                             self._arb_streak_quads = []
                             self._arb_scores = []
                             self._arb_snapshot = None
+                            self._follow_event_open = False
+                            self._follow_streak = 0
+                            self._follow_streak_quads = []
+                            self._follow_hold = False
                             self._worker_generation = -1
                             self._generation_passes = 0
                             self._quiet_passes = 0
@@ -2123,16 +2298,20 @@ class _PageCleanWorker:
                         self._identity_switch_votes = 0
                         self._identity_armed_mid_generation = False
                         self._identity_arm_reason = None
+                identity_owned = (
+                    first_pass
+                    or identity_pending
+                    or identity_deferred
+                    or identity_switch_pending
+                )
                 arbitration_abstain = False
+                arb_event = None
                 if anchor_arbitration:
                     arb_status, arb_event = self._anchor_arbitration_step(
                         generation,
                         corners,
                         prob.shape,
-                        first_pass
-                        or identity_pending
-                        or identity_deferred
-                        or identity_switch_pending,
+                        identity_owned,
                         reg_anchor_median,
                         reg_deadband,
                         prob,
@@ -2172,7 +2351,7 @@ class _PageCleanWorker:
                             )
                         )
                         force_publish = True
-                elif anchor_migration:
+                elif anchor_migration and not anchor_follow:
                     migration = self._anchor_migration_step(
                         generation,
                         corners,
@@ -2203,6 +2382,63 @@ class _PageCleanWorker:
                         force_publish = True
                     reg_info["anchor_migration_streak"] = self._migration_streak
                     reg_info["anchor_migrated"] = migration is not None
+                follow_abstain = False
+                if anchor_follow:
+                    # Mobilidade da ancora (frente 34): roda DEPOIS
+                    # da arbitragem — o veredito dela nesta passada
+                    # (arb_event) e a precedencia que o passo le.
+                    follow_status, follow_event = self._anchor_follow_step(
+                        generation,
+                        corners,
+                        prob.shape,
+                        identity_owned,
+                        reg_anchor_median,
+                        reg_deadband,
+                        watch_step_px,
+                        arb_event,
+                    )
+                    follow_abstain = follow_status == "open"
+                    reg_info["follow_event_open"] = self._follow_event_open
+                    reg_info["follow_abstained"] = follow_abstain
+                    reg_info["follow_streak"] = self._follow_streak
+                    reg_info["follow_hold"] = self._follow_hold
+                    if follow_event is not None:
+                        reg_info["follow_reanchored"] = True
+                        reg_info["follow_displacement_px"] = follow_event[
+                            "displacement_px"
+                        ]
+                        reg_info["follow_closed_arb_event"] = follow_event[
+                            "closed_arb_event"
+                        ]
+                        if follow_event["closed_arb_event"]:
+                            reg_info["arb_event_open"] = False
+                        # A passada corrente entra ja registrada na
+                        # ancora nova, por cima do estado INTOCADO
+                        # (a troca e so de ancora; com ECC ligado, a
+                        # referencia e o canvas como esta) — e o
+                        # evento de arbitragem que a abstinha foi
+                        # fechado pela re-ancoragem.
+                        follow_reference = (
+                            None
+                            if ecc_reference is None
+                            else self._accumulator._confirmed.astype(np.float32)
+                            / 255.0
+                        )
+                        registered_prob, registered_visible, ecc_info = (
+                            _register_ink_probability(
+                                prob,
+                                self._anchor_corners,
+                                (
+                                    self._reg_frozen_corners
+                                    if reg_deadband
+                                    else corners
+                                ),
+                                follow_reference,
+                                visible,
+                            )
+                        )
+                        arbitration_abstain = False
+                        force_publish = True
                 identity_watch_suspect = False
                 if (
                     _identity_watch_enabled()
@@ -2240,6 +2476,13 @@ class _PageCleanWorker:
                 if arbitration_abstain:
                     # Evento de arbitragem aberto: a passada e
                     # registrada e pontuada, mas nao vota.
+                    visible = np.zeros(prob.shape, dtype=bool)
+                if follow_abstain:
+                    # Evento de divergencia assentada aberto: a
+                    # passada foi medida, mas nao vota — registrada
+                    # na ancora velha, ela depositaria a copia
+                    # deslocada que a re-ancoragem existe para
+                    # nao fabricar.
                     visible = np.zeros(prob.shape, dtype=bool)
                 if identity_watch_suspect:
                     # Suspeita de ruptura (vigia): a passada mediu o

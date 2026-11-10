@@ -437,6 +437,10 @@ def ruler_temporal(model, pages, dev):
 
 # ------------------------------------------------------------------
 # Recibo de utilizacao: amostrador nvidia-smi em thread.
+# Cadencia de 0,25 s (medido na v4 do kernel, 2026-11-10: com
+# 2,0 s, um smoke de 4 passos rendeu 2 amostras, as duas nos
+# intervalos entre passos — media 0,0% com a GPU trabalhando,
+# e o portao do smoke reprovou uma corrida saudavel).
 # ------------------------------------------------------------------
 class UtilSampler:
     def __init__(self):
@@ -465,7 +469,7 @@ class UtilSampler:
                              "gpu_mem_mib": _t.cuda.memory_allocated() / 2**20})
                 except Exception:
                     pass
-            self._stop.wait(2.0)
+            self._stop.wait(0.25)
 
     def start(self):
         self._thread = threading.Thread(target=self._loop, daemon=True)

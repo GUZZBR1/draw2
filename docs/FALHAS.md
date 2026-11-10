@@ -1205,6 +1205,34 @@ andamento é o erro mais caro. Assimetria declarada: troca de folha
 em episódio limpo direto pra pose nova está fora deste chamador; a
 vigia de conteúdo e a porta da ausência seguem cobrindo o resto.
 
+A prova da v3 nas sessões gravadas (frente 33) aprovou o puxão e a
+manhã, mas reprovou a virada e a substituição da tarde por uma causa
+arquitetural, não de limiar: sem o split falso da v1, nada movia a
+âncora, e virada/substituição ficavam a 145–155 px da âncora
+congelada, fora do teto da própria vigia; no braço com arbitragem, o
+canvas congelou em 2.117 px por livelock (vereditos indeterminate em
+ciclo, a divergência assentada mantendo o evento aberto). A frente 34
+responde com a mobilidade da âncora por divergência assentada
+(`DRAW_ANCHOR_FOLLOW`, default 0, em `draw/ink_layers.py`): pose
+assentada (degrau entre quads consecutivos ≤ 6 px) e deslocada da
+âncora (> 8 px de grade) por 3 passadas, sem identidade pendente,
+re-ancora por SUBSTITUIÇÃO — âncora := mediana dos quads do streak e
+estado intocado, porque a grade já é o referencial da folha e
+deformar o estado pela homografia do raio da câmera é o carry
+reprovado da migração v1; a arbitragem tem o primeiro veredito
+(pouso decisivo pre-empta, spurious retém o episódio, indeterminate
+deixa o FOLLOW disparar e fechar o evento). Na prova sobre as
+mesmas sessões: puxão sem split com preservação 1,000 do canvas
+pré-puxão, substituição dividindo na passada 28, virada dividindo na
+passada 52 (a prevista pela simulação da frente 32), livelock
+quebrado (página fechada de 27.162 px), manhã e regressão dígito a
+dígito. Ressalva medida: na composição só com a vigia (sem a âncora
+mediana), o mecanismo também segue micro-derivas assentadas da era
+de posicionamento (re-ancoragens com Δ 11,7–16,7 px de câmera) e a
+abstenção delas encolhe o canvas pré-puxão (2.032 contra 6.686 px
+sem a flag); na composição com arbitragem+mediana o efeito não
+aparece. Contratos em `tests/test_anchor_follow.py`.
+
 Amarração com a bancada: o mapa ID → régua acima é a referência que o
 `JULGAMENTO.md` pode citar; nenhuma régua da bancada foi alterada por
 este documento. A guarda automática desta página é
