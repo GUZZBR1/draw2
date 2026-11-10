@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from draw import app as app_module  # noqa: E402
+from draw import ink_layers as ink_layers_module  # noqa: E402
 from selftest import build_markerless_scene  # noqa: E402
 
 INK_RECT = (slice(300, 500), slice(300, 500))
@@ -182,14 +183,37 @@ def _patched_generation_counter(monkeypatch, generations, preserve_flags=None):
 
 @pytest.mark.lento
 def test_new_sheet_does_not_inherit_the_previous_canvas(monkeypatch):
-    """A tinta da folha anterior não pode reaparecer na folha nova.
+    """A tinta anterior só persiste enquanto a troca aguarda consenso.
 
-    Regressão do `accumulated_canvas` esquecido: depois do drop e da
-    volta da folha, o painel exibia o canvas da sessão anterior até
-    a trabalhadora publicar a primeira máscara da geração nova.
+    Depois de confirmar a folha nova, o painel não pode exibir
+    o `accumulated_canvas` esquecido da sessão anterior.
     """
+    monkeypatch.setenv("DRAW_ECC_REFINE", "0")
+    monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(ink_layers_module, "_IDLE_PROBE_SECONDS", 0.01)
     generations = [0]
     _patched_generation_counter(monkeypatch, generations)
+    decision = [None]
+    shown_decisions = []
+    original_poll_display = app_module._PageCleanWorker.poll_display
+    original_imshow = _SpyGui.imshow
+
+    def capture_display(self, generation, after_version=0):
+        with self._condition:
+            result = original_poll_display(self, generation, after_version)
+            if result is not None:
+                events = [
+                    e for e in self._identity_events if e["generation"] == generation
+                ]
+                decision[0] = events[-1]["decision"] if events else None
+            return result
+
+    def capture_imshow(self, title, frame):
+        shown_decisions.append(decision[0])
+        original_imshow(self, title, frame)
+
+    monkeypatch.setattr(app_module._PageCleanWorker, "poll_display", capture_display)
+    monkeypatch.setattr(_SpyGui, "imshow", capture_imshow)
     plan = ["sheet"] * 50 + ["blank"] * 130 + ["sheet"] * 70
     spy, capture, errors, finished = _run_headless(
         plan, _fake_ink_class(generations)
@@ -217,10 +241,10 @@ def test_new_sheet_does_not_inherit_the_previous_canvas(monkeypatch):
         index for index in after_return
         if _ink(_panels(spy.shown[index])[1]) > 0
     ]
-    assert not with_ink, (
-        f"{len(with_ink)} quadros mostraram tinta da folha anterior "
-        f"depois de a folha nova ser detectada: {with_ink[:5]}"
-    )
+    assert all(shown_decisions[i] == "deferred_switch_consensus" for i in with_ink)
+    committed = [i for i in after_return if shown_decisions[i] == "new_page"]
+    assert committed, "a troca não completou os três vereditos limpos"
+    assert not any(_ink(_panels(spy.shown[i])[1]) for i in committed)
 
 
 @pytest.mark.lento

@@ -347,6 +347,10 @@ def test_changed_page_content_starts_a_clean_canvas(monkeypatch):
 
         generation = worker.new_generation(preserve_identity=True)
         ink.next_page = True
+        for _ in range(2):
+            _drive(worker, generation, ink, [(0, 0)])
+            assert worker._identity_events[-1]["decision"] == "deferred_switch_consensus"
+            np.testing.assert_array_equal(worker.poll(generation, 0)[1], original[1])
         _drive(worker, generation, ink, [(0, 0)])
         shown = worker.poll_display(generation, 0)
         assert shown is not None
@@ -357,7 +361,7 @@ def test_changed_page_content_starts_a_clean_canvas(monkeypatch):
         identity = next(
             record for record in worker.telemetry_snapshot()["records"]
             if record["generation"] == generation
-            and record["page_identity_decision"] is not None
+            and record["page_identity_decision"] == "new_page"
         )
         assert identity["page_identity_decision"] == "new_page"
         assert identity["page_identity_recall"] == 0.0

@@ -337,8 +337,10 @@ class ReplayWorker:
         self.identity_reference_corners = None
         self.identity_recovery_requested = False
         self.identity_defer_count = 0
+        self.identity_switch_votes = 0
         self._identity_deferred = False
         self._identity_timed_out = False
+        self._identity_switch_pending = False
         self.identity_events = []
         self.ecc_records = []
         self._identity_candidate = None
@@ -347,6 +349,7 @@ class ReplayWorker:
     def new_generation(self, preserve_identity=False):
         self.identity_recovery_requested = bool(preserve_identity)
         self.identity_defer_count = 0
+        self.identity_switch_votes = 0
         if preserve_identity:
             reference = self.acc._confirmed
             self.identity_reference = None if reference is None else reference.copy()
@@ -427,14 +430,17 @@ class ReplayWorker:
         )
         self._identity_deferred = False
         self._identity_timed_out = False
+        self._identity_switch_pending = False
         if first_pass:
             self.worker_generation = generation
             self.generation_passes = 0
             self.quiet_passes = 0
-        if first_pass or identity_pending:
-            if self._identity_keeps_page(prob, corners, generation) is False:
-                self.acc.reset()
-                self.anchor = corners
+        identity_new_page = (first_pass or identity_pending) and (
+            self._identity_keeps_page(prob, corners, generation) is False
+        )
+        if identity_new_page:
+            self.acc.reset()
+            self.anchor = corners
         if (first_pass or identity_pending) and self._identity_candidate is not None:
             prob = self._identity_candidate
             ecc_info = self._identity_ecc
@@ -456,7 +462,9 @@ class ReplayWorker:
         self.ecc_records.append(ecc_info)
         result = self.acc.add(
             prob,
-            np.zeros(prob.shape, dtype=bool) if self._identity_deferred else None,
+            np.zeros(prob.shape, dtype=bool)
+            if self._identity_deferred or self._identity_switch_pending
+            else None,
         )
         if (
             result["confirmed_changed"]
@@ -476,7 +484,12 @@ class ReplayWorker:
             self.coverage_turn_signals += 1
             if self.turn_event_enabled and self.turn_event is None:
                 self.turn_event = (generation, result["confirmed"])
-        if first_pass or self._identity_timed_out or result["confirmed_changed"]:
+        if (
+            first_pass
+            or self._identity_timed_out
+            or identity_new_page
+            or result["confirmed_changed"]
+        ):
             self.published = (generation, result["confirmed"])
             self.publish_seq += 1
         return result
@@ -497,6 +510,7 @@ class ReplayWorker:
         self._identity_ecc = None
         self._identity_deferred = False
         self._identity_timed_out = False
+        self._identity_switch_pending = False
         enabled = int(_ink._ecc_refinement_enabled())
         quarantine_frames = 0
         if reference is not None:
@@ -536,13 +550,26 @@ class ReplayWorker:
                 self._identity_timed_out = (
                     quarantine_frames > _ink._PAGE_IDENTITY_MAX_DEFERRALS
                 )
-            if keep_page or self._identity_deferred:
-                self._identity_candidate = candidate
+        if self._identity_deferred:
+            self.identity_switch_votes = 0
+        elif reference is not None and not keep_page:
+            self.identity_switch_votes += 1
+            self._identity_switch_pending = (
+                self.identity_switch_votes < _ink._PAGE_IDENTITY_SWITCH_CONSENSUS_FRAMES
+            )
+        else:
+            self.identity_switch_votes = 0
+        if reference is not None and (
+            keep_page or self._identity_deferred or self._identity_switch_pending
+        ):
+            self._identity_candidate = candidate
         decision = (
             "quarantine_timeout"
             if self._identity_timed_out
             else "deferred_ecc_rejected"
             if self._identity_deferred
+            else "deferred_switch_consensus"
+            if self._identity_switch_pending
             else "same_page"
             if keep_page
             else "new_page"
@@ -579,11 +606,15 @@ class ReplayWorker:
                     else None,
                 }
             )
-        if not self._identity_deferred or self._identity_timed_out:
+        if not (
+            (self._identity_deferred and not self._identity_timed_out)
+            or self._identity_switch_pending
+        ):
             self.identity_reference = None
             self.identity_reference_corners = None
             self.identity_recovery_requested = False
             self.identity_defer_count = 0
+            self.identity_switch_votes = 0
         if self._identity_timed_out:
             self.acc.reset()
             self.anchor = None
@@ -591,7 +622,11 @@ class ReplayWorker:
             self.generation_passes = 0
             self.quiet_passes = 0
             self.still_passes = 0
-        return None if self._identity_deferred else bool(keep_page)
+        return (
+            None
+            if self._identity_deferred or self._identity_switch_pending
+            else bool(keep_page)
+        )
 
     def take_turn_event(self, generation):
         if self.turn_event is None or self.turn_event[0] != generation:

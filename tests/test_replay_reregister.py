@@ -126,7 +126,7 @@ def _drive_real_identity(sequence, returned):
     real = app_module._PageCleanWorker(_ProbIsWarp()).start()
     try:
         generation = real.new_generation()
-        for i, (prob, corners) in enumerate(sequence + [returned]):
+        for i, (prob, corners) in enumerate(sequence + [returned] * 3):
             if i == len(sequence):
                 generation = real.new_generation(preserve_identity=True)
             before = real.stats()["passes_total"]
@@ -163,7 +163,7 @@ def test_worker_mirror_matches_real_identity_recovery(monkeypatch):
         mirror = rr.ReplayWorker()
         generation = mirror.new_generation()
         now = 0.0
-        for i, (prob, corners) in enumerate(sequence + [returned]):
+        for i, (prob, corners) in enumerate(sequence + [returned] * 3):
             if i == len(sequence):
                 generation = mirror.new_generation(preserve_identity=True)
             mirror.submit((prob, corners, corners), generation)
@@ -314,16 +314,22 @@ def test_replay_ecc_rejection_defers_production(
     mirror.identity_reference_corners = corners.copy()
     mirror.identity_recovery_requested = True
     kept = mirror._identity_keeps_page(candidate, corners, 2)
-    assert kept is (None if ecc_enabled == "1" else decision == "same_page")
+    assert kept is (None if ecc_enabled == "1" or decision == "new_page" else True)
     event = mirror.identity_events[-1]
-    expected_decision = "deferred_ecc_rejected" if ecc_enabled == "1" else decision
+    expected_decision = (
+        "deferred_ecc_rejected" if ecc_enabled == "1"
+        else "deferred_switch_consensus" if decision == "new_page"
+        else "same_page"
+    )
     assert event["decision"] == expected_decision
     assert event["ecc_rejected"] == (ecc_enabled == "1")
     assert bool(calls) == (ecc_enabled == "1")
     assert event["ecc_refine_enabled"] == int(ecc_enabled)
     if chamfer_flag == "1":
         assert event["ecc_refine_enabled"] == int(ecc_enabled)
-        assert event["shadow_decision"] == ("defer" if ecc_enabled == "1" else decision)
+        assert event["shadow_decision"] == (
+            "defer" if ecc_enabled == "1" else expected_decision
+        )
         expected = ink_layers_module._identity_chamfer_fields(
             candidate > 0.7,
             reference > 0,

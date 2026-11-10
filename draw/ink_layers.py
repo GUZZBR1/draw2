@@ -241,6 +241,8 @@ _PAGE_IDENTITY_MIN_RECALL = 0.65
 _PAGE_IDENTITY_MIN_CONTAINMENT = 0.5
 # Maximo de passadas adiadas por recuperacao, somando ECC e oclusao.
 _PAGE_IDENTITY_MAX_DEFERRALS = 5
+# Troca de pagina exige esta janela de vereditos limpos consecutivos.
+_PAGE_IDENTITY_SWITCH_CONSENSUS_FRAMES = 3
 # O canvas confirmado inclui o halo da fronteira, que uma passada
 # sozinha nunca cobre no limiar do voto: a comparacao dilata os
 # dois lados pela mesma tolerancia do comparador da regua.
@@ -726,6 +728,7 @@ class _PageCleanWorker:
         self._identity_reference_corners = None
         self._identity_recovery_requested = False
         self._identity_defer_count = 0
+        self._identity_switch_votes = 0
         self._accumulator = _LayeredInkAccumulator(
             threshold=getattr(page_clean, "threshold", 0.7)
         )
@@ -780,6 +783,7 @@ class _PageCleanWorker:
         with self._condition:
             self._identity_recovery_requested = bool(preserve_identity)
             self._identity_defer_count = 0
+            self._identity_switch_votes = 0
             if preserve_identity:
                 reference = self._accumulator._confirmed
                 self._identity_reference = (
@@ -1055,6 +1059,7 @@ class _PageCleanWorker:
             identity_visible_reference_px = None
             identity_deferred = False
             identity_timed_out = False
+            identity_switch_pending = False
             quarantine_reason = None
             quarantine_frames = 0
             ecc_refine_enabled = int(_ecc_refinement_enabled())
@@ -1224,6 +1229,16 @@ class _PageCleanWorker:
                         identity_timed_out = (
                             quarantine_frames > _PAGE_IDENTITY_MAX_DEFERRALS
                         )
+                    if identity_deferred:
+                        self._identity_switch_votes = 0
+                    elif identity_reference is not None and not keep_page:
+                        self._identity_switch_votes += 1
+                        identity_switch_pending = (
+                            self._identity_switch_votes
+                            < _PAGE_IDENTITY_SWITCH_CONSENSUS_FRAMES
+                        )
+                    else:
+                        self._identity_switch_votes = 0
                     if identity_recovery_requested:
                         if identity_timed_out:
                             identity_decision = "quarantine_timeout"
@@ -1231,6 +1246,8 @@ class _PageCleanWorker:
                             identity_decision = "deferred_ecc_rejected"
                         elif identity_deferred:
                             identity_decision = "deferred_occlusion"
+                        elif identity_switch_pending:
+                            identity_decision = "deferred_switch_consensus"
                         else:
                             identity_decision = "same_page" if keep_page else "new_page"
                         if _identity_chamfer_enabled():
@@ -1269,10 +1286,12 @@ class _PageCleanWorker:
                                 "deferred": identity_deferred,
                             }
                         )
-                    if identity_deferred and not identity_timed_out:
+                    if (
+                        identity_deferred and not identity_timed_out
+                    ) or identity_switch_pending:
                         # A referencia NAO e consumida: a proxima
                         # passada decide com registro e visao
-                        # confiaveis. ECC rejeitado nao vota.
+                        # confiaveis e consenso. ECC rejeitado nao vota.
                         pass
                     else:
                         if identity_timed_out:
@@ -1293,9 +1312,11 @@ class _PageCleanWorker:
                         self._identity_reference_corners = None
                         self._identity_recovery_requested = False
                         self._identity_defer_count = 0
+                        self._identity_switch_votes = 0
                 if (
                     (first_pass or identity_pending)
                     and not identity_deferred
+                    and not identity_switch_pending
                     and not keep_page
                 ):
                     if visible is not None:
@@ -1303,8 +1324,9 @@ class _PageCleanWorker:
                 else:
                     prob = registered_prob
                     visible = registered_visible
-                if identity_deferred and (
-                    quarantine_reason == "ecc_rejected" or identity_timed_out
+                if identity_switch_pending or (
+                    identity_deferred
+                    and (quarantine_reason == "ecc_rejected" or identity_timed_out)
                 ):
                     visible = np.zeros(prob.shape, dtype=bool)
                 result = self._accumulator.add(prob, visible)
@@ -1342,19 +1364,20 @@ class _PageCleanWorker:
                         generation,
                         result["confirmed"],
                     )
-                if first_pass or identity_timed_out or result["confirmed_changed"]:
+                publish_confirmed = (
+                    first_pass
+                    or identity_timed_out
+                    or identity_decision == "new_page"
+                    or result["confirmed_changed"]
+                )
+                if publish_confirmed:
                     self._version += 1
                     self._published = (
                         generation,
                         self._version,
                         result["confirmed"],
                     )
-                if (
-                    first_pass
-                    or identity_timed_out
-                    or result["confirmed_changed"]
-                    or result["provisional_changed"]
-                ):
+                if publish_confirmed or result["provisional_changed"]:
                     self._display_version += 1
                     self._published_display = (
                         generation,
@@ -1369,7 +1392,7 @@ class _PageCleanWorker:
                 # confirmed_px (a uniao nao existe mais).
                 published_at = time.monotonic()
                 self._telemetry_passes += 1
-                if first_pass or identity_timed_out or result["confirmed_changed"]:
+                if publish_confirmed:
                     self._telemetry_publishes += 1
                 self._telemetry_records.append(
                     {

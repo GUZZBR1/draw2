@@ -620,7 +620,7 @@ o canvas não é contaminado nem zerado durante a quarentena. O adiamento
 por oclusão continua como `deferred_occlusion`.
 
 Eventos e records declaram `deferred`, `quarantine_reason` (`ecc_rejected`,
-`occlusion` ou `null`) e `quarantine_frames`, número de passadas consecutivas
+`occlusion` ou `null`) e `quarantine_frames`, número de passadas
 adiadas nesta recuperação. O teto configurável no módulo
 `_PAGE_IDENTITY_MAX_DEFERRALS = 5` é compartilhado pelos dois motivos;
 a recuperação pendente não entra em descanso total. Uma decisão concluída
@@ -632,6 +632,22 @@ O evento terminal preserva a contagem e o motivo; os estados internos
 da quarentena são limpos. Este teto é um default operacional, não um
 limiar de identidade calibrado nas quatro páginas reais.
 
+**Cláusula C — consenso de troca.** Com referência disponível, `new_page`
+só se consuma após **3 vereditos limpos consecutivos** de página diferente
+(`_PAGE_IDENTITY_SWITCH_CONSENSUS_FRAMES = 3`). Nas duas primeiras passadas,
+`deferred_switch_consensus` preserva referência, âncora e canvas, zera a
+evidência da passada e mantém o descanso total bloqueado. Uma passada
+adiada por ECC/oclusão quebra a consecutividade; `same_page` é imediato.
+O consenso pendente não incrementa nem zera o contador do teto de **5**
+adiamentos ECC+oclusão: é um adiamento separado, com `deferred=False`,
+`quarantine_reason=null` e `quarantine_frames=0` no diagnóstico da passada.
+O terceiro voto limpo consome a referência, troca a âncora e zera ambos os
+contadores, publicando o canvas novo mesmo se estiver vazio; geração nova
+também zera os contadores. `quarantine_timeout` nunca vota
+`new_page`. Eventos e records de consenso mantêm `ecc_refine_enabled`
+explícito como inteiro 0/1, com ou sem Chamfer. O flag ECC continua OFF
+por padrão; recall ≥ 0,65 e contenção ≥ 0,5 não mudam.
+
 O replay usa os mesmos nomes de diagnóstico nos eventos. Com a flag on,
 `Episode.report` inclui `identity_events`, `identity_true_class` e
 `identity_chamfer_by_ecc`: valores individuais, contagem, ausentes,
@@ -641,7 +657,8 @@ min/p25/mediana/p75/max para cada métrica, separados por estado ECC.
 independentemente da decisão inferida. Episódios sem evento de identidade
 continuam sem amostras (não são zeros). A divergência pré-existente do
 replay permanece: não passa `visible`, usa `prior` inteiro e não adia por
-oclusão. A rejeição ECC só adia a sombra do evento, não o replay vivo.
+oclusão. A rejeição ECC adia o replay vivo; a contagem de votos e a janela
+de consenso de troca também espelham o worker.
 
 Para medir sem calibrar corte, executar os dois estados separadamente:
 

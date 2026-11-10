@@ -184,7 +184,11 @@ def test_identity_chamfer_is_diagnostic_and_ecc_rejection_defers_production(
         assert calls[-2:] == [cv2.MOTION_HOMOGRAPHY, cv2.MOTION_AFFINE]
     off_event = off["page_identity_events"][-1]
     on_event = on["page_identity_events"][-1]
-    expected_decision = "deferred_ecc_rejected" if ecc_enabled == "1" else decision
+    expected_decision = (
+        "deferred_ecc_rejected" if ecc_enabled == "1"
+        else "deferred_switch_consensus" if decision == "new_page"
+        else "same_page"
+    )
     assert on_event["decision"] == off_event["decision"] == expected_decision
     assert on_event["ecc_rejected"] == (ecc_enabled == "1")
     assert on_event["ecc_refine_enabled"] == int(ecc_enabled)
@@ -194,7 +198,9 @@ def test_identity_chamfer_is_diagnostic_and_ecc_rejection_defers_production(
     assert on_event["quarantine_reason"] == (
         "ecc_rejected" if ecc_enabled == "1" else None
     )
-    assert on_event["shadow_decision"] == ("defer" if ecc_enabled == "1" else decision)
+    assert on_event["shadow_decision"] == (
+        "defer" if ecc_enabled == "1" else expected_decision
+    )
     assert set(off_event) == {
         "generation",
         "decision",
