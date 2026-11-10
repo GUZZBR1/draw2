@@ -415,6 +415,35 @@ def _anchor_migration_enabled():
     return value in {"1", "true", "yes", "on"}
 
 
+# Arbitragem de ancora por conteudo (v3; frente 19, 2026-11-10;
+# draw-lab/live-audit-2026-11-10/19-migracao-v2-arbitragem.md): a
+# migracao da v1 foi reprovada na propria prova (FALHAS M2) porque a
+# inversa do registro assume a tinta parada na camera — certo pro
+# modo espurio do detector, errado pro pouso, em que a tinta anda
+# com a folha. As duas hipoteses sao indistinguiveis pelo quad; a
+# v3 arbitra pelo CONTEUDO: num streak de assentamento (passadas
+# deslocadas > _ANCHOR_MIGRATION_DISPLACEMENT_PX, mutuamente
+# consistentes a _ARB_SETTLE_PX, K = _ANCHOR_MIGRATION_PASSES),
+# compara a fracao da massa da prob que cai sobre o canvas
+# confirmado pre-evento na colocacao identidade (Sp, hipotese
+# pagina/pouso) e na registrada (Sc, hipotese camera/espurio).
+# POUSO troca a ancora SEM mover o estado; ESPURIO nao faz nada.
+# Enquanto o evento esta aberto, a passada NAO vota (visible=0): a
+# copia deslocada confirmava pelo voto antes de qualquer veredito
+# (mecanismo que reprovou a v2 sem abstencao). Atras de
+# DRAW_ANCHOR_ARBITRATION (padrao 0); a flag da v1 segue vetada.
+_ANCHOR_ARBITRATION_ENV = "DRAW_ANCHOR_ARBITRATION"
+_ARB_SETTLE_PX = 6.0
+_ARB_DELTA = 0.05
+_ARB_MIN_CANVAS_PX = 200
+_ARB_MIN_PASS_PX = 200
+
+
+def _anchor_arbitration_enabled():
+    value = os.environ.get(_ANCHOR_ARBITRATION_ENV, "0").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 def _matrix_grid_displacement(matrix, shape):
     """Deslocamento medio (px) de uma grade densa da pagina sob matrix."""
     height, width = shape
@@ -868,6 +897,15 @@ class _PageCleanWorker:
         self._migration_quads = []
         self._anchor_migrations = 0
         self._migration_events = deque(maxlen=128)
+        # Arbitragem de ancora (flag DRAW_ANCHOR_ARBITRATION): o
+        # evento aberto, o streak de assentamento com seus escores
+        # por passada e o snapshot do canvas pre-evento.
+        self._arb_event_open = False
+        self._arb_streak_quads = []
+        self._arb_scores = []
+        self._arb_snapshot = None
+        self._arb_actions = 0
+        self._arb_events = deque(maxlen=128)
         self._identity_reference = None
         self._identity_reference_corners = None
         self._identity_recovery_requested = False
@@ -947,6 +985,10 @@ class _PageCleanWorker:
             self._reg_deadband_over = 0
             self._migration_streak = 0
             self._migration_quads = []
+            self._arb_event_open = False
+            self._arb_streak_quads = []
+            self._arb_scores = []
+            self._arb_snapshot = None
             self._still_passes = 0
             self._generation_passes = 0
             self._quiet_passes = 0
@@ -1129,6 +1171,120 @@ class _PageCleanWorker:
         self._migration_quads = []
         return event
 
+    def _arb_close_event(self):
+        self._arb_event_open = False
+        self._arb_streak_quads = []
+        self._arb_scores = []
+        self._arb_snapshot = None
+
+    def _anchor_arbitration_step(
+        self,
+        generation,
+        corners,
+        shape,
+        identity_owned,
+        reg_anchor_median,
+        reg_deadband,
+        raw_prob,
+        registered_prob,
+    ):
+        """Avanca o evento de arbitragem; arbitra no fecho do streak.
+
+        Chamado sob a Condition, com DRAW_ANCHOR_ARBITRATION ligada.
+        Devolve (status, evento): "closed" (sem evento; a passada
+        vota), "open" (evento aberto sem veredito; a passada NAO
+        vota — a copia deslocada nao pode confirmar pelo voto
+        enquanto a hipotese nao foi julgada) ou "verdict" (o evento
+        fechou nesta passada; ela vota, re-registrada na ancora nova
+        se o veredito foi pouso). Presenca perdida e identidade em
+        curso fecham o evento sem veredito: a fronteira de
+        geracao/identidade e a dona desses casos.
+        """
+        old_anchor = self._anchor_corners
+        if identity_owned or corners is None or old_anchor is None:
+            self._arb_close_event()
+            return "closed", None
+        matrix = _registration_matrix(old_anchor, corners, shape)
+        displacement = _matrix_grid_displacement(matrix, shape)
+        if displacement <= _ANCHOR_MIGRATION_DISPLACEMENT_PX:
+            self._arb_close_event()
+            return "closed", None
+        if not self._arb_event_open:
+            self._arb_event_open = True
+            confirmed = self._accumulator._confirmed
+            self._arb_snapshot = None if confirmed is None else confirmed > 0
+            self._arb_streak_quads = []
+            self._arb_scores = []
+        consistent = all(
+            float(np.max(np.linalg.norm(corners - quad, axis=1))) <= _ARB_SETTLE_PX
+            for quad in self._arb_streak_quads
+        )
+        if not consistent:
+            # O movimento continua: a pose candidata e a mais
+            # recente e o snapshot renova (o canvas nao mudou — as
+            # passadas do evento nao votam).
+            confirmed = self._accumulator._confirmed
+            self._arb_snapshot = None if confirmed is None else confirmed > 0
+            self._arb_streak_quads = []
+            self._arb_scores = []
+        self._arb_streak_quads.append(corners.copy())
+        snapshot = self._arb_snapshot
+        raw_total = float(np.sum(raw_prob))
+        registered_total = float(np.sum(registered_prob))
+        if snapshot is None or raw_total <= 0.0 or registered_total <= 0.0:
+            score_page = 0.0
+            score_camera = 0.0
+        else:
+            score_page = float(np.sum(raw_prob * snapshot) / raw_total)
+            score_camera = float(np.sum(registered_prob * snapshot) / registered_total)
+        pass_mass = int(np.count_nonzero(raw_prob > 0.5))
+        self._arb_scores.append((score_page, score_camera, pass_mass))
+        if len(self._arb_streak_quads) < _ANCHOR_MIGRATION_PASSES:
+            return "open", None
+        mean_page = float(np.mean([s[0] for s in self._arb_scores]))
+        mean_camera = float(np.mean([s[1] for s in self._arb_scores]))
+        mean_mass = float(np.mean([s[2] for s in self._arb_scores]))
+        canvas_px = (
+            0
+            if self._arb_snapshot is None
+            else int(np.count_nonzero(self._arb_snapshot))
+        )
+        if canvas_px < _ARB_MIN_CANVAS_PX or mean_mass < _ARB_MIN_PASS_PX:
+            # Sem massa para julgar nao ha copia a fabricar nem a
+            # proteger: trocar a ancora e custo zero nas duas
+            # hipoteses.
+            verdict = "landing_default"
+        elif mean_page - mean_camera > _ARB_DELTA:
+            verdict = "landing"
+        elif mean_camera - mean_page > _ARB_DELTA:
+            verdict = "spurious"
+        else:
+            verdict = "indeterminate"
+        event = {
+            "generation": generation,
+            "pass_index": self._generation_passes,
+            "verdict": verdict,
+            "action": verdict in ("landing", "landing_default"),
+            "score_page": mean_page,
+            "score_camera": mean_camera,
+            "canvas_px": canvas_px,
+            "pass_mass_px": mean_mass,
+            "displacement_px": displacement,
+            "streak": len(self._arb_streak_quads),
+        }
+        self._arb_events.append(event)
+        if event["action"]:
+            new_anchor = _median_anchor(self._arb_streak_quads)
+            self._anchor_corners = new_anchor
+            if reg_anchor_median:
+                self._anchor_samples = [quad.copy() for quad in self._arb_streak_quads]
+            if reg_deadband:
+                self._reg_frozen_corners = new_anchor.copy()
+                self._reg_deadband_over = 0
+            self._arb_actions += 1
+        self._arb_close_event()
+        return "verdict", event
+
     def telemetry_snapshot(self):
         """Copia da telemetria por etapa (somente leitura).
 
@@ -1161,6 +1317,11 @@ class _PageCleanWorker:
                 snapshot["anchor_migrations"] = self._anchor_migrations
                 snapshot["anchor_migration_events"] = [
                     dict(event) for event in self._migration_events
+                ]
+            if _anchor_arbitration_enabled() or self._arb_actions:
+                snapshot["anchor_arbitration_actions"] = self._arb_actions
+                snapshot["anchor_arbitration_events"] = [
+                    dict(event) for event in self._arb_events
                 ]
             return snapshot
 
@@ -1283,6 +1444,7 @@ class _PageCleanWorker:
             reg_anchor_median = _reg_anchor_median_enabled()
             reg_deadband = _reg_deadband_enabled()
             anchor_migration = _anchor_migration_enabled()
+            anchor_arbitration = _anchor_arbitration_enabled()
             force_publish = False
             reg_info = {}
             ecc_info = {
@@ -1598,6 +1760,10 @@ class _PageCleanWorker:
                             self._reg_deadband_over = 0
                             self._migration_streak = 0
                             self._migration_quads = []
+                            self._arb_event_open = False
+                            self._arb_streak_quads = []
+                            self._arb_scores = []
+                            self._arb_snapshot = None
                             self._worker_generation = -1
                             self._generation_passes = 0
                             self._quiet_passes = 0
@@ -1617,7 +1783,54 @@ class _PageCleanWorker:
                         self._identity_recovery_requested = False
                         self._identity_defer_count = 0
                         self._identity_switch_votes = 0
-                if anchor_migration:
+                arbitration_abstain = False
+                if anchor_arbitration:
+                    arb_status, arb_event = self._anchor_arbitration_step(
+                        generation,
+                        corners,
+                        prob.shape,
+                        first_pass
+                        or identity_pending
+                        or identity_deferred
+                        or identity_switch_pending,
+                        reg_anchor_median,
+                        reg_deadband,
+                        prob,
+                        registered_prob,
+                    )
+                    arbitration_abstain = arb_status == "open"
+                    reg_info["arb_event_open"] = self._arb_event_open
+                    reg_info["arb_abstained"] = arbitration_abstain
+                    if arb_event is not None:
+                        reg_info["arb_verdict"] = arb_event["verdict"]
+                        reg_info["arb_score_page"] = arb_event["score_page"]
+                        reg_info["arb_score_camera"] = arb_event["score_camera"]
+                    if (
+                        arb_status == "verdict"
+                        and arb_event is not None
+                        and arb_event["action"]
+                    ):
+                        # Pouso: a passada corrente entra ja
+                        # registrada na ancora nova, por cima do
+                        # estado INTOCADO (a v3 nao move o estado;
+                        # com ECC ligado, a referencia e o canvas
+                        # como esta).
+                        arb_reference = (
+                            None
+                            if ecc_reference is None
+                            else self._accumulator._confirmed.astype(np.float32) / 255.0
+                        )
+                        registered_prob, registered_visible, ecc_info = (
+                            _register_ink_probability(
+                                prob,
+                                self._anchor_corners,
+                                (self._reg_frozen_corners if reg_deadband else corners),
+                                arb_reference,
+                                visible,
+                            )
+                        )
+                        force_publish = True
+                elif anchor_migration:
                     migration = self._anchor_migration_step(
                         generation,
                         corners,
@@ -1663,6 +1876,10 @@ class _PageCleanWorker:
                     identity_deferred
                     and (quarantine_reason == "ecc_rejected" or identity_timed_out)
                 ):
+                    visible = np.zeros(prob.shape, dtype=bool)
+                if arbitration_abstain:
+                    # Evento de arbitragem aberto: a passada e
+                    # registrada e pontuada, mas nao vota.
                     visible = np.zeros(prob.shape, dtype=bool)
                 result = self._accumulator.add(prob, visible)
                 if (

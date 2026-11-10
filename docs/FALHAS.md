@@ -492,6 +492,51 @@ passada casa com o canvas na grade da página ou na da câmera?) —
 decisão de desenho, não reajuste de limiar. Ligar a flag por padrão
 está vetado até uma prova nova passar.
 
+### M3 — arbitragem por conteúdo + abstenção: a v3 (2026-11-10)
+
+**Sucessora do M2.** A prova da arbitragem (frente 19, no
+laboratório) separou as hipóteses com margem larga: no streak de
+assentamento, a fração da massa da prob sobre o canvas confirmado
+pré-evento na colocação **identidade** (Sp, hipótese página/pouso)
+contra a colocação **registrada** (Sc, hipótese câmera/espúrio)
+classificou 8/8 eventos com margens de 25–100× sobre δ = 0,05. Mas
+a v2 (arbitrar sem mais nada) reprovou nos portões de duplicação
+nas duas bancadas, por um mecanismo sondado passada a passada: **a
+cópia deslocada confirma pelo voto enquanto o evento está aberto**,
+antes de qualquer veredito — tinta confirmada não sai na geração,
+então decidir a âncora depois é tarde.
+
+**v3 = arbitragem + abstenção:** enquanto o evento está aberto, a
+passada é registrada e pontuada, mas não vota (`visible = 0`). No
+laboratório: aprovada em todos os portões na bancada sintética
+(duplicação 0,004–0,030; IoU 0,991–0,998; retenção 1,0) e, na
+bancada real, aprovada no razão do evento — duplicação **nascida
+no evento** de 0,0005 (pouso de 40 px) e 0,039 (120 px), contra
+0,211 da v2 e 0,915 da base; o resíduo total é um piso pré-evento
+idêntico em todos os braços, nascido da âncora de amostra única
+(defeito vizinho, correção no #57). POUSO troca a âncora **sem
+mover o estado**; ESPÚRIO não faz nada; sem massa para julgar,
+troca por default.
+
+**Estado:** implementada atrás de `DRAW_ANCHOR_ARBITRATION`
+(padrão `0`; flag nova — a da v1 segue vetada), contratos em
+`tests/test_anchor_arbitration.py`. **Prova composta contra esta
+implementação (frente 21, 2026-11-10): APROVADA em todos os
+portões** no braço v3 + âncora-mediana, julgada na grade da âncora
+final — duplicação nascida no evento **0,000 (0 px)** nos pousos
+de 40 e 120 px, IoU 0,960/0,954, isca com IoU 0,987 e 0 ações,
+ações exatas (1/1/3/0/0), retenção 1,000 e perda 0 por troca;
+vereditos da telemetria 11/11 com margens de 15–200×. Dois limites
+medidos e declarados: (1) pousos **repetidos** acumulam
+re-expressão entre grades de eras (~1–3 px sobre o halo da prob
+mole) — em 3 pousos o canvas termina ~2× o oráculo, com retenção
+perfeita e duplicação canônica de 0,183 contra 3,164 da base;
+(2) rotação ≥ ~45°: o mecanismo é cego à permutação posicional de
+cantos (vereditos por default trocam para a grade permutada; o
+canvas sobrevive, mas a frente de correspondência física de
+cantos é pré-requisito para ligar por padrão). Ligar por padrão
+segue decisão do Lucas, com teste ao vivo na mesa.
+
 ## F-09 — Folha perdida com o caderno movido
 
 **Sintoma:** a pessoa move o caderno (ou o detector perde a folha por
