@@ -422,7 +422,12 @@ def _detect_sheet_combined_traced(frame, neural_detector):
 
 
 def _acquisition_record(trace, frame_index, consumed, before, after, tracker_event):
-    """Evento por aquisicao: rastro do combinado + rastreador."""
+    """Evento por aquisicao: rastro do combinado + rastreador.
+
+    detected_frame_index (do rastro) e a passada cujo quadro o
+    detector examinou; frame_index e a passada em que o rastreador
+    consumiu o resultado (com deteccao atrasada, posterior).
+    """
     return {
         **trace,
         "frame_index": frame_index,
@@ -888,7 +893,9 @@ def run(
                     det_captured_at = None
                     ran_detection = False
                 if tracker.should_detect(frame_number):
-                    detection_worker.submit(frame, frame_capture_ms / 1000.0)
+                    detection_worker.submit(
+                        frame, frame_capture_ms / 1000.0, frame_number
+                    )
                 if detection_worker.error is not None:
                     raise detection_worker.error
                 tracker_before = (

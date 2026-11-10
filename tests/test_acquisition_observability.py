@@ -53,6 +53,7 @@ EVENT_FIELDS = TRACE_FIELDS | {
     "acq_seq",
     "result_seq",
     "captured_at",
+    "detected_frame_index",
     "detect_ms",
     "frame_index",
     "consumed_by_tracker",
@@ -277,9 +278,9 @@ def test_worker_hands_each_trace_exactly_once():
 
     worker = app_module._SheetDetectionWorker(detect).start()
     try:
-        worker.submit(_frame(1), 10.0)
+        worker.submit(_frame(1), 10.0, 100)
         _wait(lambda: worker.poll(0) is not None)
-        worker.submit(_frame(2), 11.0)
+        worker.submit(_frame(2), 11.0, 101)
         _wait(lambda: worker.poll(1) is not None)
         # Dois resultados entre polls: o 1o foi superado (latest-wins).
         seq = worker.poll(0)[0]
@@ -289,6 +290,7 @@ def test_worker_hands_each_trace_exactly_once():
         assert [t["result_seq"] for t in traces] == [1, 2]
         assert [t["captured_at"] for t in traces] == [10.0, 11.0]
         assert [t["value"] for t in traces] == [1, 2]
+        assert [t["detected_frame_index"] for t in traces] == [100, 101]
         assert worker.take_traces(seq) == []
         assert worker.take_traces() == []
     finally:
@@ -463,8 +465,10 @@ def test_recorded_session_logs_raw_frames_and_one_event_per_acquisition(
             assert record["source"] == "veto"
             assert record["combined_corners"] is None
             assert record["classic_ran"] is False
+        assert 0 <= record["detected_frame_index"] < len(plan)
         if record["consumed_by_tracker"]:
             consumed += 1
+            assert record["detected_frame_index"] <= record["frame_index"]
             assert set(record["tracker_before"]) == TRACKER_FIELDS
             assert set(record["tracker_after"]) == TRACKER_FIELDS
         else:

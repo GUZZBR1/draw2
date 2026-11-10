@@ -447,8 +447,9 @@ class _SheetDetectionWorker:
     Rastro por aquisicao (observabilidade, 2026-11-10): se detect
     devolve um terceiro elemento (dict de diagnostico), o worker o
     guarda por aquisicao com acq_seq, result_seq (None se a
-    deteccao terminou depois do stop), carimbo de captura e
-    duracao; take_traces() entrega cada rastro exatamente uma vez.
+    deteccao terminou depois do stop), carimbo de captura,
+    detected_frame_index (o frame_index passado a submit: a passada
+    cujo quadro foi examinado) e duracao; take_traces() entrega cada rastro exatamente uma vez.
     Com detect de dois elementos, nada disso existe.
     """
 
@@ -474,13 +475,13 @@ class _SheetDetectionWorker:
         self._thread.start()
         return self
 
-    def submit(self, frame, captured_at):
+    def submit(self, frame, captured_at, frame_index=None):
         with self._condition:
             if self._stopped:
                 return
             if self._pending is not None:
                 self._dropped += 1
-            self._pending = (frame, captured_at)
+            self._pending = (frame, captured_at, frame_index)
             self._submitted += 1
             self._condition.notify_all()
 
@@ -499,7 +500,7 @@ class _SheetDetectionWorker:
                 )
                 if self._stopped:
                     return
-                frame, captured_at = self._pending
+                frame, captured_at, frame_index = self._pending
                 self._pending = None
             started = time.monotonic()
             try:
@@ -524,6 +525,7 @@ class _SheetDetectionWorker:
                                 None if self._stopped else self._result_seq + 1
                             ),
                             "captured_at": captured_at,
+                            "detected_frame_index": frame_index,
                             "detect_ms": detect_ms,
                         }
                     )
