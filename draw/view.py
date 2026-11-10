@@ -40,8 +40,6 @@ COLOR_CANVAS_SLOT_CONTAINER = (70, 75, 72)
 COLOR_CANVAS_BORDER = (85, 92, 88)
 COLOR_PAPER_BAR = (68, 72, 70)
 COLOR_PAPER_BORDER = (80, 85, 82)
-COLOR_PAPER_TEXT_LABEL = (220, 225, 222)
-COLOR_PAPER_TEXT_MUTED = (170, 175, 172)
 
 _BLANK_SHEET = None
 
@@ -174,21 +172,13 @@ def _compose_view(camera_img, canvas_img):
     cv2.circle(studio, (680, 22), 4, COLOR_ACCENT_GREEN, -1, cv2.LINE_AA)
     cv2.putText(studio, "CAPTURA AO VIVO", (694, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.38, COLOR_TEXT_SOFT, 1, cv2.LINE_AA)
 
-    # Titulos no painel da folha digital (direito)
-    cv2.putText(studio, "FOLHA AO VIVO", (split_x + 20, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.42, COLOR_PAPER_TEXT_LABEL, 1, cv2.LINE_AA)
-    cv2.putText(studio, "CANVAS DIGITAL", (target_w - 140, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.36, COLOR_PAPER_TEXT_MUTED, 1, cv2.LINE_AA)
-
-    # 2. Barra Inferior (Footer sutil)
+    # 2. Barra Inferior (Footer limpo)
     cv2.rectangle(studio, (0, target_h - footer_h), (split_x, target_h), COLOR_SURFACE_BAR, -1)
     cv2.line(studio, (0, target_h - footer_h), (split_x, target_h - footer_h), COLOR_BORDER_SUBTLE, 1, cv2.LINE_AA)
-
-    cv2.putText(studio, "Draw - Paper to Digital Bridge", (24, target_h - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (140, 145, 142), 1, cv2.LINE_AA)
-    cv2.putText(studio, "Ponte papel -> CAD", (split_x - 170, target_h - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.36, COLOR_TEXT_MUTED, 1, cv2.LINE_AA)
 
     # Footer direito
     cv2.rectangle(studio, (split_x, target_h - footer_h), (target_w, target_h), COLOR_PAPER_BAR, -1)
     cv2.line(studio, (split_x, target_h - footer_h), (target_w, target_h - footer_h), COLOR_PAPER_BORDER, 1, cv2.LINE_AA)
-    cv2.putText(studio, "A4 850x1200", (split_x + 20, target_h - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (180, 185, 182), 1, cv2.LINE_AA)
 
     # 3. Barra Vertical Compacta de Botoes (lado esquerdo da camera)
     toolbar_x = 12
@@ -260,15 +250,6 @@ def _compose_view(camera_img, canvas_img):
     cv2.rectangle(studio, (sheet_x - 2, sheet_y - 2), (sheet_x + inner_sheet_w + 2, sheet_y + inner_sheet_h + 2), (60, 64, 62), -1)
     studio[sheet_y:sheet_y + inner_sheet_h, sheet_x:sheet_x + inner_sheet_w] = sheet_resized
     cv2.rectangle(studio, (sheet_x, sheet_y), (sheet_x + inner_sheet_w, sheet_y + inner_sheet_h), (180, 185, 182), 1, cv2.LINE_AA)
-
-    # Badge de identificação da Folha Digital
-    _draw_pill(studio, canvas_area_x + 12, panel_y + 12, 114, 22, (244, 247, 247), (180, 185, 182), radius=11, alpha=0.95)
-    cv2.circle(studio, (canvas_area_x + 22, panel_y + 23), 3, (80, 85, 82), -1, cv2.LINE_AA)
-    cv2.putText(studio, "FOLHA DIGITAL", (canvas_area_x + 32, panel_y + 27), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (80, 85, 82), 1, cv2.LINE_AA)
-
-    # Badge de tamanho da folha
-    _draw_pill(studio, canvas_area_x + 12, panel_y + panel_h - 30, 114, 20, (244, 247, 247), (180, 185, 182), radius=10, alpha=0.95)
-    cv2.putText(studio, "850 x 1200 px", (canvas_area_x + 20, panel_y + panel_h - 16), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (80, 85, 82), 1, cv2.LINE_AA)
 
     return studio
 
