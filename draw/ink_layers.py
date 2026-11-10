@@ -392,6 +392,39 @@ def _reg_deadband_enabled():
     return value in {"1", "true", "yes", "on"}
 
 
+# Migracao de ancora intra-geracao (decisao A do Lucas, 2026-11-10;
+# draw-lab/live-audit-2026-11-10/12-estudo-pouso.md): quando a folha
+# se move de verdade e assenta em pose nova no meio da geracao (pouso
+# sustentado), o registro na ancora velha projeta a tinta nova como
+# segunda copia. Atras de DRAW_ANCHOR_MIGRATION (padrao 0): passadas
+# seguidas com deslocamento medio da grade sob a matriz de registro >
+# _ANCHOR_MIGRATION_DISPLACEMENT_PX contam; na
+# _ANCHOR_MIGRATION_PASSES-esima, todo o estado do acumulador e
+# re-projetado para a grade nova (substituicao, nunca acumulo) e a
+# ancora passa a ser a mediana dos quads do streak. O tremor do
+# regime de registro (<= ~3 px) fica abaixo do limiar e spike de 1
+# passada nao sustenta.
+_ANCHOR_MIGRATION_ENV = "DRAW_ANCHOR_MIGRATION"
+_ANCHOR_MIGRATION_DISPLACEMENT_PX = 8.0
+_ANCHOR_MIGRATION_PASSES = 3
+_ANCHOR_MIGRATION_GRID = 16
+
+
+def _anchor_migration_enabled():
+    value = os.environ.get(_ANCHOR_MIGRATION_ENV, "0").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _matrix_grid_displacement(matrix, shape):
+    """Deslocamento medio (px) de uma grade densa da pagina sob matrix."""
+    height, width = shape
+    xs = np.linspace(0.0, float(width), _ANCHOR_MIGRATION_GRID)
+    ys = np.linspace(0.0, float(height), _ANCHOR_MIGRATION_GRID)
+    grid = np.stack(np.meshgrid(xs, ys), axis=-1).reshape(-1, 1, 2)
+    moved = cv2.perspectiveTransform(grid, np.asarray(matrix, dtype=np.float64))
+    return float(np.mean(np.linalg.norm(moved - grid, axis=-1)))
+
+
 def _median_anchor(samples):
     """Mediana por componente de uma lista de quads (4, 2)."""
     return np.median(np.stack(samples), axis=0).astype(np.float32)
@@ -579,6 +612,46 @@ class _LayeredInkAccumulator:
         self._score_buf = None
         self._hits_buf = None
         self._seen_buf = None
+
+    def migrate(self, matrix):
+        """Re-projeta todo o estado da geracao para outra grade.
+
+        matrix leva a grade atual para a nova (convencao do
+        cv2.warpPerspective). Confirmada e provisoria sao mascaras:
+        vizinho mais proximo, sem ombro sintetico na borda da tinta.
+        A janela do voto guarda probabilidades: bilinear, borda zero
+        (o mesmo tratamento da evidencia ao vivo). Os buffers de
+        estatistica derivados sao invalidados e a sequencia de baixa
+        cobertura zera: o conteudo deles era da grade velha.
+        """
+        if self._confirmed is None:
+            return
+        matrix = np.asarray(matrix, dtype=np.float64)
+        height, width = self._confirmed.shape
+        size = (width, height)
+
+        def nearest(mask):
+            return cv2.warpPerspective(
+                mask, matrix, size, flags=cv2.INTER_NEAREST, borderValue=0
+            )
+
+        self._confirmed = nearest(self._confirmed)
+        self._provisional = nearest(self._provisional)
+        self._provisional_ever = nearest(self._provisional_ever.astype(np.uint8)) > 0
+        self._retracted_ever = nearest(self._retracted_ever.astype(np.uint8)) > 0
+        self._window = deque(
+            (
+                cv2.warpPerspective(
+                    item, matrix, size, flags=cv2.INTER_LINEAR, borderValue=0.0
+                )
+                for item in self._window
+            ),
+            maxlen=self._window.maxlen,
+        )
+        self._score_buf = None
+        self._hits_buf = None
+        self._seen_buf = None
+        self._low_overlap_streak = 0
 
     def _window_stats(self):
         """(soma, hits, visto-como-tinta) da janela, sem empilhar.
@@ -789,6 +862,12 @@ class _PageCleanWorker:
         self._reg_frozen_corners = None
         self._reg_deadband_over = 0
         self._reg_deadband_releases = 0
+        # Migracao de ancora (flag DRAW_ANCHOR_MIGRATION): streak de
+        # passadas deslocadas e os quads delas, por geracao.
+        self._migration_streak = 0
+        self._migration_quads = []
+        self._anchor_migrations = 0
+        self._migration_events = deque(maxlen=128)
         self._identity_reference = None
         self._identity_reference_corners = None
         self._identity_recovery_requested = False
@@ -866,6 +945,8 @@ class _PageCleanWorker:
             self._anchor_samples = []
             self._reg_frozen_corners = None
             self._reg_deadband_over = 0
+            self._migration_streak = 0
+            self._migration_quads = []
             self._still_passes = 0
             self._generation_passes = 0
             self._quiet_passes = 0
@@ -990,6 +1071,64 @@ class _PageCleanWorker:
             return _IDLE_PROBE_SECONDS
         return _PAGE_CLEAN_INTERVAL_SECONDS
 
+    def _anchor_migration_step(
+        self,
+        generation,
+        corners,
+        shape,
+        identity_owned,
+        reg_anchor_median,
+        reg_deadband,
+    ):
+        """Avanca o streak do pouso; migra na passada que o completa.
+
+        Chamado sob a Condition, com a flag ligada. Presenca perdida
+        (sem quad valido) e julgamento de identidade em curso nao sao
+        pouso: zeram o streak — a fronteira de geracao/identidade e a
+        dona desses eventos. Devolve o evento da migracao ou None.
+        """
+        old_anchor = self._anchor_corners
+        if identity_owned or corners is None or old_anchor is None:
+            self._migration_streak = 0
+            self._migration_quads = []
+            return None
+        matrix = _registration_matrix(old_anchor, corners, shape)
+        displacement = _matrix_grid_displacement(matrix, shape)
+        if displacement <= _ANCHOR_MIGRATION_DISPLACEMENT_PX:
+            self._migration_streak = 0
+            self._migration_quads = []
+            return None
+        self._migration_streak += 1
+        self._migration_quads.append(corners.copy())
+        if self._migration_streak < _ANCHOR_MIGRATION_PASSES:
+            return None
+        new_anchor = _median_anchor(self._migration_quads)
+        # Inversa do registro ancora-nova -> ancora-velha: leva o
+        # estado da grade velha para a nova.
+        migration = np.linalg.inv(_registration_matrix(old_anchor, new_anchor, shape))
+        self._accumulator.migrate(migration)
+        self._anchor_corners = new_anchor
+        if reg_anchor_median:
+            self._anchor_samples = [quad.copy() for quad in self._migration_quads]
+        if reg_deadband:
+            self._reg_frozen_corners = new_anchor.copy()
+            self._reg_deadband_over = 0
+        self._anchor_migrations += 1
+        event = {
+            "generation": generation,
+            "pass_index": self._generation_passes,
+            "displacement_px": displacement,
+            "streak": self._migration_streak,
+            "anchor_delta_px": float(
+                np.max(np.linalg.norm(new_anchor - old_anchor, axis=1))
+            ),
+            "anchor_delta_mean_px": _matrix_grid_displacement(migration, shape),
+        }
+        self._migration_events.append(event)
+        self._migration_streak = 0
+        self._migration_quads = []
+        return event
+
     def telemetry_snapshot(self):
         """Copia da telemetria por etapa (somente leitura).
 
@@ -1018,6 +1157,11 @@ class _PageCleanWorker:
             }
             if _reg_deadband_enabled() or self._reg_deadband_releases:
                 snapshot["reg_deadband_releases"] = self._reg_deadband_releases
+            if _anchor_migration_enabled() or self._anchor_migrations:
+                snapshot["anchor_migrations"] = self._anchor_migrations
+                snapshot["anchor_migration_events"] = [
+                    dict(event) for event in self._migration_events
+                ]
             return snapshot
 
     def poll(self, generation, after_version):
@@ -1138,6 +1282,8 @@ class _PageCleanWorker:
             identity_chamfer = {}
             reg_anchor_median = _reg_anchor_median_enabled()
             reg_deadband = _reg_deadband_enabled()
+            anchor_migration = _anchor_migration_enabled()
+            force_publish = False
             reg_info = {}
             ecc_info = {
                 "ecc_ms": 0.0,
@@ -1417,6 +1563,8 @@ class _PageCleanWorker:
                             self._anchor_samples = []
                             self._reg_frozen_corners = None
                             self._reg_deadband_over = 0
+                            self._migration_streak = 0
+                            self._migration_quads = []
                             self._worker_generation = -1
                             self._generation_passes = 0
                             self._quiet_passes = 0
@@ -1436,6 +1584,37 @@ class _PageCleanWorker:
                         self._identity_recovery_requested = False
                         self._identity_defer_count = 0
                         self._identity_switch_votes = 0
+                if anchor_migration:
+                    migration = self._anchor_migration_step(
+                        generation,
+                        corners,
+                        prob.shape,
+                        first_pass or identity_pending,
+                        reg_anchor_median,
+                        reg_deadband,
+                    )
+                    if migration is not None:
+                        # A passada corrente entra por cima do estado
+                        # migrado, ja registrada na ancora nova (com ECC
+                        # contra o canvas migrado, se ligado). Raro: uma
+                        # vez por pouso, entao pode segurar o lock.
+                        migrated_reference = (
+                            None
+                            if ecc_reference is None
+                            else self._accumulator._confirmed.astype(np.float32) / 255.0
+                        )
+                        registered_prob, registered_visible, ecc_info = (
+                            _register_ink_probability(
+                                prob,
+                                self._anchor_corners,
+                                (self._reg_frozen_corners if reg_deadband else corners),
+                                migrated_reference,
+                                visible,
+                            )
+                        )
+                        force_publish = True
+                    reg_info["anchor_migration_streak"] = self._migration_streak
+                    reg_info["anchor_migrated"] = migration is not None
                 if (
                     (first_pass or identity_pending)
                     and not identity_deferred
@@ -1492,6 +1671,9 @@ class _PageCleanWorker:
                     or identity_timed_out
                     or identity_decision == "new_page"
                     or result["confirmed_changed"]
+                    # Migracao: o canvas migrado nao "muda" para o
+                    # voto, mas a tela mostraria a grade velha.
+                    or force_publish
                 )
                 if publish_confirmed:
                     self._version += 1
