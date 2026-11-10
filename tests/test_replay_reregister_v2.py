@@ -170,7 +170,17 @@ def test_real_ecc_rejection_never_votes_new_page(monkeypatch, enabled):
     worker.anchor = quad.copy()
     generation = worker.new_generation(preserve_identity=True)
     with rr.configured_ecc(enabled):
-        assert not worker._identity_keeps_page(other, quad, generation)
+        if not enabled:
+            for count in range(1, 3):
+                assert worker._identity_keeps_page(other, quad, generation) is None
+                assert worker.identity_events[-1]["decision"] == (
+                    "deferred_switch_consensus"
+                )
+                assert worker.identity_switch_votes == count
+                assert worker.identity_reference is not None
+        assert worker._identity_keeps_page(other, quad, generation) is (
+            None if enabled else False
+        )
     event = worker.identity_events[-1]
     assert event["decision"] == ("deferred_ecc_rejected" if enabled else "new_page")
     assert event["deferred"] is bool(enabled)
@@ -400,6 +410,7 @@ def test_v2_matches_production_quarantine_recovery_and_timeout(
                 else:
                     np.testing.assert_array_equal(real._anchor_corners, mirror.anchor)
                 assert real._identity_defer_count == mirror.identity_defer_count
+                assert real._identity_switch_votes == mirror.identity_switch_votes
                 assert (real._identity_reference is None) == (
                     mirror.identity_reference is None
                 )
@@ -418,6 +429,79 @@ def test_v2_matches_production_quarantine_recovery_and_timeout(
             assert mirror.identity_events[-1]["decision"] == (
                 "same_page" if rejected_passes == 2 else "quarantine_timeout"
             )
+    finally:
+        real.stop()
+
+
+@pytest.mark.parametrize("enabled,interrupt", [(0, False), (1, False), (1, True)])
+@pytest.mark.parametrize("blank", [False, True])
+def test_v2_matches_production_switch_consensus(monkeypatch, enabled, interrupt, blank):
+    monkeypatch.setattr(ink, "_PAGE_CLEAN_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(ink, "_IDLE_PROBE_SECONDS", 0)
+    rejecting = False
+
+    def refine(reference, observed, hand_mask=None):
+        return observed, np.eye(3), {
+            "ecc_rejected": rejecting,
+            "ecc_converged": False,
+            "ecc_mode": "affine",
+            "ecc_ms": 0.0,
+        }
+
+    monkeypatch.setattr(ink, "_refine_ink_ecc", refine)
+    prob = content()
+    other = np.zeros_like(prob) if blank else np.flipud(np.fliplr(prob)).copy()
+    quad = rr.v1.base_quad(SHAPE)
+    mirror = rr.ReplayWorker(ecc_refine_enabled=enabled)
+    real = ink._PageCleanWorker(ProbIsWarp()).start()
+    try:
+        with rr.configured_ecc(enabled):
+            generation = mirror.new_generation()
+            assert real.new_generation() == generation
+            recovery = (
+                [False, False, True, False, False, False] if interrupt else [False] * 3
+            )
+            for i, rejected in enumerate([False] * 4 + recovery):
+                if i == 4:
+                    generation = mirror.new_generation(preserve_identity=True)
+                    assert real.new_generation(preserve_identity=True) == generation
+                rejecting = rejected
+                current = prob if i < 4 else other
+                mirror.submit((current, quad, quad), generation)
+                assert mirror.tick((i + 1) * 10) is not None
+                with real._condition:
+                    before = real._passes_total
+                    real.submit(current, generation, quad)
+                    assert real._condition.wait_for(
+                        lambda: real._passes_total > before or real._stopped, timeout=5
+                    )
+                    assert real.error is None
+                np.testing.assert_array_equal(real._anchor_corners, mirror.anchor)
+                np.testing.assert_array_equal(
+                    real.poll(generation, 0)[1], mirror.published[1]
+                )
+                np.testing.assert_array_equal(
+                    real._accumulator._window[-1], mirror.acc._window[-1]
+                )
+                assert real._identity_switch_votes == mirror.identity_switch_votes
+                assert real._identity_defer_count == mirror.identity_defer_count
+                assert (real._identity_reference is None) == (
+                    mirror.identity_reference is None
+                )
+                if i >= 4:
+                    actual = real._identity_events[-1]
+                    expected = mirror.identity_events[-1]
+                    for key in (
+                        "decision", "ecc_refine_enabled", "quarantine_frames", "deferred"
+                    ):
+                        assert actual[key] == expected[key]
+                    if expected["decision"] == "deferred_switch_consensus":
+                        assert not np.any(mirror.acc._window[-1])
+                        assert not mirror._at_rest((i + 1) * 10)
+                        assert type(expected["ecc_refine_enabled"]) is int
+            assert mirror.identity_events[-1]["decision"] == "new_page"
+            assert mirror.identity_switch_votes == mirror.identity_defer_count == 0
+            assert mirror.identity_reference is None
     finally:
         real.stop()
 

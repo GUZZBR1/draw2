@@ -206,6 +206,11 @@ def test_identity_recall_ignores_occluded_prior_ink(monkeypatch, chamfer_flag):
             _confirm_first_generation(worker2, ink2)
             ink2.content = left
             generation2 = worker2.new_generation(preserve_identity=True)
+            for _ in range(2):
+                _drive_visible(worker2, generation2, None)
+                assert _identity_events(worker2)[-1]["decision"] == (
+                    "deferred_switch_consensus"
+                )
             _drive_visible(worker2, generation2, None)
             event2 = _identity_events(worker2)[-1]
             assert event2["decision"] == "new_page"
