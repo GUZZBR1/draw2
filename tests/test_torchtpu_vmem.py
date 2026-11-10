@@ -48,6 +48,7 @@ def test_arm_scoped_vmem_sets_default(monkeypatch):
     monkeypatch.delenv("LIBTPU_INIT_ARGS", raising=False)
     assert body._arm_scoped_vmem(65536) == 65536
     import os
+
     assert f"{FLAG}=65536" in os.environ["LIBTPU_INIT_ARGS"]
 
 
@@ -55,6 +56,7 @@ def test_arm_scoped_vmem_respects_existing_flag(monkeypatch):
     monkeypatch.setenv("LIBTPU_INIT_ARGS", f"--a=1 {FLAG}=999")
     assert body._arm_scoped_vmem(65536) == 999
     import os
+
     assert os.environ["LIBTPU_INIT_ARGS"] == f"--a=1 {FLAG}=999"
 
 
@@ -62,15 +64,16 @@ def test_arm_scoped_vmem_disabled_and_clamped(monkeypatch):
     monkeypatch.delenv("LIBTPU_INIT_ARGS", raising=False)
     assert body._arm_scoped_vmem(0) is None
     import os
+
     assert FLAG not in os.environ.get("LIBTPU_INIT_ARGS", "")
     assert body._arm_scoped_vmem(10**9) == body.SCOPED_VMEM_MAX_KIB
 
 
 def test_is_scoped_vmem_oom_body():
     assert body._is_scoped_vmem_oom(
-        Exception("e1001: CompileTimeScopedVmemOom: Ran out"))
-    assert body._is_scoped_vmem_oom(
-        Exception("exceeded scoped vmem limit by 8.01M"))
+        Exception("e1001: CompileTimeScopedVmemOom: Ran out")
+    )
+    assert body._is_scoped_vmem_oom(Exception("exceeded scoped vmem limit by 8.01M"))
     assert not body._is_scoped_vmem_oom(Exception("outro erro"))
 
 
@@ -87,7 +90,7 @@ def test_launcher_env_with_scoped_vmem(monkeypatch):
 
 def test_launcher_detects_e1001():
     assert launcher._is_scoped_vmem_oom(
-        "BackendCompilerFailed ... CompileTimeScopedVmemOom")
-    assert launcher._is_scoped_vmem_oom(
-        "ERRO_E1001: CompileTimeScopedVmemOom — ...")
+        "BackendCompilerFailed ... CompileTimeScopedVmemOom"
+    )
+    assert launcher._is_scoped_vmem_oom("ERRO_E1001: CompileTimeScopedVmemOom — ...")
     assert not launcher._is_scoped_vmem_oom("DELIVERY validated")

@@ -32,8 +32,14 @@ from pathlib import Path
 class SessionReport:
     """Agregador de sessao: cabecalho fixo + agregados a 1 Hz."""
 
-    def __init__(self, directory, header, sample_interval=1.0,
-                 write_interval=15.0, now=time.monotonic):
+    def __init__(
+        self,
+        directory,
+        header,
+        sample_interval=1.0,
+        write_interval=15.0,
+        now=time.monotonic,
+    ):
         self._directory = Path(directory)
         self._header = dict(header)
         self._sample_interval = float(sample_interval)
@@ -62,7 +68,8 @@ class SessionReport:
     @property
     def path(self):
         stamp = time.strftime(
-            "%Y%m%d-%H%M%S", time.localtime(self._header["inicio_epoch"]))
+            "%Y%m%d-%H%M%S", time.localtime(self._header["inicio_epoch"])
+        )
         return self._directory / f"session-{stamp}.json"
 
     def start(self):
@@ -114,20 +121,19 @@ class SessionReport:
             **self._header,
             "duracao_s": (
                 round(self._now() - self._started_at, 1)
-                if self._started_at is not None else None
+                if self._started_at is not None
+                else None
             ),
             "amostras_s": total,
             "folha_presente_pct": (
-                round(100.0 * self._sheet_samples / total, 1)
-                if total else None
+                round(100.0 * self._sheet_samples / total, 1) if total else None
             ),
             "primeira_folha_s": self._first_sheet_s,
             "quedas_de_folha": self._drops,
             "estados": dict(self._states),
             "modos_worker": dict(self._worker_modes),
             "mao_presente_pct": (
-                round(100.0 * self._hand_samples / total, 1)
-                if total else None
+                round(100.0 * self._hand_samples / total, 1) if total else None
             ),
             "loop_fps_medio": mean("loop_fps"),
             "detect_ms_medio": mean("detect_ms"),
@@ -139,13 +145,11 @@ class SessionReport:
     def _write(self):
         try:
             self._directory.mkdir(parents=True, exist_ok=True)
-            text = json.dumps(
-                self.summary(), indent=1, ensure_ascii=False)
+            text = json.dumps(self.summary(), indent=1, ensure_ascii=False)
             tmp = self.path.with_suffix(".tmp")
             tmp.write_text(text, encoding="utf-8")
             tmp.replace(self.path)
-            (self._directory / "latest.json").write_text(
-                text, encoding="utf-8")
+            (self._directory / "latest.json").write_text(text, encoding="utf-8")
         except OSError as error:
             self._error = error
 

@@ -26,8 +26,8 @@ import os
 import sys
 import time
 
-FLOOR = 0.05        # abaixo disto, a metrica e ruido de fundo
-MIN_EPOCHS = 3      # epocas minimas para julgar a tendencia
+FLOOR = 0.05  # abaixo disto, a metrica e ruido de fundo
+MIN_EPOCHS = 3  # epocas minimas para julgar a tendencia
 
 
 def detect_collapse(history, metric="iou2"):
@@ -36,19 +36,23 @@ def detect_collapse(history, metric="iou2"):
     collapsed (bool) e a evidencia usada."""
     values = [h[metric] for h in history if metric in h]
     if len(values) < MIN_EPOCHS:
-        return {"collapsed": False, "reason": "historico curto",
-                "values": values}
+        return {"collapsed": False, "reason": "historico curto", "values": values}
     head = values[:MIN_EPOCHS]
     if max(head) < FLOOR and values[-1] <= head[0]:
-        return {"collapsed": True,
-                "reason": (f"{metric} nao saiu do chao nas primeiras "
-                           f"{MIN_EPOCHS} epocas e nao subiu "
-                           f"({head[0]:.4f} -> {values[-1]:.4f})"),
-                "values": values}
-    return {"collapsed": False,
-            "reason": f"{metric} saudavel: {values[0]:.4f} -> "
-                      f"{max(values):.4f}",
-            "values": values}
+        return {
+            "collapsed": True,
+            "reason": (
+                f"{metric} nao saiu do chao nas primeiras "
+                f"{MIN_EPOCHS} epocas e nao subiu "
+                f"({head[0]:.4f} -> {values[-1]:.4f})"
+            ),
+            "values": values,
+        }
+    return {
+        "collapsed": False,
+        "reason": f"{metric} saudavel: {values[0]:.4f} -> {max(values):.4f}",
+        "values": values,
+    }
 
 
 class WatchState:
@@ -81,9 +85,11 @@ def main(argv):
         with open(argv[2]) as f:
             metrics = json.load(f)
         verdict = detect_collapse(metrics.get("history", []))
-        print(json.dumps(
-            {k: v for k, v in verdict.items() if k != "values"},
-            ensure_ascii=False))
+        print(
+            json.dumps(
+                {k: v for k, v in verdict.items() if k != "values"}, ensure_ascii=False
+            )
+        )
         return 1 if verdict["collapsed"] else 0
     print(__doc__)
     return 2

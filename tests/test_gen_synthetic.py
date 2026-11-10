@@ -88,7 +88,9 @@ def test_split_has_no_source_leakage():
 
 
 def test_generate_dataset_split_no_leakage_and_files(tmp_path):
-    manifest = gs.generate_dataset(tmp_path, seed=99, counts={"train": 6, "val": 2, "test": 2})
+    manifest = gs.generate_dataset(
+        tmp_path, seed=99, counts={"train": 6, "val": 2, "test": 2}
+    )
     assert len(manifest["scenes"]) == 10
     for split in ("train", "val", "test"):
         for scene in manifest["scenes"]:
@@ -96,7 +98,9 @@ def test_generate_dataset_split_no_leakage_and_files(tmp_path):
                 continue
             for fname in scene["files"]:
                 assert (tmp_path / split / fname).is_file()
-            mask = cv2.imread(str(tmp_path / split / scene["files"][1]), cv2.IMREAD_GRAYSCALE)
+            mask = cv2.imread(
+                str(tmp_path / split / scene["files"][1]), cv2.IMREAD_GRAYSCALE
+            )
             assert set(np.unique(mask).tolist()) <= {0, 1, 2, 3, 255}
     assert manifest["ignore_index"] == 255
     # Nenhuma fonte (mão, papel, fundo) em dois splits.
@@ -217,8 +221,7 @@ def test_load_hands_empty_dir_returns_empty(tmp_path):
 
 
 def test_load_hands_missing_mask_fails_loudly(tmp_path):
-    cv2.imwrite(str(tmp_path / "00000000.png"),
-                np.zeros((4, 4, 3), dtype=np.uint8))
+    cv2.imwrite(str(tmp_path / "00000000.png"), np.zeros((4, 4, 3), dtype=np.uint8))
     with pytest.raises(ValueError, match="sem par de máscara"):
         gs.load_hands(tmp_path)
 
@@ -238,11 +241,11 @@ def test_load_hands_missing_dir_fails_loudly(tmp_path):
 def test_load_hands_uses_documented_jpeg_threshold(tmp_path):
     (tmp_path / "rgb").mkdir()
     (tmp_path / "mask").mkdir()
-    cv2.imwrite(str(tmp_path / "rgb" / "00000000.jpg"),
-                np.zeros((2, 6, 3), dtype=np.uint8))
+    cv2.imwrite(
+        str(tmp_path / "rgb" / "00000000.jpg"), np.zeros((2, 6, 3), dtype=np.uint8)
+    )
     values = np.array([[0, 1, 7, 126, 127, 128]], dtype=np.uint8)
-    cv2.imwrite(str(tmp_path / "mask" / "00000000.png"),
-                np.repeat(values, 2, axis=0))
+    cv2.imwrite(str(tmp_path / "mask" / "00000000.png"), np.repeat(values, 2, axis=0))
 
     hand = gs.load_hands(tmp_path)[0]
 
@@ -255,18 +258,19 @@ def test_freihand_variants_stay_in_the_same_split():
     for base in range(3):
         for variant in range(4):
             source_id = f"{base + variant * gs.FREIHAND_BASE_HAND_COUNT:08d}"
-            hands.append(gs.HandSource(
-                source_id,
-                np.zeros((2, 2, 3), dtype=np.uint8),
-                np.zeros((2, 2), dtype=np.uint8),
-                base_id=gs.freihand_base_id(source_id),
-            ))
+            hands.append(
+                gs.HandSource(
+                    source_id,
+                    np.zeros((2, 2, 3), dtype=np.uint8),
+                    np.zeros((2, 2), dtype=np.uint8),
+                    base_id=gs.freihand_base_id(source_id),
+                )
+            )
 
     variant_splits, base_splits = gs.split_hand_sources(hands, seed=42)
     for base in range(3):
         destinations = {
-            split for split, ids in variant_splits.items()
-            if f"{base:08d}" in ids
+            split for split, ids in variant_splits.items() if f"{base:08d}" in ids
         }
         assert len(destinations) == 1
         base_id = f"{base:08d}"

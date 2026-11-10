@@ -56,7 +56,9 @@ def main(argv=None):
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--out-dir", required=True)
-    parser.add_argument("--size", type=int, required=True, help="Lado da entrada/export, ex.: 256")
+    parser.add_argument(
+        "--size", type=int, required=True, help="Lado da entrada/export, ex.: 256"
+    )
     parser.add_argument(
         "--reference-size",
         type=int,
@@ -82,7 +84,12 @@ def main(argv=None):
     cfg = copy.deepcopy(base_cfg)
     cfg["model"]["input"]["height"] = args.size
     cfg["model"]["input"]["width"] = args.size
-    cfg["model"]["output"]["shape"] = [1, cfg["model"]["num_classes"], args.size, args.size]
+    cfg["model"]["output"]["shape"] = [
+        1,
+        cfg["model"]["num_classes"],
+        args.size,
+        args.size,
+    ]
     reference_cfg = copy.deepcopy(base_cfg)
     reference_cfg["model"]["input"]["height"] = reference_size
     reference_cfg["model"]["input"]["width"] = reference_size
@@ -98,7 +105,9 @@ def main(argv=None):
         input_ds = build_dataset(args.data_dir, split, cfg, augment=False)
         reference_ds = build_dataset(args.data_dir, split, reference_cfg, augment=False)
         if len(input_ds) != len(reference_ds):
-            raise ValueError(f"split {split}: loaders de entrada/referência divergentes")
+            raise ValueError(
+                f"split {split}: loaders de entrada/referência divergentes"
+            )
         common = dict(batch_size=batch_size, shuffle=False, num_workers=workers)
         return DataLoader(input_ds, **common), DataLoader(reference_ds, **common)
 

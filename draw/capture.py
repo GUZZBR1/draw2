@@ -139,9 +139,7 @@ class _LatestFrameCapture:
         """
         with self._condition:
             self._condition.wait_for(
-                lambda: (
-                    self._seq > after_seq or self._dead or self._stopped
-                ),
+                lambda: self._seq > after_seq or self._dead or self._stopped,
                 timeout=timeout,
             )
             if self._seq > after_seq:
@@ -348,12 +346,11 @@ def _supervise_local_open(source, capture, capture_factory):
         if mean is None or mean < _EXPOSURE_BLOWN_MEAN:
             if mean is not None and attempt > 1:
                 print(
-                    "Camera reaberta: exposicao assentada "
-                    f"(brilho medio {mean:.0f})."
+                    f"Camera reaberta: exposicao assentada (brilho medio {mean:.0f})."
                 )
             _record_open_probe(
-                mean, attempt,
-                "sem_evidencia" if mean is None else "assentada")
+                mean, attempt, "sem_evidencia" if mean is None else "assentada"
+            )
             return capture
         if attempt >= _EXPOSURE_MAX_ATTEMPTS:
             print(
@@ -435,7 +432,5 @@ def _open_capture(source, capture_factory=None):
 
 def _video_nodes():
     return sorted(
-        path
-        for path in glob.glob("/dev/video*")
-        if path[len("/dev/video"):].isdigit()
+        path for path in glob.glob("/dev/video*") if path[len("/dev/video") :].isdigit()
     )

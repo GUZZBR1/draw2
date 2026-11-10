@@ -30,9 +30,7 @@ from training import matformer  # noqa: E402
 
 def _encoder(seed=7):
     torch.manual_seed(seed)
-    encoder = matformer.MatEncoder(
-        d_model=32, num_heads=4, base_hidden=32, depth=2
-    )
+    encoder = matformer.MatEncoder(d_model=32, num_heads=4, base_hidden=32, depth=2)
     encoder.eval()
     return encoder
 
@@ -57,9 +55,7 @@ def test_extracted_submodel_matches_nested_forward():
 
 def test_parameter_counts_grow_and_top_equals_full():
     encoder = _encoder()
-    counts = [
-        encoder.parameter_count(g) for g in range(len(encoder.widths))
-    ]
+    counts = [encoder.parameter_count(g) for g in range(len(encoder.widths))]
     assert counts == sorted(counts) and len(set(counts)) == len(counts), (
         f"contagens devem crescer estritamente: {counts}"
     )
@@ -90,9 +86,7 @@ def test_small_granularity_step_leaves_the_tail_untouched():
     loss.backward()
     for block in encoder.blocks:
         grad1 = block.ffn.fc1.weight.grad
-        assert torch.count_nonzero(grad1[width_s:]) > 0, (
-            "o passo XL alcanca a cauda"
-        )
+        assert torch.count_nonzero(grad1[width_s:]) > 0, "o passo XL alcanca a cauda"
 
 
 def test_mixnmatch_per_layer_granularities():

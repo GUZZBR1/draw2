@@ -36,23 +36,39 @@ def _hand(i=0):
 # mãos placeholder sintéticas, índices 0..3 nestas configurações).
 _PRISTINE = [
     (
-        dict(scene_type="normal", paper_style="white", hand=0,
-             background_source="table_wood"),
+        dict(
+            scene_type="normal",
+            paper_style="white",
+            hand=0,
+            background_source="table_wood",
+        ),
         ("6c548471ffe7f6e7", "78c5432944f0a93d", "7abb51f2c9749ba1"),
     ),
     (
-        dict(scene_type="normal", paper_style="ruled", hand=1,
-             background_source="table_dark"),
+        dict(
+            scene_type="normal",
+            paper_style="ruled",
+            hand=1,
+            background_source="table_dark",
+        ),
         ("b7349fc168f2e476", "50f9a25e3eb16c84", "c69dd0f5334395c3"),
     ),
     (
-        dict(scene_type="empty_table", paper_style="white", hand=None,
-             background_source="table_light"),
+        dict(
+            scene_type="empty_table",
+            paper_style="white",
+            hand=None,
+            background_source="table_light",
+        ),
         ("b97b46e2fd40b68d", "ec87a838931d4d5d", "ec87a838931d4d5d"),
     ),
     (
-        dict(scene_type="hand_no_sheet", paper_style="white", hand=2,
-             background_source="table_gray"),
+        dict(
+            scene_type="hand_no_sheet",
+            paper_style="white",
+            hand=2,
+            background_source="table_gray",
+        ),
         ("32232cf364067a8d", "ec0f29e09499fd25", "ec87a838931d4d5d"),
     ),
 ]
@@ -63,7 +79,10 @@ def test_default_generator_output_byte_identical_after_refactor():
         kwargs = dict(kwargs)
         hand_idx = kwargs.pop("hand")
         scene = gs.compose_scene(
-            42, "train", i, hand=_hand(hand_idx) if hand_idx is not None else None,
+            42,
+            "train",
+            i,
+            hand=_hand(hand_idx) if hand_idx is not None else None,
             **kwargs,
         )
         got = (_h(scene["rgb"]), _h(scene["mask"]), _h(scene["ink_full"]))
@@ -71,8 +90,9 @@ def test_default_generator_output_byte_identical_after_refactor():
 
 
 def test_sequence_deterministic():
-    kw = dict(frames=6, paper_style="white", hand=_hand(0),
-              background_source="table_wood")
+    kw = dict(
+        frames=6, paper_style="white", hand=_hand(0), background_source="table_wood"
+    )
     a = gs.compose_scene_sequence(42, "train", 0, **kw)
     b = gs.compose_scene_sequence(42, "train", 0, **kw)
     for fa, fb in zip(a["frames"], b["frames"]):
@@ -84,7 +104,12 @@ def test_sequence_deterministic():
 
 def test_sequence_change_mask_is_exact_visible_label_delta():
     seq = gs.compose_scene_sequence(
-        42, "train", 0, frames=6, paper_style="white", hand=_hand(0),
+        42,
+        "train",
+        0,
+        frames=6,
+        paper_style="white",
+        hand=_hand(0),
         background_source="table_wood",
     )
     assert seq["frames"][0]["change"] is None
@@ -104,7 +129,12 @@ def test_sequence_change_mask_is_exact_visible_label_delta():
 
 def test_sequence_ink_is_cumulative():
     seq = gs.compose_scene_sequence(
-        42, "train", 0, frames=6, paper_style="white", hand=_hand(0),
+        42,
+        "train",
+        0,
+        frames=6,
+        paper_style="white",
+        hand=_hand(0),
         background_source="table_wood",
     )
     counts = seq["info"]["ink_full_pixels"]
@@ -119,7 +149,12 @@ def test_sequence_ink_is_cumulative():
 
 def test_sequence_frames_are_same_scene_not_copies():
     seq = gs.compose_scene_sequence(
-        7, "train", 2, frames=6, paper_style="ruled", hand=_hand(1),
+        7,
+        "train",
+        2,
+        frames=6,
+        paper_style="ruled",
+        hand=_hand(1),
         background_source="table_dark",
     )
     rgbs = [f["rgb"] for f in seq["frames"]]
@@ -132,8 +167,11 @@ def test_sequence_frames_are_same_scene_not_copies():
 
 def test_generate_dataset_temporal_layout_and_manifest(tmp_path):
     manifest = gs.generate_dataset(
-        tmp_path, seed=42, counts={"train": 5, "val": 5, "test": 5},
-        temporal_counts={"train": 2, "val": 1}, temporal_frames=4,
+        tmp_path,
+        seed=42,
+        counts={"train": 5, "val": 5, "test": 5},
+        temporal_counts={"train": 2, "val": 1},
+        temporal_frames=4,
     )
     assert manifest["temporal"]["frames_per_sequence"] == 4
     assert len(manifest["sequences"]) == 3
@@ -163,8 +201,11 @@ def test_generate_dataset_default_has_no_temporal(tmp_path):
 
 def test_pair_sequence_files_fails_loud_on_missing_change(tmp_path):
     gs.generate_dataset(
-        tmp_path, seed=42, counts={"train": 2, "val": 2, "test": 2},
-        temporal_counts={"train": 1}, temporal_frames=3,
+        tmp_path,
+        seed=42,
+        counts={"train": 2, "val": 2, "test": 2},
+        temporal_counts={"train": 1},
+        temporal_frames=3,
     )
     (tmp_path / "train" / "tseq_train_0000_f1_change.png").unlink()
     with pytest.raises(FileNotFoundError):

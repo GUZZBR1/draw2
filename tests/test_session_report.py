@@ -31,21 +31,39 @@ def _make(tmp_path, clock):
 def test_aggregates_fold_samples(tmp_path):
     clock = _Clock()
     report = _make(tmp_path, clock)
-    report.update(sheet_present=False, state="no_sheet",
-                  worker_mode="idle", hand_present=False,
-                  loop_fps=10.0, detect_ms=30.0, pass_ms=100.0)
+    report.update(
+        sheet_present=False,
+        state="no_sheet",
+        worker_mode="idle",
+        hand_present=False,
+        loop_fps=10.0,
+        detect_ms=30.0,
+        pass_ms=100.0,
+    )
     clock.t += 1.0
     report._sample_once()
-    report.update(sheet_present=True, state="sheet",
-                  worker_mode="active", hand_present=True,
-                  loop_fps=12.0, detect_ms=40.0, pass_ms=200.0)
+    report.update(
+        sheet_present=True,
+        state="sheet",
+        worker_mode="active",
+        hand_present=True,
+        loop_fps=12.0,
+        detect_ms=40.0,
+        pass_ms=200.0,
+    )
     clock.t += 1.0
     report._sample_once()
     clock.t += 1.0
     report._sample_once()  # sem update novo: vale o retrato anterior
-    report.update(sheet_present=False, state="no_sheet",
-                  worker_mode="idle", hand_present=False,
-                  loop_fps=8.0, detect_ms=20.0, pass_ms=50.0)
+    report.update(
+        sheet_present=False,
+        state="no_sheet",
+        worker_mode="idle",
+        hand_present=False,
+        loop_fps=8.0,
+        detect_ms=20.0,
+        pass_ms=50.0,
+    )
     clock.t += 1.0
     report._sample_once()
 
@@ -76,5 +94,6 @@ def test_close_writes_report_and_latest(tmp_path):
     assert written["fonte"] == "0"
     assert written["folha_presente_pct"] == 100.0
     latest = json.loads(
-        (report.path.parent / "latest.json").read_text(encoding="utf-8"))
+        (report.path.parent / "latest.json").read_text(encoding="utf-8")
+    )
     assert latest == written

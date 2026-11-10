@@ -81,9 +81,7 @@ def _masker(tmp_path):
     return hand_module.HandMasker(str(model))
 
 
-def test_presence_signature_uses_video_with_monotonic_ts(
-    monkeypatch, tmp_path
-):
+def test_presence_signature_uses_video_with_monotonic_ts(monkeypatch, tmp_path):
     log = _install_fake_mediapipe(monkeypatch)
     masker = _masker(tmp_path)
     frame = np.zeros((80, 100, 3), dtype=np.uint8)
@@ -98,9 +96,7 @@ def test_presence_signature_uses_video_with_monotonic_ts(
     assert ("image", "image") in log, "sem carimbo devia usar IMAGE"
 
 
-def test_presence_signature_video_failure_falls_back_to_image(
-    monkeypatch, tmp_path
-):
+def test_presence_signature_video_failure_falls_back_to_image(monkeypatch, tmp_path):
     log = _install_fake_mediapipe(monkeypatch, fail_video=True)
     masker = _masker(tmp_path)
     frame = np.zeros((80, 100, 3), dtype=np.uint8)

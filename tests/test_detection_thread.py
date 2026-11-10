@@ -22,9 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from draw import app as app_module  # noqa: E402
 
-CORNERS = np.array(
-    [[0, 0], [10, 0], [10, 10], [0, 10]], dtype=np.float32
-)
+CORNERS = np.array([[0, 0], [10, 0], [10, 10], [0, 10]], dtype=np.float32)
 
 
 class _BlockingDetector:

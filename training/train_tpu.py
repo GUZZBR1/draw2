@@ -85,8 +85,10 @@ def _preflight():
         import onnx
         import onnxruntime
     except ImportError:
-        _log("ERRO: onnx/onnxruntime ausentes neste runtime. "
-             "Preparo: pip install onnx onnxruntime")
+        _log(
+            "ERRO: onnx/onnxruntime ausentes neste runtime. "
+            "Preparo: pip install onnx onnxruntime"
+        )
         raise SystemExit(2)
     _log("MOD onnx", onnx.__version__, "| onnxruntime", onnxruntime.__version__)
 
@@ -97,10 +99,20 @@ def _ensure_data(data_dir, seed, n_train, n_val, n_test):
         _log("dados ja presentes em", data_dir)
         return
     t0 = time.time()
-    cmd = [sys.executable, str(REPO_ROOT / "tools" / "gen_synthetic.py"),
-           "--out", str(data_dir), "--seed", str(seed),
-           "--train", str(n_train), "--val", str(n_val),
-           "--test", str(n_test)]
+    cmd = [
+        sys.executable,
+        str(REPO_ROOT / "tools" / "gen_synthetic.py"),
+        "--out",
+        str(data_dir),
+        "--seed",
+        str(seed),
+        "--train",
+        str(n_train),
+        "--val",
+        str(n_val),
+        "--test",
+        str(n_test),
+    ]
     _log("gerando dados:", " ".join(cmd))
     r = subprocess.run(cmd, capture_output=True, text=True)
     _log("gen rc", r.returncode, f"{time.time() - t0:.1f}s")
@@ -149,22 +161,32 @@ def _mp_fn(rank, run_cfg, data_dir, out_dir):
     cfg = T.load_config(str(REPO_ROOT / "training" / "config.json"))
     train_ds = T.build_dataset(data_dir, "train", cfg, augment=True)
     val_ds = T.build_dataset(data_dir, "val", cfg, augment=False)
-    sampler = DistributedSampler(train_ds, num_replicas=world, rank=rank,
-                                 shuffle=True, seed=run_cfg["seed"])
-    train_loader = DataLoader(train_ds, batch_size=run_cfg["batch_per_core"],
-                              sampler=sampler, num_workers=2, drop_last=False)
+    sampler = DistributedSampler(
+        train_ds, num_replicas=world, rank=rank, shuffle=True, seed=run_cfg["seed"]
+    )
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=run_cfg["batch_per_core"],
+        sampler=sampler,
+        num_workers=2,
+        drop_last=False,
+    )
     # Seed repetido aqui: a cabeça nova nasce do RNG do torch, e todas as
     # réplicas precisam nascer com os mesmos pesos.
     torch.manual_seed(run_cfg["seed"])
     model = _build_model_t7(cfg, run_cfg["decoder"]).to(dev)
     tr = cfg["training"]
-    opt = torch.optim.AdamW(model.parameters(), lr=run_cfg["lr"],
-                            weight_decay=tr["weight_decay"])
+    opt = torch.optim.AdamW(
+        model.parameters(), lr=run_cfg["lr"], weight_decay=tr["weight_decay"]
+    )
     sched = T.warmup_cosine_scheduler(
-        opt, total_steps=run_cfg["epochs"] * len(train_loader),
-        warmup_ratio=tr["warmup_ratio"])
-    cw = torch.tensor(cfg["loss"]["cross_entropy_class_weights"],
-                      dtype=torch.float32, device=dev)
+        opt,
+        total_steps=run_cfg["epochs"] * len(train_loader),
+        warmup_ratio=tr["warmup_ratio"],
+    )
+    cw = torch.tensor(
+        cfg["loss"]["cross_entropy_class_weights"], dtype=torch.float32, device=dev
+    )
     amp = torch.bfloat16 if run_cfg["precision"] == "bf16" else None
     out_dir = Path(out_dir)
     best_iou = -1.0
@@ -178,13 +200,15 @@ def _mp_fn(rank, run_cfg, data_dir, out_dir):
         tot, nb = 0.0, 0
         for images, masks in para.per_device_loader(dev):
             opt.zero_grad(set_to_none=True)
-            with torch.autocast(device_type="xla", dtype=amp,
-                                enabled=amp is not None):
+            with torch.autocast(device_type="xla", dtype=amp, enabled=amp is not None):
                 logits = model(pixel_values=images).logits
                 if logits.shape[-2:] != masks.shape[-2:]:
-                    logits = F.interpolate(logits, size=masks.shape[-2:],
-                                           mode="bilinear",
-                                           align_corners=False)
+                    logits = F.interpolate(
+                        logits,
+                        size=masks.shape[-2:],
+                        mode="bilinear",
+                        align_corners=False,
+                    )
                 loss = T.combined_loss(logits, masks, cw)
             loss.backward()
             xm.optimizer_step(opt)
@@ -194,26 +218,32 @@ def _mp_fn(rank, run_cfg, data_dir, out_dir):
             if rank == 0 and nb <= 3:
                 _log(f"PROBE_STEP epoca0 passo{nb} acumulado {time.time() - t0:.1f}s")
         dt = time.time() - t0
-        mean_loss = xm.mesh_reduce(
-            "loss", tot / max(nb, 1), lambda v: sum(v) / len(v))
-        val_sampler = DistributedSampler(val_ds, num_replicas=world,
-                                         rank=rank, shuffle=False)
-        val_loader = DataLoader(val_ds, batch_size=run_cfg["batch_per_core"],
-                                sampler=val_sampler, num_workers=2)
+        mean_loss = xm.mesh_reduce("loss", tot / max(nb, 1), lambda v: sum(v) / len(v))
+        val_sampler = DistributedSampler(
+            val_ds, num_replicas=world, rank=rank, shuffle=False
+        )
+        val_loader = DataLoader(
+            val_ds,
+            batch_size=run_cfg["batch_per_core"],
+            sampler=val_sampler,
+            num_workers=2,
+        )
         metrics = T.evaluate(model, val_loader, dev)
-        iou = xm.mesh_reduce("iou", metrics["mean_iou"],
-                             lambda v: sum(v) / len(v))
+        iou = xm.mesh_reduce("iou", metrics["mean_iou"], lambda v: sum(v) / len(v))
         if rank == 0:
             steps = max(nb, 1)
-            rec = {"epoch": epoch, "train_loss": round(mean_loss, 4),
-                   "val_mean_iou_shards": round(iou, 4),
-                   "epoch_s": round(dt, 1),
-                   "s_per_step": round(dt / steps, 3),
-                   "samples_s_per_core": round(
-                       steps * run_cfg["batch_per_core"] / dt, 2),
-                   "samples_s_aggregate": round(
-                       steps * run_cfg["batch_per_core"] * world / dt, 2),
-                   "elapsed_s": round(time.time() - t_start, 1)}
+            rec = {
+                "epoch": epoch,
+                "train_loss": round(mean_loss, 4),
+                "val_mean_iou_shards": round(iou, 4),
+                "epoch_s": round(dt, 1),
+                "s_per_step": round(dt / steps, 3),
+                "samples_s_per_core": round(steps * run_cfg["batch_per_core"] / dt, 2),
+                "samples_s_aggregate": round(
+                    steps * run_cfg["batch_per_core"] * world / dt, 2
+                ),
+                "elapsed_s": round(time.time() - t_start, 1),
+            }
             _log("EPOCA", json.dumps(rec))
             with open(out_dir / "history.jsonl", "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec) + "\n")
@@ -221,7 +251,8 @@ def _mp_fn(rank, run_cfg, data_dir, out_dir):
                 receipt = dict(rec)
                 receipt["projected_epoch_s"] = rec["epoch_s"]
                 receipt["projected_total_min"] = round(
-                    rec["epoch_s"] * run_cfg["epochs"] / 60, 1)
+                    rec["epoch_s"] * run_cfg["epochs"] / 60, 1
+                )
                 receipt["world"] = world
                 receipt["batch_global"] = run_cfg["batch_per_core"] * world
                 with open(out_dir / "receipt.json", "w", encoding="utf-8") as f:
@@ -248,8 +279,9 @@ def _export_and_grade(run_cfg, data_dir, out_dir):
     cfg = T.load_config(str(REPO_ROOT / "training" / "config.json"))
     out_dir = Path(out_dir)
     model = _build_model_t7(cfg, run_cfg["decoder"])
-    model.load_state_dict(torch.load(out_dir / "checkpoints" / "best.pt",
-                                     map_location="cpu"))
+    model.load_state_dict(
+        torch.load(out_dir / "checkpoints" / "best.pt", map_location="cpu")
+    )
     model = model.to("cpu")
     val_ds = T.build_dataset(data_dir, "val", cfg, augment=False)
     test_ds = T.build_dataset(data_dir, "test", cfg, augment=False)
@@ -257,15 +289,19 @@ def _export_and_grade(run_cfg, data_dir, out_dir):
     try:
         T.export_onnx(model, str(onnx_path), cfg)
         rep = T.validate_onnx(
-            model, str(onnx_path),
+            model,
+            str(onnx_path),
             DataLoader(val_ds, batch_size=8, shuffle=False, num_workers=0),
-            "cpu", cfg)
+            "cpu",
+            cfg,
+        )
     except Exception as exc:  # registrar sem perder o treino (regra do corpo)
         rep = {"status": "failed", "error": str(exc)}
         _log("AVISO: exportacao ONNX falhou:", exc)
     final = T.evaluate(model, DataLoader(val_ds, batch_size=8, num_workers=0), "cpu")
     final["test"] = T.evaluate(
-        model, DataLoader(test_ds, batch_size=8, num_workers=0), "cpu")
+        model, DataLoader(test_ds, batch_size=8, num_workers=0), "cpu"
+    )
     final["onnx_validation"] = rep
     final["delivery_status"] = T.onnx_delivery_status(rep)
     final["tpu_run"] = run_cfg
@@ -273,17 +309,25 @@ def _export_and_grade(run_cfg, data_dir, out_dir):
         "synthetic_root": str(data_dir),
         "generator": "tools/gen_synthetic.py (split por fonte)",
         "hands": "placeholder sintetico do gerador (sem --hands-dir)",
-        "counts": {"train": run_cfg["n_train"], "val": run_cfg["n_val"],
-                   "test": run_cfg["n_test"]},
+        "counts": {
+            "train": run_cfg["n_train"],
+            "val": run_cfg["n_val"],
+            "test": run_cfg["n_test"],
+        },
     }
-    (out_dir / "metrics.json").write_text(
-        json.dumps(final, indent=2), encoding="utf-8")
+    (out_dir / "metrics.json").write_text(json.dumps(final, indent=2), encoding="utf-8")
     (out_dir / "classes.json").write_text(
-        json.dumps(T.CLASSES, indent=2), encoding="utf-8")
-    _log("ONNX", onnx_path,
-         onnx_path.stat().st_size if onnx_path.exists() else -1)
-    _log("DELIVERY", final["delivery_status"], "| val_iou", final["mean_iou"],
-         "| test_iou", final["test"]["mean_iou"])
+        json.dumps(T.CLASSES, indent=2), encoding="utf-8"
+    )
+    _log("ONNX", onnx_path, onnx_path.stat().st_size if onnx_path.exists() else -1)
+    _log(
+        "DELIVERY",
+        final["delivery_status"],
+        "| val_iou",
+        final["mean_iou"],
+        "| test_iou",
+        final["test"]["mean_iou"],
+    )
     return 0 if final["delivery_status"] == "validated" else 3
 
 
@@ -309,14 +353,16 @@ def _selftest():
         loader = DataLoader(ds, batch_size=2, shuffle=False, num_workers=0)
         images, masks = next(iter(loader))
         opt = torch.optim.AdamW(model.parameters(), lr=6e-5)
-        cw = torch.tensor(cfg["loss"]["cross_entropy_class_weights"],
-                          dtype=torch.float32)
+        cw = torch.tensor(
+            cfg["loss"]["cross_entropy_class_weights"], dtype=torch.float32
+        )
         logits = model(pixel_values=images).logits
         if logits.shape[-2:] != masks.shape[-2:]:
             import torch.nn.functional as F
 
-            logits = F.interpolate(logits, size=masks.shape[-2:],
-                                   mode="bilinear", align_corners=False)
+            logits = F.interpolate(
+                logits, size=masks.shape[-2:], mode="bilinear", align_corners=False
+            )
         loss = T.combined_loss(logits, masks, cw)
         loss.backward()
         opt.step()
@@ -326,10 +372,16 @@ def _selftest():
         onnx_path = out_dir / cfg["export"]["onnx"]
         T.export_onnx(model.to("cpu"), str(onnx_path), cfg)
         rep = T.validate_onnx(
-            model, str(onnx_path),
-            DataLoader(T.build_dataset(str(data_dir), "val", cfg,
-                                       augment=False),
-                       batch_size=2, num_workers=0), "cpu", cfg)
+            model,
+            str(onnx_path),
+            DataLoader(
+                T.build_dataset(str(data_dir), "val", cfg, augment=False),
+                batch_size=2,
+                num_workers=0,
+            ),
+            "cpu",
+            cfg,
+        )
         _log("ONNX_VALIDATION", json.dumps(rep)[:300])
         _log("DELIVERY", T.onnx_delivery_status(rep))
         assert rep.get("status") == "ok", rep
@@ -342,8 +394,15 @@ def _preflight_sem_xla():
 
     # albumentations so entra com augment=True; o selftest nao aumenta,
     # entao a ausencia dele aqui e aviso, nao bloqueio.
-    for mod in ("cv2", "numpy", "torch", "transformers", "onnx",
-                "onnxruntime", "albumentations"):
+    for mod in (
+        "cv2",
+        "numpy",
+        "torch",
+        "transformers",
+        "onnx",
+        "onnxruntime",
+        "albumentations",
+    ):
         try:
             m = importlib.import_module(mod)
             _log("MOD", mod, getattr(m, "__version__", "?"))
@@ -355,7 +414,8 @@ def _preflight_sem_xla():
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Treino T7 (SegFormer 4 classes, decoder C=128) em TPU Kaggle.")
+        description="Treino T7 (SegFormer 4 classes, decoder C=128) em TPU Kaggle."
+    )
     parser.add_argument("--decoder", type=int, default=128)
     parser.add_argument("--batch-per-core", type=int, default=8)
     parser.add_argument("--epochs", type=int, default=30)
@@ -367,8 +427,11 @@ def main(argv=None):
     parser.add_argument("--test-count", type=int, default=400)
     parser.add_argument("--data-dir", default=None)
     parser.add_argument("--out-dir", default=None)
-    parser.add_argument("--selftest", action="store_true",
-                        help="Prova local em CPU (sem TPU); não treina a corrida.")
+    parser.add_argument(
+        "--selftest",
+        action="store_true",
+        help="Prova local em CPU (sem TPU); não treina a corrida.",
+    )
     args = parser.parse_args(argv)
 
     if args.selftest:
@@ -388,37 +451,52 @@ def main(argv=None):
     (out_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
 
     run_cfg = {
-        "decoder": args.decoder, "batch_per_core": args.batch_per_core,
-        "epochs": args.epochs, "lr": args.lr, "precision": args.precision,
-        "seed": args.seed, "n_train": args.train_count,
-        "n_val": args.val_count, "n_test": args.test_count,
+        "decoder": args.decoder,
+        "batch_per_core": args.batch_per_core,
+        "epochs": args.epochs,
+        "lr": args.lr,
+        "precision": args.precision,
+        "seed": args.seed,
+        "n_train": args.train_count,
+        "n_val": args.val_count,
+        "n_test": args.test_count,
     }
     _log("RUN_CFG", json.dumps(run_cfg))
     _preflight()
 
-    _ensure_data(data_dir, args.seed, args.train_count, args.val_count,
-                 args.test_count)
+    _ensure_data(data_dir, args.seed, args.train_count, args.val_count, args.test_count)
 
     import training.train as T
 
     _, manifest_path, split_validation = T.load_split_manifest(str(data_dir))
-    _log("split manifest:", manifest_path, "| familias verificadas:",
-         split_validation["checked_source_families"])
+    _log(
+        "split manifest:",
+        manifest_path,
+        "| familias verificadas:",
+        split_validation["checked_source_families"],
+    )
     counts = T.pixel_counts(T.pair_images_masks(str(Path(data_dir) / "train")))
     _log("pixels treino por classe:", counts.tolist())
 
     # Aquece o cache do HF e prova o override T7 no pai, antes do spawn.
     cfg = T.load_config(str(REPO_ROOT / "training" / "config.json"))
     warm = _build_model_t7(cfg, args.decoder)
-    _log("modelo T7 ok; linear_fuse:",
-         tuple(warm.decode_head.linear_fuse.weight.shape),
-         "| params:", sum(p.numel() for p in warm.parameters()))
+    _log(
+        "modelo T7 ok; linear_fuse:",
+        tuple(warm.decode_head.linear_fuse.weight.shape),
+        "| params:",
+        sum(p.numel() for p in warm.parameters()),
+    )
     del warm
 
     import torch_xla.distributed.xla_multiprocessing as xmp
 
-    xmp.spawn(_mp_fn, args=(run_cfg, str(data_dir), str(out_dir)),
-              nprocs=None, start_method="fork")
+    xmp.spawn(
+        _mp_fn,
+        args=(run_cfg, str(data_dir), str(out_dir)),
+        nprocs=None,
+        start_method="fork",
+    )
     _log("spawn encerrado")
     return _export_and_grade(run_cfg, str(data_dir), out_dir)
 

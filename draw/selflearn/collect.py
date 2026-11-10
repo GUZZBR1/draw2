@@ -30,8 +30,9 @@ class ExampleRecorder:
         self.manifest_path = self.out_dir / "manifest.jsonl"
         self._count = 0
 
-    def record(self, session_id, warped_bgr, prob, corners,
-               model_sha, origin, split="train"):
+    def record(
+        self, session_id, warped_bgr, prob, corners, model_sha, origin, split="train"
+    ):
         """Grava um exemplo e retorna a linha do manifesto (dict).
 
         O nome combina sessao, instante, contador e um sufixo
@@ -51,15 +52,15 @@ class ExampleRecorder:
         prob_u8 = np.clip(prob * 255.0, 0, 255).astype(np.uint8)
         ok, prob_buf = cv2.imencode(".png", prob_u8)
         if not ok:
-            raise RuntimeError("falha ao codificar o mapa de "
-                               "probabilidade")
+            raise RuntimeError("falha ao codificar o mapa de probabilidade")
         prob_bytes = prob_buf.tobytes()
 
         name = None
         for _ in range(100):
             candidate = (
                 f"{session_id}_{int(stamp * 1000)}_{self._count:06d}"
-                f"_{uuid.uuid4().hex[:8]}")
+                f"_{uuid.uuid4().hex[:8]}"
+            )
             self._count += 1
             input_path = self.input_dir / f"{candidate}.png"
             prob_path = self.prob_dir / f"{candidate}.png"
@@ -80,8 +81,7 @@ class ExampleRecorder:
             name = candidate
             break
         if name is None:
-            raise RuntimeError("sem nome unico disponivel para o "
-                               "exemplo")
+            raise RuntimeError("sem nome unico disponivel para o exemplo")
 
         row = {
             "file": name,

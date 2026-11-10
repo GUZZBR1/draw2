@@ -34,8 +34,12 @@ def build_scene():
     # Cola a folha inclinada sobre uma "mesa" escura.
     scene = np.full((1200, 1600, 3), 60, dtype=np.uint8)
     src = np.array(
-        [(0, 0), (config.PAPER_W, 0), (config.PAPER_W, config.PAPER_H),
-         (0, config.PAPER_H)],
+        [
+            (0, 0),
+            (config.PAPER_W, 0),
+            (config.PAPER_W, config.PAPER_H),
+            (0, config.PAPER_H),
+        ],
         dtype=np.float32,
     )
     dst = np.array(
@@ -51,9 +55,7 @@ def build_scene():
 
 
 def build_markerless_scene():
-    sheet = np.full(
-        (config.PAPER_H, config.PAPER_W, 3), 248, dtype=np.uint8
-    )
+    sheet = np.full((config.PAPER_H, config.PAPER_W, 3), 248, dtype=np.uint8)
     cv2.circle(sheet, (425, 500), 110, (0, 0, 0), 6)
     cv2.line(sheet, (280, 800), (570, 800), (0, 0, 0), 6)
     cv2.line(sheet, (320, 950), (530, 1080), (0, 0, 0), 6)
@@ -62,8 +64,12 @@ def build_markerless_scene():
 
     scene = np.full((1200, 1600, 3), 60, dtype=np.uint8)
     src = np.array(
-        [(0, 0), (config.PAPER_W, 0), (config.PAPER_W, config.PAPER_H),
-         (0, config.PAPER_H)],
+        [
+            (0, 0),
+            (config.PAPER_W, 0),
+            (config.PAPER_W, config.PAPER_H),
+            (0, config.PAPER_H),
+        ],
         dtype=np.float32,
     )
     dst = np.array(
@@ -80,9 +86,7 @@ def build_markerless_scene():
 
 
 def build_nested_scene():
-    sheet = np.full(
-        (config.PAPER_H, config.PAPER_W, 3), 248, dtype=np.uint8
-    )
+    sheet = np.full((config.PAPER_H, config.PAPER_W, 3), 248, dtype=np.uint8)
     cv2.circle(sheet, (425, 500), 110, (0, 0, 0), 8)
     cv2.line(sheet, (280, 800), (570, 800), (0, 0, 0), 8)
     cv2.line(sheet, (320, 950), (530, 1080), (0, 0, 0), 8)
@@ -99,8 +103,12 @@ def build_nested_scene():
     cv2.rectangle(scene, (1100, 0), (1560, 640), (60, 60, 60), -1)
 
     src = np.array(
-        [(0, 0), (config.PAPER_W, 0), (config.PAPER_W, config.PAPER_H),
-         (0, config.PAPER_H)],
+        [
+            (0, 0),
+            (config.PAPER_W, 0),
+            (config.PAPER_W, config.PAPER_H),
+            (0, config.PAPER_H),
+        ],
         dtype=np.float32,
     )
     dst = np.array(
@@ -116,8 +124,12 @@ def build_nested_scene():
     mask_src = np.zeros((config.PAPER_H, config.PAPER_W), dtype=np.uint8)
     cv2.rectangle(mask_src, (radius, 0), (w - radius, h), 255, -1)
     cv2.rectangle(mask_src, (0, radius), (w, h - radius), 255, -1)
-    for cx, cy in ((radius, radius), (w - radius, radius),
-                   (w - radius, h - radius), (radius, h - radius)):
+    for cx, cy in (
+        (radius, radius),
+        (w - radius, radius),
+        (w - radius, h - radius),
+        (radius, h - radius),
+    ):
         cv2.circle(mask_src, (cx, cy), radius, 255, -1)
     mask = cv2.warpPerspective(mask_src, matrix, (1600, 1200))
     scene[mask > 0] = placed[mask > 0]
@@ -169,13 +181,15 @@ def build_negative_scenes():
 def build_blank_sheet_scene():
     # Folha branca, lisa e sem tinta nenhuma. Geometria perfeita de
     # folha, textura de bandeja: o veredito esperado e blank_maybe.
-    sheet = np.full(
-        (config.PAPER_H, config.PAPER_W, 3), 248, dtype=np.uint8
-    )
+    sheet = np.full((config.PAPER_H, config.PAPER_W, 3), 248, dtype=np.uint8)
     scene = np.full((1200, 1600, 3), 60, dtype=np.uint8)
     src = np.array(
-        [(0, 0), (config.PAPER_W, 0), (config.PAPER_W, config.PAPER_H),
-         (0, config.PAPER_H)],
+        [
+            (0, 0),
+            (config.PAPER_W, 0),
+            (config.PAPER_W, config.PAPER_H),
+            (0, config.PAPER_H),
+        ],
         dtype=np.float32,
     )
     dst = np.array(
@@ -207,12 +221,12 @@ def nested_main():
     recovered = ink.extract_ink(warped)
     region = (slice(200, 1100), slice(200, 650))
     truth_px = int((ground_truth_ink[region] > 0).sum())
-    hits = int(
-        ((recovered[region] > 0) & (ground_truth_ink[region] > 0)).sum()
-    )
+    hits = int(((recovered[region] > 0) & (ground_truth_ink[region] > 0)).sum())
     recall = hits / max(truth_px, 1)
-    print(f"tinta esperada: {truth_px}px | recuperada (acerto): {hits}px "
-          f"| recall: {recall:.2%}")
+    print(
+        f"tinta esperada: {truth_px}px | recuperada (acerto): {hits}px "
+        f"| recall: {recall:.2%}"
+    )
     assert truth_px > 1000, "desenho sintetico quase sem tinta"
     assert recall >= 0.90, f"recall baixo demais: {recall:.2%}"
 
@@ -226,9 +240,7 @@ def texture_gate_main():
         assert corners is None, f"cena sem papel virou folha: {name}"
         print(f"negativo recusado pelo portao: {name}")
 
-    _, tray_verdict = paper.detect_sheet_with_confidence(
-        scenes["bandeja branca"]
-    )
+    _, tray_verdict = paper.detect_sheet_with_confidence(scenes["bandeja branca"])
     assert tray_verdict != "paper", (
         f"bandeja branca nao pode ter veredito de papel: {tray_verdict}"
     )
@@ -240,10 +252,7 @@ def texture_gate_main():
     assert verdict == "blank_maybe", f"folha em branco: veredito {verdict}"
     print("folha branca e lisa: veredito blank_maybe")
 
-    print(
-        "SELFTEST PORTAO DE TEXTURA OK. "
-        "Formato sem textura nao vira folha."
-    )
+    print("SELFTEST PORTAO DE TEXTURA OK. Formato sem textura nao vira folha.")
 
 
 def markerless_main():
@@ -262,12 +271,12 @@ def markerless_main():
     recovered = ink.extract_ink(warped)
     region = (slice(200, 1100), slice(200, 650))
     truth_px = int((ground_truth_ink[region] > 0).sum())
-    hits = int(
-        ((recovered[region] > 0) & (ground_truth_ink[region] > 0)).sum()
-    )
+    hits = int(((recovered[region] > 0) & (ground_truth_ink[region] > 0)).sum())
     recall = hits / max(truth_px, 1)
-    print(f"tinta esperada: {truth_px}px | recuperada (acerto): {hits}px "
-          f"| recall: {recall:.2%}")
+    print(
+        f"tinta esperada: {truth_px}px | recuperada (acerto): {hits}px "
+        f"| recall: {recall:.2%}"
+    )
     assert truth_px > 1000, "desenho sintetico quase sem tinta"
     assert recall >= 0.90, f"recall baixo demais: {recall:.2%}"
 
@@ -285,12 +294,12 @@ def main():
     # Compara só a área útil central (longe das bordas e dos marcadores).
     region = (slice(200, 1100), slice(200, 650))
     truth_px = int((ground_truth_ink[region] > 0).sum())
-    hits = int(
-        ((recovered[region] > 0) & (ground_truth_ink[region] > 0)).sum()
-    )
+    hits = int(((recovered[region] > 0) & (ground_truth_ink[region] > 0)).sum())
     recall = hits / max(truth_px, 1)
-    print(f"tinta esperada: {truth_px}px | recuperada (acerto): {hits}px "
-          f"| recall: {recall:.2%}")
+    print(
+        f"tinta esperada: {truth_px}px | recuperada (acerto): {hits}px "
+        f"| recall: {recall:.2%}"
+    )
     assert truth_px > 1000, "desenho sintetico quase sem tinta"
     assert recall > 0.60, f"recall baixo demais: {recall:.2%}"
 

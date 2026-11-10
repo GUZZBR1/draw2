@@ -99,6 +99,8 @@ def _frame_to_tensor(frame, size):
     resized = cv2.cvtColor(small, cv2.COLOR_BGR2RGB).astype(np.float32)
     tensor = (resized * _NORM_SCALE + _NORM_BIAS).transpose(2, 0, 1)
     return tensor[None].astype(np.float32)
+
+
 _MASK_THRESHOLD = 0.5
 _LOGIT_MARGIN = float(np.log(_MASK_THRESHOLD / (1.0 - _MASK_THRESHOLD)))
 _MIN_CONTOUR_AREA_RATIO = 0.01
@@ -178,9 +180,7 @@ def _fit_plausible(corners, frame_shape):
         return False
     if not np.all(np.isfinite(quad)):
         return False
-    edges = np.array(
-        [np.linalg.norm(quad[(i + 1) % 4] - quad[i]) for i in range(4)]
-    )
+    edges = np.array([np.linalg.norm(quad[(i + 1) % 4] - quad[i]) for i in range(4)])
     if edges.min() <= 0:
         return False
     for a, b in ((0, 2), (3, 1)):
@@ -305,7 +305,8 @@ def _session_contract(session):
         )
     height, width = shape[2], shape[3]
     fixed = [
-        dimension for dimension in (height, width)
+        dimension
+        for dimension in (height, width)
         if isinstance(dimension, int) and dimension > 0
     ]
     if len(fixed) == 2:
@@ -335,9 +336,7 @@ def _order_corners(points):
 
 
 def _largest_contour(mask_bin):
-    contours, _ = cv2.findContours(
-        mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
-    )
+    contours, _ = cv2.findContours(mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     if not contours:
         return None
     return max(contours, key=cv2.contourArea)
@@ -534,10 +533,7 @@ def _refit_corners(contour, quad, frame_shape, fallback_lines=None):
     frame_h, frame_w = frame_shape
     points = contour.reshape(-1, 2).astype(np.float64)
     distances = np.stack(
-        [
-            _segment_distances(points, quad[i], quad[(i + 1) % 4])
-            for i in range(4)
-        ],
+        [_segment_distances(points, quad[i], quad[(i + 1) % 4]) for i in range(4)],
         axis=1,
     )
     assignment = np.argmin(distances, axis=1)
@@ -569,9 +565,7 @@ def _refit_corners(contour, quad, frame_shape, fallback_lines=None):
         fallback = None
         if fallback_lines is not None:
             fallback = fallback_lines[i]
-        line, is_locked, is_trusted = _edge_line(
-            side, start, end, centroid, fallback
-        )
+        line, is_locked, is_trusted = _edge_line(side, start, end, centroid, fallback)
         lines.append(line)
         locked.append(is_locked)
         trusted.append(is_trusted)
@@ -587,7 +581,9 @@ def _refit_corners(contour, quad, frame_shape, fallback_lines=None):
             prev = fallback_lines[i]
             if prev is None or not trusted[i]:
                 continue
-            mid = 0.5 * (quad[i].astype(np.float64) + quad[(i + 1) % 4].astype(np.float64))
+            mid = 0.5 * (
+                quad[i].astype(np.float64) + quad[(i + 1) % 4].astype(np.float64)
+            )
             # Mede deslocamento no ponto médio da aresta nova contra a reta anterior.
             dir_cur, pt_cur = lines[i]
             proj_mid = pt_cur + float((mid - pt_cur) @ dir_cur) * dir_cur
@@ -641,9 +637,7 @@ def _refine_inside(frame, corners):
         return corners
     pad = 12
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    padded = cv2.copyMakeBorder(
-        gray, pad, pad, pad, pad, cv2.BORDER_REPLICATE
-    )
+    padded = cv2.copyMakeBorder(gray, pad, pad, pad, pad, cv2.BORDER_REPLICATE)
     selected = (corners[inside] + pad).reshape(-1, 1, 2).astype(np.float32)
     criteria = (
         cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
@@ -787,9 +781,7 @@ class NeuralSheetDetector:
                 if trusted[i]:
                     stored[i] = lines[i]
             self._edge_lines = stored
-        self._memory_mask = (
-            mask[::_MEMORY_MASK_STRIDE, ::_MEMORY_MASK_STRIDE] > 0
-        )
+        self._memory_mask = mask[::_MEMORY_MASK_STRIDE, ::_MEMORY_MASK_STRIDE] > 0
         return corners
 
     def predict(self, frame):
@@ -829,9 +821,7 @@ class NeuralSheetDetector:
                 # logit_papel > logit_fundo: o softmax de dois canais
                 # que existia aqui dava a mesma máscara e custava um
                 # exp sobre 2 x lado x lado por frame.
-                mask_small = (
-                    logits[0, 1] > logits[0, 0]
-                ).astype(np.uint8)
+                mask_small = (logits[0, 1] > logits[0, 0]).astype(np.uint8)
             elif channels == 4:
                 # Export híbrido: máscara semântica de quatro classes
                 # com cabeça de presença treinada. Antes, esta forma

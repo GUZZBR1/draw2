@@ -35,14 +35,15 @@ def _make_session(root, session_id, generations):
         final = _warp(with_ink)
         files = {}
         entry = {"generation": gen, "files": files}
-        for kind, img in (("reference_warp", reference),
-                          ("final_warp", final),
-                          ("final_canvas", final)):
+        for kind, img in (
+            ("reference_warp", reference),
+            ("final_warp", final),
+            ("final_canvas", final),
+        ):
             rel = f"gen_{gen:04d}/{kind}.png"
             cv2.imwrite(str(session_dir / rel), img)
             files[kind] = rel
-            entry[f"{kind}_sha256"] = session_module.sha256_file(
-                session_dir / rel)
+            entry[f"{kind}_sha256"] = session_module.sha256_file(session_dir / rel)
         entries.append(entry)
     manifest = {"generations": entries, "models": {}}
     (session_dir / "manifest.json").write_text(json.dumps(manifest))
@@ -68,13 +69,13 @@ def test_process_pool_end_to_end(tmp_path):
     assert summary["gate"]["pages_ok"] is False
     assert summary["problems"] == []
     ledger = json.loads((out / "split.json").read_text())
-    holdout = [s for s, v in ledger["assignments"].items()
-               if v == "holdout"]
+    holdout = [s for s, v in ledger["assignments"].items() if v == "holdout"]
     assert len(holdout) == summary["sessions_holdout"]
     drafts = list((out / "holdout").rglob("label_draft.png"))
     assert len(drafts) == summary["pages_holdout_draft"]
-    index = [json.loads(line)
-             for line in (out / "index.jsonl").read_text().splitlines()]
+    index = [
+        json.loads(line) for line in (out / "index.jsonl").read_text().splitlines()
+    ]
     assert len(index) == summary["pages_total"]
     for line in index:
         if line["split"] == "holdout":
@@ -122,12 +123,12 @@ def test_reviewed_pages_count_after_review(tmp_path):
     _nine_sessions(sessions)
     out = tmp_path / "pool"
     process.process_pool(sessions, out, min_holdout_sessions=5)
-    index = [json.loads(line)
-             for line in (out / "index.jsonl").read_text().splitlines()]
+    index = [
+        json.loads(line) for line in (out / "index.jsonl").read_text().splitlines()
+    ]
     drafts = [line for line in index if line["split"] == "holdout"]
     reviews = {
-        f"{line['session_id']}/gen_{line['generation']:04d}": True
-        for line in drafts
+        f"{line['session_id']}/gen_{line['generation']:04d}": True for line in drafts
     }
     (out / "reviews.json").write_text(json.dumps(reviews))
     summary = process.process_pool(sessions, out, min_holdout_sessions=5)
@@ -136,8 +137,7 @@ def test_reviewed_pages_count_after_review(tmp_path):
 
 def test_empty_root_reports_problem(tmp_path):
     out = tmp_path / "pool"
-    summary = process.process_pool(
-        tmp_path / "nada", out, min_holdout_sessions=5)
+    summary = process.process_pool(tmp_path / "nada", out, min_holdout_sessions=5)
     assert summary["sessions_total"] == 0
     assert summary["problems"]
     assert "PROBLEMAS" in process.format_summary(summary)

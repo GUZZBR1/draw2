@@ -57,9 +57,7 @@ def test_open_capture_settles_first_try():
 
 def test_open_capture_reopens_when_blown(monkeypatch):
     probes = iter([149.0, 112.0])
-    monkeypatch.setattr(
-        capture_module, "_probe_exposure", lambda capture: next(probes)
-    )
+    monkeypatch.setattr(capture_module, "_probe_exposure", lambda capture: next(probes))
     blown = _FakeCapture()
     good = _FakeCapture()
     factory = _factory([blown, good])
@@ -115,8 +113,7 @@ def test_open_probe_recorded_for_report_header():
 
 
 def test_open_probe_recorded_when_always_blown(monkeypatch):
-    monkeypatch.setattr(
-        capture_module, "_probe_exposure", lambda capture: 150.0)
+    monkeypatch.setattr(capture_module, "_probe_exposure", lambda capture: 150.0)
     caps = [_FakeCapture(value=150) for _ in range(3)]
     app_module._open_capture(0, capture_factory=_factory(caps))
     probe = capture_module._LAST_OPEN_PROBE

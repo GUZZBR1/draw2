@@ -31,7 +31,7 @@ NEW_RECT = (70, 100, 100, 130)
 
 def _mask(rects):
     mask = np.zeros((H, W), dtype=np.uint8)
-    for (y0, y1, x0, x1) in rects:
+    for y0, y1, x0, x1 in rects:
         mask[y0:y1, x0:x1] = 255
     return mask
 

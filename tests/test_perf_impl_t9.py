@@ -26,9 +26,7 @@ def _textured(seed=7):
     for _ in range(3000):
         x, y = int(rng.integers(0, 392)), int(rng.integers(0, 292))
         w, h = int(rng.integers(2, 9)), int(rng.integers(2, 5))
-        cv2.rectangle(
-            img, (x, y), (x + w, y + h), int(rng.integers(0, 130)), -1
-        )
+        cv2.rectangle(img, (x, y), (x + w, y + h), int(rng.integers(0, 130)), -1)
     return cv2.GaussianBlur(img, (3, 3), 0)
 
 

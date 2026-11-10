@@ -203,11 +203,13 @@ def precision_recall_per_class(pred, gt):
         # 0/0 só vale 1.0 quando a classe está ausente dos dois lados;
         # predição vazia com ground truth presente vale 0.0 (ver módulo).
         precision[CLASSES[cls]] = (
-            1.0 if (p_den == 0 and g_den == 0)
+            1.0
+            if (p_den == 0 and g_den == 0)
             else (float(tp[cls]) / p_den if p_den > 0 else 0.0)
         )
         recall[CLASSES[cls]] = (
-            1.0 if (g_den == 0 and p_den == 0)
+            1.0
+            if (g_den == 0 and p_den == 0)
             else (float(tp[cls]) / g_den if g_den > 0 else 0.0)
         )
     return {"precision": precision, "recall": recall}
@@ -218,7 +220,9 @@ def confusion_matrix(pred, gt):
     pred, gt = _validate_masks(pred, gt, require_supervised=False)
     valid = gt != IGNORE_INDEX
     encoded = gt[valid].astype(np.int64) * NUM_CLASSES + pred[valid].astype(np.int64)
-    return np.bincount(encoded, minlength=NUM_CLASSES**2).reshape(NUM_CLASSES, NUM_CLASSES)
+    return np.bincount(encoded, minlength=NUM_CLASSES**2).reshape(
+        NUM_CLASSES, NUM_CLASSES
+    )
 
 
 def evaluate_confusion_matrix(matrix, ignored_px=0):
@@ -240,11 +244,15 @@ def evaluate_confusion_matrix(matrix, ignored_px=0):
     for cls, name in enumerate(CLASSES):
         iou[name] = _safe_div(tp[cls], tp[cls] + fp[cls] + fn[cls])
         dice[name] = _safe_div(2 * tp[cls], 2 * tp[cls] + fp[cls] + fn[cls])
-        precision[name] = 1.0 if (tp[cls] + fp[cls] == 0 and tp[cls] + fn[cls] == 0) else (
-            float(tp[cls]) / (tp[cls] + fp[cls]) if tp[cls] + fp[cls] else 0.0
+        precision[name] = (
+            1.0
+            if (tp[cls] + fp[cls] == 0 and tp[cls] + fn[cls] == 0)
+            else (float(tp[cls]) / (tp[cls] + fp[cls]) if tp[cls] + fp[cls] else 0.0)
         )
-        recall[name] = 1.0 if (tp[cls] + fn[cls] == 0 and tp[cls] + fp[cls] == 0) else (
-            float(tp[cls]) / (tp[cls] + fn[cls]) if tp[cls] + fn[cls] else 0.0
+        recall[name] = (
+            1.0
+            if (tp[cls] + fn[cls] == 0 and tp[cls] + fp[cls] == 0)
+            else (float(tp[cls]) / (tp[cls] + fn[cls]) if tp[cls] + fn[cls] else 0.0)
         )
         support_px[name] = int(matrix[cls].sum())
     present = [name for cls, name in enumerate(CLASSES) if matrix[cls].sum() > 0]
@@ -332,13 +340,21 @@ def ink_tolerance_metrics(pred, gt, tolerance_px=3):
             "matched_pred": 0,
             "matched_gt": 0,
         }
-    matched_pred = int(np.count_nonzero(pred_ink & _dilate_disk(gt_ink, tolerance_px) & valid))
-    matched_gt = int(np.count_nonzero(gt_ink & _dilate_disk(pred_ink, tolerance_px) & valid))
+    matched_pred = int(
+        np.count_nonzero(pred_ink & _dilate_disk(gt_ink, tolerance_px) & valid)
+    )
+    matched_gt = int(
+        np.count_nonzero(gt_ink & _dilate_disk(pred_ink, tolerance_px) & valid)
+    )
     # Mesma convenção do módulo: 0/0 só vale 1.0 com ink ausente dos
     # dois lados; predição vazia com ink real vale 0.0.
     precision = 0.0 if (n_pred == 0 and n_gt > 0) else _safe_div(matched_pred, n_pred)
     recall = 0.0 if (n_gt == 0 and n_pred > 0) else _safe_div(matched_gt, n_gt)
-    f1 = 0.0 if (precision + recall) == 0 else 2 * precision * recall / (precision + recall)
+    f1 = (
+        0.0
+        if (precision + recall) == 0
+        else 2 * precision * recall / (precision + recall)
+    )
     return {
         "tolerance_px": tolerance_px,
         "precision": precision,
@@ -437,8 +453,14 @@ def save_predictions(output_dir, predictions, model_name=""):
         ok = cv2.imwrite(str(out_dir / filename), visualize_mask(mask))
         if not ok:
             raise RuntimeError(f"falha ao gravar {out_dir / filename}")
-        files[sid] = {"name": scenario["name"], "file": filename, "shape": list(mask.shape)}
+        files[sid] = {
+            "name": scenario["name"],
+            "file": filename,
+            "shape": list(mask.shape),
+        }
     manifest = {"model_name": model_name, "scenarios": files}
     manifest_path = out_dir / "predictions.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     return manifest_path

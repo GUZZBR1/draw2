@@ -102,10 +102,12 @@ def test_legacy_mask_and_presence_outputs_keep_their_contract():
     logits = np.full((1, 2, 8, 8), -4.0, dtype=np.float32)
     logits[0, 1, 1:7, 1:7] = 4.0
     logits[0, 0, 1:7, 1:7] = -4.0
-    session = _Session({
-        "mask_logits": logits,
-        "presence_logit": np.array([2.5], dtype=np.float32),
-    })
+    session = _Session(
+        {
+            "mask_logits": logits,
+            "presence_logit": np.array([2.5], dtype=np.float32),
+        }
+    )
     detector = NeuralSheetDetector("unused.onnx")
     detector._session = session
 
@@ -158,10 +160,12 @@ def test_four_channel_mask_logits_with_presence_use_paper_and_ink():
     classes = np.zeros((8, 8), dtype=np.uint8)
     classes[1:7, 1:7] = 1
     classes[2:4, 2:4] = 2  # mão
-    session = _Session({
-        "mask_logits": _logits_for_classes(classes),
-        "presence_logit": np.array([6.0], np.float32),
-    })
+    session = _Session(
+        {
+            "mask_logits": _logits_for_classes(classes),
+            "presence_logit": np.array([6.0], np.float32),
+        }
+    )
     detector = NeuralSheetDetector("unused.onnx")
     detector._session = session
 
@@ -175,10 +179,12 @@ def test_four_channel_mask_logits_with_presence_use_paper_and_ink():
 
 
 def test_mask_logits_with_three_channels_is_a_named_error():
-    session = _Session({
-        "mask_logits": np.zeros((1, 3, 8, 8), np.float32),
-        "presence_logit": np.array([1.0], np.float32),
-    })
+    session = _Session(
+        {
+            "mask_logits": np.zeros((1, 3, 8, 8), np.float32),
+            "presence_logit": np.array([1.0], np.float32),
+        }
+    )
     detector = NeuralSheetDetector("unused.onnx")
     detector._session = session
 
@@ -249,9 +255,7 @@ def test_real_onnx_with_input_named_input(tmp_path):
     detector = _detector_for(path)
 
     assert detector.contract().input_name == "input"
-    presence, mask = detector.predict(
-        np.full((120, 160, 3), 200, dtype=np.uint8)
-    )
+    presence, mask = detector.predict(np.full((120, 160, 3), 200, dtype=np.uint8))
 
     assert presence > 0
     assert mask.shape == (120, 160)
@@ -264,8 +268,6 @@ def test_real_onnx_four_class_with_auxiliary_output(tmp_path):
     detector = _detector_for(path)
 
     assert detector.contract().outputs == ("logits", "aux")
-    presence, mask = detector.predict(
-        np.full((64, 64, 3), 230, dtype=np.uint8)
-    )
+    presence, mask = detector.predict(np.full((64, 64, 3), 230, dtype=np.uint8))
     assert presence in (1.0, -10.0)
     assert mask.shape == (64, 64)

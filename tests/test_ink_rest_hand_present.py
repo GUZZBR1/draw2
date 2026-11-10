@@ -46,7 +46,7 @@ class _SettlingInk:
         self.calls += 1
         prob = np.zeros((H, W), dtype=np.float32)
         col = 40 if self.frozen else 5 + (self.calls % 30)
-        prob[5:15, col:col + 8] = 0.95
+        prob[5:15, col : col + 8] = 0.95
         return prob
 
 
@@ -98,14 +98,14 @@ def test_total_rest_with_hand_present_and_still(monkeypatch):
         thread = threading.Thread(target=feeder, daemon=True)
         thread.start()
         try:
-            assert _wait_resting(worker), (
-                "o descanso com a mao presente nao entrou")
+            assert _wait_resting(worker), "o descanso com a mao presente nao entrou"
             assert worker.stats()["worker_mode"] == "rest"
             before = fake.calls
             time.sleep(0.5)
             assert fake.calls == before, (
                 f"em descanso com a mao presente, "
-                f"{fake.calls - before} passadas rodaram")
+                f"{fake.calls - before} passadas rodaram"
+            )
 
             # A mao se mexe: acorda e a cadencia ativa volta.
             # (A espera fica bem abaixo da janela de quietude
@@ -140,13 +140,12 @@ class _GrowingInk:
     def ink_prob(self, _warped):
         self.calls += 1
         prob = np.zeros((H, 240), dtype=np.float32)
-        prob[5:15, 5:5 + min(self.calls, 220)] = 0.95
+        prob[5:15, 5 : 5 + min(self.calls, 220)] = 0.95
         return prob
 
 
 @pytest.mark.lento
-def test_active_drawing_never_rests_even_without_motion_reports(
-        monkeypatch):
+def test_active_drawing_never_rests_even_without_motion_reports(monkeypatch):
     monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.02)
     monkeypatch.setattr(ink_layers_module, "_IDLE_PROBE_SECONDS", 0.05)
     monkeypatch.setattr(ink_layers_module, "_HAND_REST_STILL_SECONDS", 0.3)
@@ -162,8 +161,7 @@ def test_active_drawing_never_rests_even_without_motion_reports(
         while time.monotonic() < deadline:
             worker.submit(warp, generation)
             time.sleep(0.005)
-        assert not worker.stats()["resting"], (
-            "descansou no meio do desenho ativo")
+        assert not worker.stats()["resting"], "descansou no meio do desenho ativo"
         before = fake.calls
         deadline = time.monotonic() + 0.3
         while time.monotonic() < deadline:
@@ -187,12 +185,10 @@ def test_motion_reports_block_rest_with_frozen_ink(monkeypatch):
             worker.submit(warp, generation)
             worker.set_hand_presence(True, moved=True)
             time.sleep(0.1)
-        assert not worker.stats()["resting"], (
-            "descansou com a mao em atividade")
+        assert not worker.stats()["resting"], "descansou com a mao em atividade"
         # Os reportes param: a quietude fecha e o descanso entra.
         _feed(worker, generation, 0.2)
-        assert _wait_resting(worker), (
-            "sem movimento, o descanso nao entrou")
+        assert _wait_resting(worker), "sem movimento, o descanso nao entrou"
     finally:
         worker.stop()
 
@@ -207,7 +203,7 @@ class _SettableMasker:
 
 def _block(frame_shape, top, left, size):
     mask = np.zeros(frame_shape, dtype=np.uint8)
-    mask[top:top + size, left:left + size] = 255
+    mask[top : top + size, left : left + size] = 255
     return mask
 
 

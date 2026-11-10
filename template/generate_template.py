@@ -17,9 +17,7 @@ from draw import config  # noqa: E402
 
 
 def build_template():
-    sheet = np.full(
-        (config.PAPER_H, config.PAPER_W, 3), 255, dtype=np.uint8
-    )
+    sheet = np.full((config.PAPER_H, config.PAPER_W, 3), 255, dtype=np.uint8)
     dictionary = config.get_dictionary()
     size = config.MARKER_SIZE_PX
     for marker_id, (cx, cy) in config.MARKER_CENTERS.items():
@@ -29,8 +27,13 @@ def build_template():
         )
 
     # Área útil pontilhada e instruções no centro da folha.
-    cv2.rectangle(sheet, (220, 220), (config.PAPER_W - 220, config.PAPER_H - 220),
-                  (180, 180, 180), 2)
+    cv2.rectangle(
+        sheet,
+        (220, 220),
+        (config.PAPER_W - 220, config.PAPER_H - 220),
+        (180, 180, 180),
+        2,
+    )
     cv2.putText(
         sheet,
         "DRAW - desenhe dentro desta area",
@@ -40,8 +43,7 @@ def build_template():
         (150, 150, 150),
         2,
     )
-    cv2.rectangle(sheet, (0, 0), (config.PAPER_W - 1, config.PAPER_H - 1),
-                  (0, 0, 0), 2)
+    cv2.rectangle(sheet, (0, 0), (config.PAPER_W - 1, config.PAPER_H - 1), (0, 0, 0), 2)
     return sheet
 
 

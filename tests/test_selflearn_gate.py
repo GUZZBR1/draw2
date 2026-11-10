@@ -11,7 +11,12 @@ import sys
 from pathlib import Path
 
 from draw.selflearn.gate import (
-    INCONCLUSIVE, PROMOTE, REJECT, format_verdict, judge_candidate)
+    INCONCLUSIVE,
+    PROMOTE,
+    REJECT,
+    format_verdict,
+    judge_candidate,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -27,8 +32,10 @@ def _real(primary, worst, sessions=8, pages=40):
 
 def test_dibco_winner_that_loses_on_real_is_rejected():
     result = judge_candidate(
-        _real(0.30, 0.20), _real(0.45, 0.35),
-        dibco={"iou": 0.223, "baseline_iou": 0.188})
+        _real(0.30, 0.20),
+        _real(0.45, 0.35),
+        dibco={"iou": 0.223, "baseline_iou": 0.188},
+    )
     assert result["verdict"] == REJECT
     assert result["dibco_diagnostic"]["promotes"] is False
     assert result["dibco_diagnostic"]["role"] == "diagnostic_only"
@@ -36,40 +43,35 @@ def test_dibco_winner_that_loses_on_real_is_rejected():
 
 def test_insufficient_n_is_inconclusive_never_pass():
     result = judge_candidate(
-        _real(0.90, 0.80, sessions=2, pages=48),
-        _real(0.40, 0.30),
-        dibco={"iou": 0.99})
+        _real(0.90, 0.80, sessions=2, pages=48), _real(0.40, 0.30), dibco={"iou": 0.99}
+    )
     assert result["verdict"] == INCONCLUSIVE
-    assert result["n"] == {"holdout_sessions": 2,
-                            "holdout_pages": 48}
+    assert result["n"] == {"holdout_sessions": 2, "holdout_pages": 48}
     text = format_verdict(result)
     assert "2 sessoes" in text
     assert "INCONCLUSIVE" in text
 
 
 def test_insufficient_pages_is_inconclusive():
-    result = judge_candidate(
-        _real(0.90, 0.80, sessions=9, pages=10), _real(0.40, 0.30))
+    result = judge_candidate(_real(0.90, 0.80, sessions=9, pages=10), _real(0.40, 0.30))
     assert result["verdict"] == INCONCLUSIVE
 
 
 def test_good_candidate_with_enough_n_promotes():
     result = judge_candidate(
-        _real(0.50, 0.36), _real(0.45, 0.35),
-        dibco={"iou": 0.15, "baseline_iou": 0.22})
+        _real(0.50, 0.36), _real(0.45, 0.35), dibco={"iou": 0.15, "baseline_iou": 0.22}
+    )
     assert result["verdict"] == PROMOTE
 
 
 def test_worst_group_regression_rejects_despite_primary_gain():
-    result = judge_candidate(
-        _real(0.60, 0.20), _real(0.45, 0.35))
+    result = judge_candidate(_real(0.60, 0.20), _real(0.45, 0.35))
     assert result["verdict"] == REJECT
     assert any("pior grupo" in r for r in result["reasons"])
 
 
 def test_promote_margin_is_enforced():
-    result = judge_candidate(
-        _real(0.46, 0.36), _real(0.45, 0.35), promote_margin=0.02)
+    result = judge_candidate(_real(0.46, 0.36), _real(0.45, 0.35), promote_margin=0.02)
     assert result["verdict"] == REJECT
 
 
@@ -81,10 +83,20 @@ def test_cli_exit_codes_and_dibco_label(tmp_path):
     baseline.write_text(json.dumps(_real(0.45, 0.35)))
     dibco.write_text(json.dumps({"iou": 0.223}))
     run = subprocess.run(
-        [sys.executable, str(ROOT / "tools/selflearn/judge_gate.py"),
-         "--candidate", str(candidate), "--baseline", str(baseline),
-         "--dibco", str(dibco)],
-        capture_output=True, text=True, timeout=60)
+        [
+            sys.executable,
+            str(ROOT / "tools/selflearn/judge_gate.py"),
+            "--candidate",
+            str(candidate),
+            "--baseline",
+            str(baseline),
+            "--dibco",
+            str(dibco),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
     assert run.returncode == 1
     assert "REJECT" in run.stdout
     assert "diagnostico" in run.stdout
@@ -97,14 +109,22 @@ def test_cli_worst_group_tolerance_flag_reaches_the_gate(tmp_path):
     baseline = tmp_path / "baseline.json"
     candidate.write_text(json.dumps(_real(0.50, 0.33)))
     baseline.write_text(json.dumps(_real(0.45, 0.35)))
-    cmd = [sys.executable, str(ROOT / "tools/selflearn/judge_gate.py"),
-           "--candidate", str(candidate), "--baseline", str(baseline)]
-    strict = subprocess.run(cmd, capture_output=True, text=True,
-                            timeout=60)
+    cmd = [
+        sys.executable,
+        str(ROOT / "tools/selflearn/judge_gate.py"),
+        "--candidate",
+        str(candidate),
+        "--baseline",
+        str(baseline),
+    ]
+    strict = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     assert strict.returncode == 1  # pior grupo regrediu 0,02 sem tolerancia
     tolerant = subprocess.run(
         cmd + ["--worst-group-tolerance", "0.05"],
-        capture_output=True, text=True, timeout=60)
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
     assert tolerant.returncode == 0
     assert "PROMOTE" in tolerant.stdout
 
@@ -112,7 +132,10 @@ def test_cli_worst_group_tolerance_flag_reaches_the_gate(tmp_path):
 # --- Regra de parada (ordem de adocao 2026-11-06) ---
 
 from draw.selflearn.gate import (  # noqa: E402
-    evaluate_rounds, format_stop_decision, session_bootstrap_delta)
+    evaluate_rounds,
+    format_stop_decision,
+    session_bootstrap_delta,
+)
 
 import pytest  # noqa: E402
 
@@ -151,50 +174,64 @@ def test_bootstrap_is_deterministic():
 
 
 def test_two_no_gain_rounds_stop_the_loop():
-    result = evaluate_rounds([
-        _round(1, _FLAT, baseline=_BASE),
-        _round(2, _FLAT),
-    ])
+    result = evaluate_rounds(
+        [
+            _round(1, _FLAT, baseline=_BASE),
+            _round(2, _FLAT),
+        ]
+    )
     assert result["should_stop"] is True
     assert result["consecutive_no_gain"] == 2
-    assert [r["outcome"] for r in result["per_round"]] == [
-        "NO_GAIN", "NO_GAIN"]
+    assert [r["outcome"] for r in result["per_round"]] == ["NO_GAIN", "NO_GAIN"]
 
 
 def test_gain_resets_the_counter_and_moves_the_champion():
-    result = evaluate_rounds([
-        _round(1, _FLAT, baseline=_BASE),
-        _round(2, _GAIN),
-        _round(3, _GAIN),
-        _round(4, _GAIN),
-    ])
+    result = evaluate_rounds(
+        [
+            _round(1, _FLAT, baseline=_BASE),
+            _round(2, _GAIN),
+            _round(3, _GAIN),
+            _round(4, _GAIN),
+        ]
+    )
     assert result["should_stop"] is True
     assert result["consecutive_no_gain"] == 2
     assert result["champion_round"] == 2
     assert [r["outcome"] for r in result["per_round"]] == [
-        "NO_GAIN", "GAIN", "NO_GAIN", "NO_GAIN"]
+        "NO_GAIN",
+        "GAIN",
+        "NO_GAIN",
+        "NO_GAIN",
+    ]
 
 
 def test_inconclusive_round_neither_gains_nor_counts():
     small = _scores(0.99, [0.0, 0.0, 0.0])
-    result = evaluate_rounds([
-        _round(1, _FLAT, baseline=_BASE),
-        _round(2, small),
-        _round(3, _FLAT),
-    ])
+    result = evaluate_rounds(
+        [
+            _round(1, _FLAT, baseline=_BASE),
+            _round(2, small),
+            _round(3, _FLAT),
+        ]
+    )
     assert result["should_stop"] is True
     assert [r["outcome"] for r in result["per_round"]] == [
-        "NO_GAIN", INCONCLUSIVE, "NO_GAIN"]
+        "NO_GAIN",
+        INCONCLUSIVE,
+        "NO_GAIN",
+    ]
 
 
 def test_holdout_change_mid_sequence_raises():
     other = _scores(0.90, [0.0] * 8)
     other = {f"x{i}": v for i, v in enumerate(other.values())}
     with pytest.raises(ValueError):
-        evaluate_rounds([
-            _round(1, _GAIN, baseline=_BASE),
-            _round(2, other),
-        ])
+        evaluate_rounds(
+            [
+                _round(1, _GAIN, baseline=_BASE),
+                _round(2, other),
+            ]
+        )
 
 
 def test_first_round_without_baseline_raises():
@@ -203,10 +240,12 @@ def test_first_round_without_baseline_raises():
 
 
 def test_stop_decision_text_stamps_preregistration():
-    result = evaluate_rounds([
-        _round(1, _FLAT, baseline=_BASE),
-        _round(2, _FLAT),
-    ])
+    result = evaluate_rounds(
+        [
+            _round(1, _FLAT, baseline=_BASE),
+            _round(2, _FLAT),
+        ]
+    )
     text = format_stop_decision(result)
     assert "parada: SIM" in text
     assert "bootstrap por sessao" in text

@@ -36,23 +36,27 @@ def run_pair(frames, label, **kwargs):
         canvas_new = acc_new.update(observed, visible, t_capture_ms=t_ms)
         assert canvas_old.dtype == canvas_new.dtype
         assert np.array_equal(canvas_old, canvas_new), (
-            f"{label} frame {i}: canvas divergiu")
+            f"{label} frame {i}: canvas divergiu"
+        )
         assert np.array_equal(acc_old.state, acc_new.state), (
-            f"{label} frame {i}: estado divergiu")
-        assert np.array_equal(
-            acc_old.first_seen_ms(), acc_new.first_seen_ms()), (
-            f"{label} frame {i}: first_seen divergiu")
-        assert np.array_equal(
-            acc_old.last_update_ms(), acc_new.last_update_ms()), (
-            f"{label} frame {i}: last_update divergiu")
+            f"{label} frame {i}: estado divergiu"
+        )
+        assert np.array_equal(acc_old.first_seen_ms(), acc_new.first_seen_ms()), (
+            f"{label} frame {i}: first_seen divergiu"
+        )
+        assert np.array_equal(acc_old.last_update_ms(), acc_new.last_update_ms()), (
+            f"{label} frame {i}: last_update divergiu"
+        )
         judged = acc_new._vis_counts >= acc_new._min_visible
         pairs = zip(
             acc_new._ink_counts[judged].tolist(),
             acc_new._vis_counts[judged].tolist(),
         )
         ratios.update(pairs)
-    print(f"{label}: {len(frames)} frames, canvas+estado+carimbos "
-          f"identicos em todos; {len(ratios)} pares (ink, vis) julgados")
+    print(
+        f"{label}: {len(frames)} frames, canvas+estado+carimbos "
+        f"identicos em todos; {len(ratios)} pares (ink, vis) julgados"
+    )
     return acc_new, ratios
 
 
@@ -118,14 +122,20 @@ def random_frames(seed, n_frames=80):
         if rng.random() < 0.25 and len(blobs) < 6:
             y = int(rng.integers(0, H - 60))
             x = int(rng.integers(0, W - 60))
-            blobs.append([y, x, int(rng.integers(5, 40)),
-                          int(rng.integers(5, 40)),
-                          int(rng.integers(15, 50))])
+            blobs.append(
+                [
+                    y,
+                    x,
+                    int(rng.integers(5, 40)),
+                    int(rng.integers(5, 40)),
+                    int(rng.integers(15, 50)),
+                ]
+            )
         observed = np.zeros((H, W), dtype=np.uint8)
         alive = []
         for y, x, h, w, ttl in blobs:
             if ttl > 0:
-                observed[y:y + h, x:x + w] = 255
+                observed[y : y + h, x : x + w] = 255
                 alive.append([y, x, h, w, ttl - 1])
         blobs = alive
         ys = rng.integers(0, H, size=25)
@@ -135,7 +145,7 @@ def random_frames(seed, n_frames=80):
         if rng.random() < 0.5:
             y = int(rng.integers(0, H - 120))
             x = int(rng.integers(0, W - 120))
-            visible[y:y + 100, x:x + 100] = False
+            visible[y : y + 100, x : x + 100] = False
         t_ms = 2000 + 33 * i + int(rng.integers(0, 5))
         frames.append((observed, visible, t_ms))
     return frames
@@ -143,8 +153,7 @@ def random_frames(seed, n_frames=80):
 
 def edge_time_frames():
     """Carimbos de borda: t=0, t repetido, wrap do uint32."""
-    ts = [0, 0, 1, 7, 7, 2**31, 2**32 - 1, 2**32 + 5, 12, 12,
-          10**6, 10**6 + 33]
+    ts = [0, 0, 1, 7, 7, 2**31, 2**32 - 1, 2**32 + 5, 12, 12, 10**6, 10**6 + 33]
     frames = []
     for i, t_ms in enumerate(ts):
         observed = np.zeros((H, W), dtype=np.uint8)

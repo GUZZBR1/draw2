@@ -32,9 +32,7 @@ def test_canvas_at_target_height_is_not_mutated():
     canvas = np.full((640, 850, 3), 255, dtype=np.uint8)
     before = canvas.copy()
     view_module._compose_view(_camera(), canvas)
-    assert np.array_equal(canvas, before), (
-        "a vista escreveu no canvas do chamador"
-    )
+    assert np.array_equal(canvas, before), "a vista escreveu no canvas do chamador"
 
 
 def test_canvas_smaller_than_the_target_is_not_mutated_either():

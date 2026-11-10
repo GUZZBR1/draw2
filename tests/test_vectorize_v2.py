@@ -51,10 +51,7 @@ def test_thick_shapes_axis_aligned_rect_circle_lines_and_freehand_wave():
     cv2.line(img, (110, 740), (390, 480), 0, thickness=5)
     # 4. Curva senoidal à mão livre (DEVE continuar como 'polyline', sem alucinar reta/círculo):
     wave_pts = np.array(
-        [
-            [470 + i * 3, int(round(620 + 55.0 * np.sin(i * 0.14)))]
-            for i in range(100)
-        ],
+        [[470 + i * 3, int(round(620 + 55.0 * np.sin(i * 0.14)))] for i in range(100)],
         dtype=np.int32,
     ).reshape(-1, 1, 2)
     cv2.polylines(img, [wave_pts], False, 0, thickness=4)
@@ -70,7 +67,9 @@ def test_thick_shapes_axis_aligned_rect_circle_lines_and_freehand_wave():
     for p in prims:
         by_type.setdefault(p["type"], []).append(p)
 
-    assert len(prims) == 5, f"esperava 5 tracos limpos, obteve {len(prims)}: {[p['type'] for p in prims]}"
+    assert len(prims) == 5, (
+        f"esperava 5 tracos limpos, obteve {len(prims)}: {[p['type'] for p in prims]}"
+    )
     assert len(by_type.get("rectangle", [])) == 1
     assert len(by_type.get("circle", [])) == 1
     assert len(by_type.get("line", [])) == 2

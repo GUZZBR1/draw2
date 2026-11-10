@@ -37,12 +37,16 @@ def test_temporal_settings_default_off():
 def test_temporal_settings_validation():
     cfg = _cfg()
     cfg["training"]["temporal"] = {
-        "enabled": True, "pair_fraction": 1.5, "consistency_weight": 1.0,
+        "enabled": True,
+        "pair_fraction": 1.5,
+        "consistency_weight": 1.0,
     }
     with pytest.raises(ValueError):
         T.temporal_settings(cfg)
     cfg["training"]["temporal"] = {
-        "enabled": True, "pair_fraction": 0.25, "consistency_weight": -0.1,
+        "enabled": True,
+        "pair_fraction": 0.25,
+        "consistency_weight": -0.1,
     }
     with pytest.raises(ValueError):
         T.temporal_settings(cfg)
@@ -55,8 +59,18 @@ def test_night_configs_temporal_blocks():
     # reproduzem o comportamento histórico (mse, sem trim, área off) —
     # as configs da noite não os declaram e seguem valendo o mesmo.
     historical = {"mode": "mse", "trim": 0.0, "area_weight": 0.0}
-    assert a == {"enabled": True, "pair_fraction": 0.25, "consistency_weight": 1.0, **historical}
-    assert b == {"enabled": True, "pair_fraction": 0.25, "consistency_weight": 0.0, **historical}
+    assert a == {
+        "enabled": True,
+        "pair_fraction": 0.25,
+        "consistency_weight": 1.0,
+        **historical,
+    }
+    assert b == {
+        "enabled": True,
+        "pair_fraction": 0.25,
+        "consistency_weight": 0.0,
+        **historical,
+    }
 
 
 # ------------------------------------------------- perda de consistência
@@ -126,9 +140,7 @@ def _run_epoch(**kwargs):
     model = _StubModel()
     optimizer = torch.optim.SGD(model.parameters(), lr=0.05)
     weights = torch.ones(4)
-    loss = T.train_one_epoch(
-        model, _toy_loader(), optimizer, weights, "cpu", **kwargs
-    )
+    loss = T.train_one_epoch(model, _toy_loader(), optimizer, weights, "cpu", **kwargs)
     params = [p.detach().clone() for p in model.parameters()]
     return loss, params
 
@@ -140,8 +152,10 @@ def test_train_one_epoch_off_is_identical_to_historical():
     # Com loader de pares mas fração 0: também idêntico (nenhum sorteio,
     # nenhum lote de par, nenhum consumo extra de RNG).
     pair_batch = (
-        torch.randn(2, 3, 16, 16), torch.randint(0, 4, (2, 16, 16)),
-        torch.randn(2, 3, 16, 16), torch.randint(0, 4, (2, 16, 16)),
+        torch.randn(2, 3, 16, 16),
+        torch.randint(0, 4, (2, 16, 16)),
+        torch.randn(2, 3, 16, 16),
+        torch.randint(0, 4, (2, 16, 16)),
         torch.zeros(2, 16, 16, dtype=torch.uint8),
     )
     loss_zero, params_zero = _run_epoch(
@@ -168,16 +182,21 @@ def test_train_one_epoch_pair_path_runs_and_counts():
     optimizer = torch.optim.SGD(model.parameters(), lr=0.05)
     stats: dict = {}
     loss = T.train_one_epoch(
-        model, _toy_loader(n_batches=3), optimizer, torch.ones(4), "cpu",
-        pair_loader=[pair_batch], pair_fraction=1.0, consistency_weight=1.0,
+        model,
+        _toy_loader(n_batches=3),
+        optimizer,
+        torch.ones(4),
+        "cpu",
+        pair_loader=[pair_batch],
+        pair_fraction=1.0,
+        consistency_weight=1.0,
         epoch_stats=stats,
     )
     assert np.isfinite(loss)
     assert stats["pair_batches"] == 3
-    assert any(
-        not torch.equal(a, b)
-        for a, b in zip(before, model.parameters())
-    ), "o caminho de pares não treinou nada"
+    assert any(not torch.equal(a, b) for a, b in zip(before, model.parameters())), (
+        "o caminho de pares não treinou nada"
+    )
 
 
 def test_pair_iterator_wraps_without_caching_whole_loader():
@@ -204,8 +223,14 @@ def test_pair_iterator_wraps_without_caching_whole_loader():
     # 1 lote de pares alimenta 5 lotes de treino: o wrap tem que acontecer
     # 4 vezes sem erro e sem guardar os lotes anteriores.
     loss = T.train_one_epoch(
-        model, _toy_loader(n_batches=5), optimizer, torch.ones(4), "cpu",
-        pair_loader=[pair_batch], pair_fraction=1.0, consistency_weight=1.0,
+        model,
+        _toy_loader(n_batches=5),
+        optimizer,
+        torch.ones(4),
+        "cpu",
+        pair_loader=[pair_batch],
+        pair_fraction=1.0,
+        consistency_weight=1.0,
         epoch_stats=stats,
     )
     assert np.isfinite(loss)
@@ -219,8 +244,11 @@ def test_pair_dataset_shapes_and_change(tmp_path):
     from tools import gen_synthetic as gs
 
     gs.generate_dataset(
-        tmp_path, seed=42, counts={"train": 2, "val": 2, "test": 2},
-        temporal_counts={"train": 2}, temporal_frames=4,
+        tmp_path,
+        seed=42,
+        counts={"train": 2, "val": 2, "test": 2},
+        temporal_counts={"train": 2},
+        temporal_frames=4,
     )
     ds = T.build_pair_dataset(str(tmp_path), "train", _cfg())
     assert len(ds) == 2 * 3  # 2 sequências x 3 pares consecutivos

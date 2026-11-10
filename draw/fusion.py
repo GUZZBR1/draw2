@@ -105,9 +105,7 @@ def paper_quad():
     ]
 
 
-def landmark_on_sheet(
-    landmark_xy, margin_px=_DEFAULT_SHEET_MARGIN_PX, quad=None
-):
+def landmark_on_sheet(landmark_xy, margin_px=_DEFAULT_SHEET_MARGIN_PX, quad=None):
     """Portão da folha: o landmark vale só dentro da folha + margem.
 
     landmark_xy está no espaço do papel retificado. Fora da folha
@@ -168,8 +166,10 @@ class OneEuroFilter2D:
         if self._prev is None:
             self._prev = (x, y)
             self._prev_t = float(t)
-            return (self._x_filter.filter(x, self.mincutoff, 1.0),
-                    self._y_filter.filter(y, self.mincutoff, 1.0))
+            return (
+                self._x_filter.filter(x, self.mincutoff, 1.0),
+                self._y_filter.filter(y, self.mincutoff, 1.0),
+            )
         dt = float(t) - self._prev_t
         if dt <= 0:
             dt = 1e-6
@@ -207,8 +207,7 @@ class CursorState:
         return (
             "CursorState(x=%r, y=%r, pen_down=%r, has_position=%r, "
             "position_stale=%r)"
-            % (self.x, self.y, self.pen_down, self.has_position,
-               self.position_stale)
+            % (self.x, self.y, self.pen_down, self.has_position, self.position_stale)
         )
 
 
@@ -247,8 +246,7 @@ class PenTipFusion:
         self._last_landmark_t = None
         self._last_delta_t = None
 
-    def update(self, t, landmark_xy=None,
-               frame_ink_delta_centroid=None):
+    def update(self, t, landmark_xy=None, frame_ink_delta_centroid=None):
         """Processa uma amostra e devolve o CursorState.
 
         t: timestamp da amostra em segundos (relógio de captura).
@@ -279,10 +277,8 @@ class PenTipFusion:
             )
             if anchor is not None:
                 anchor = (
-                    anchor[0]
-                    + self.delta_blend * (delta[0] - anchor[0]),
-                    anchor[1]
-                    + self.delta_blend * (delta[1] - anchor[1]),
+                    anchor[0] + self.delta_blend * (delta[0] - anchor[0]),
+                    anchor[1] + self.delta_blend * (delta[1] - anchor[1]),
                 )
             elif self._position is not None:
                 # Sem landmark válido, o delta corrige a posição

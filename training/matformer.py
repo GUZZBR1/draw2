@@ -46,13 +46,10 @@ def granularity_widths(base_hidden, ratios=GRANULARITY_RATIOS):
     for ratio in ratios:
         width = int(round(base_hidden * ratio))
         if width < 1:
-            raise ValueError(
-                f"largura {width} invalida para base {base_hidden}"
-            )
+            raise ValueError(f"largura {width} invalida para base {base_hidden}")
         if widths and width <= widths[-1]:
             raise ValueError(
-                "larguras das granularidades devem ser crescentes: "
-                f"{widths + [width]}"
+                f"larguras das granularidades devem ser crescentes: {widths + [width]}"
             )
         widths.append(width)
     return tuple(widths)
@@ -86,13 +83,10 @@ class NestedFFN(nn.Module):
 class MatBlock(nn.Module):
     """Bloco pre-norma: atencao compartilhada + FFN aninhada."""
 
-    def __init__(self, d_model, num_heads, base_hidden,
-                 ratios=GRANULARITY_RATIOS):
+    def __init__(self, d_model, num_heads, base_hidden, ratios=GRANULARITY_RATIOS):
         super().__init__()
         self.norm1 = nn.LayerNorm(d_model)
-        self.attn = nn.MultiheadAttention(
-            d_model, num_heads, batch_first=True
-        )
+        self.attn = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
         self.norm2 = nn.LayerNorm(d_model)
         self.ffn = NestedFFN(d_model, base_hidden, ratios)
 
@@ -120,9 +114,7 @@ class _PlainBlock(nn.Module):
     def __init__(self, d_model, num_heads, hidden):
         super().__init__()
         self.norm1 = nn.LayerNorm(d_model)
-        self.attn = nn.MultiheadAttention(
-            d_model, num_heads, batch_first=True
-        )
+        self.attn = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
         self.norm2 = nn.LayerNorm(d_model)
         self.ffn = _PlainFFN(d_model, hidden)
 
@@ -154,13 +146,13 @@ class PlainEncoder(nn.Module):
 class MatEncoder(nn.Module):
     """Pilha de blocos MatFormer com extracao de submodelos."""
 
-    def __init__(self, d_model, num_heads, base_hidden, depth,
-                 ratios=GRANULARITY_RATIOS):
+    def __init__(
+        self, d_model, num_heads, base_hidden, depth, ratios=GRANULARITY_RATIOS
+    ):
         super().__init__()
         self.widths = granularity_widths(base_hidden, ratios)
         self.blocks = nn.ModuleList(
-            MatBlock(d_model, num_heads, base_hidden, ratios)
-            for _ in range(depth)
+            MatBlock(d_model, num_heads, base_hidden, ratios) for _ in range(depth)
         )
 
     def forward(self, x, granularity):
@@ -182,19 +174,13 @@ class MatEncoder(nn.Module):
 
     def sample_granularity(self, generator=None):
         """Sorteio uniforme da receita v2: um indice por passo."""
-        return int(
-            torch.randint(
-                len(self.widths), (1,), generator=generator
-            ).item()
-        )
+        return int(torch.randint(len(self.widths), (1,), generator=generator).item())
 
     def parameter_count(self, granularity=None):
         """Parametros do modelo cheio (None) ou do extraido."""
         if granularity is None:
             return sum(p.numel() for p in self.parameters())
-        return sum(
-            p.numel() for p in self.extract(granularity).parameters()
-        )
+        return sum(p.numel() for p in self.extract(granularity).parameters())
 
     @torch.no_grad()
     def extract(self, granularity):

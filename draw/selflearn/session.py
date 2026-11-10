@@ -74,14 +74,15 @@ class SessionRecorder:
     troca de geracao aparece sozinha no note_warp.
     """
 
-    def __init__(self, root_dir, session_id=None, model_paths=None,
-                 clock=None, wall_clock=None):
+    def __init__(
+        self, root_dir, session_id=None, model_paths=None, clock=None, wall_clock=None
+    ):
         self._clock = clock or time.monotonic
         self._wall_clock = wall_clock or time.time
         self.session_id = session_id or (
-            f"{int(self._wall_clock())}-{uuid.uuid4().hex[:8]}")
-        self.session_dir = (
-            Path(root_dir) / "sessions" / self.session_id)
+            f"{int(self._wall_clock())}-{uuid.uuid4().hex[:8]}"
+        )
+        self.session_dir = Path(root_dir) / "sessions" / self.session_id
         self._model_paths = dict(model_paths or {})
         self._started_wall = self._wall_clock()
         self._started_mono = self._clock()
@@ -92,8 +93,8 @@ class SessionRecorder:
         self._errors = []
         self._queue = queue.SimpleQueue()
         self._thread = threading.Thread(
-            target=self._work, name="draw-session-recorder",
-            daemon=True)
+            target=self._work, name="draw-session-recorder", daemon=True
+        )
         self._thread.start()
 
     # -- entradas do laco (baratas: copia + troca de referencia) --
@@ -105,10 +106,12 @@ class SessionRecorder:
         else:
             name = str(key)
         with self._lock:
-            self._keys.append({
-                "t_s": round(self._clock() - self._started_mono, 3),
-                "key": name,
-            })
+            self._keys.append(
+                {
+                    "t_s": round(self._clock() - self._started_mono, 3),
+                    "key": name,
+                }
+            )
 
     def start_generation(self, generation):
         """Marca a geracao corrente (a referencia recomeca nela)."""
@@ -148,27 +151,24 @@ class SessionRecorder:
                 return self.session_dir / "manifest.json"
             self._finished = True
             generations = {
-                gen: dict(images)
-                for gen, images in self._generations.items()
+                gen: dict(images) for gen, images in self._generations.items()
             }
             keys = list(self._keys)
         for generation, images in generations.items():
             if "final_warp" in images:
-                self._enqueue_image(
-                    generation, "final_warp", images["final_warp"])
+                self._enqueue_image(generation, "final_warp", images["final_warp"])
             if "final_canvas" in images:
-                self._enqueue_image(
-                    generation, "final_canvas", images["final_canvas"])
+                self._enqueue_image(generation, "final_canvas", images["final_canvas"])
         manifest = {
             "schema": _SCHEMA,
             "session_id": self.session_id,
             "started_at": self._started_wall,
             "ended_at": self._wall_clock(),
-            "duration_s": round(
-                self._clock() - self._started_mono, 3),
+            "duration_s": round(self._clock() - self._started_mono, 3),
             "privacy": (
                 "gravacao local; a mesa de outra pessoa exige o "
-                "consentimento dela antes de coletar"),
+                "consentimento dela antes de coletar"
+            ),
             "models": {
                 name: {"path": str(path), "sha256": sha256_file(path)}
                 for name, path in sorted(self._model_paths.items())
@@ -205,10 +205,8 @@ class SessionRecorder:
                     _tag, generation, kind, image = item
                     folder = self._generation_dir(generation)
                     folder.mkdir(parents=True, exist_ok=True)
-                    if not cv2.imwrite(
-                            str(folder / f"{kind}.png"), image):
-                        raise RuntimeError(
-                            f"imwrite devolveu False para {kind}")
+                    if not cv2.imwrite(str(folder / f"{kind}.png"), image):
+                        raise RuntimeError(f"imwrite devolveu False para {kind}")
                 elif item[0] == "manifest":
                     self._write_manifest(item[1])
             except Exception as error:  # noqa: BLE001 - vai ao manifesto
@@ -221,12 +219,10 @@ class SessionRecorder:
         for folder in sorted(self.session_dir.glob("gen_*")):
             entry = {"generation": int(folder.name.split("_")[1])}
             files = {}
-            for name in ("reference_warp", "final_warp",
-                         "final_canvas"):
+            for name in ("reference_warp", "final_warp", "final_canvas"):
                 path = folder / f"{name}.png"
                 if path.exists():
-                    entry[f"{name}_sha256"] = _sha256_bytes(
-                        path.read_bytes())
+                    entry[f"{name}_sha256"] = _sha256_bytes(path.read_bytes())
                     files[name] = f"{folder.name}/{name}.png"
             entry["files"] = files
             generations.append(entry)
@@ -234,5 +230,5 @@ class SessionRecorder:
         with self._lock:
             manifest["write_errors"] = list(self._errors)
         (self.session_dir / "manifest.json").write_text(
-            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8")
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )

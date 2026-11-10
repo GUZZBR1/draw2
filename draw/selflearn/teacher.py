@@ -57,6 +57,7 @@ def pseudo_label(median_prob, warped_bgr, ink_thr=0.9, bg_thr=0.1):
 
     mask = np.where(ink, 255, 0).astype(np.uint8)
     ignore_u8 = np.where(ignore, 255, 0).astype(np.uint8)
-    confidence = np.where(
-        ink, prob, np.where(background, 1.0 - prob, 0.0)).astype(np.float32)
+    confidence = np.where(ink, prob, np.where(background, 1.0 - prob, 0.0)).astype(
+        np.float32
+    )
     return mask, ignore_u8, confidence

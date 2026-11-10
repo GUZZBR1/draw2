@@ -19,12 +19,8 @@ def _build(nodes, inputs, outputs, initializers, path):
     import onnx
     from onnx import helper
 
-    graph = helper.make_graph(
-        nodes, "draw-test-model", inputs, outputs, initializers
-    )
-    model = helper.make_model(
-        graph, opset_imports=[helper.make_opsetid("", 17)]
-    )
+    graph = helper.make_graph(nodes, "draw-test-model", inputs, outputs, initializers)
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
     model.ir_version = 8
     onnx.checker.check_model(model)
     onnx.save(model, str(path))
@@ -55,15 +51,19 @@ def sheet_model(path, input_name="image", size=64, channels=2):
 
     nodes = [
         helper.make_node(
-            "Conv", [input_name, "w_mask", "b_mask"], ["mask_logits"],
+            "Conv",
+            [input_name, "w_mask", "b_mask"],
+            ["mask_logits"],
             kernel_shape=[1, 1],
         ),
         helper.make_node("GlobalAveragePool", [input_name], ["pooled"]),
-        helper.make_node("ReduceMean", ["pooled"], ["mean_rgb"], axes=[1, 2, 3],
-                         keepdims=1),
+        helper.make_node(
+            "ReduceMean", ["pooled"], ["mean_rgb"], axes=[1, 2, 3], keepdims=1
+        ),
         helper.make_node("Mul", ["mean_rgb", "gain"], ["presence_raw"]),
-        helper.make_node("Reshape", ["presence_raw", "presence_shape"],
-                         ["presence_logit"]),
+        helper.make_node(
+            "Reshape", ["presence_raw", "presence_shape"], ["presence_logit"]
+        ),
     ]
     initializers = [
         _initializer("w_mask", (channels, 3, 1, 1), seed=1),
@@ -73,13 +73,16 @@ def sheet_model(path, input_name="image", size=64, channels=2):
     ]
     return _build(
         nodes,
-        [helper.make_tensor_value_info(input_name, TensorProto.FLOAT,
-                                       [1, 3, size, size])],
         [
             helper.make_tensor_value_info(
-                "mask_logits", TensorProto.FLOAT, [1, channels, size, size]),
+                input_name, TensorProto.FLOAT, [1, 3, size, size]
+            )
+        ],
+        [
             helper.make_tensor_value_info(
-                "presence_logit", TensorProto.FLOAT, [1]),
+                "mask_logits", TensorProto.FLOAT, [1, channels, size, size]
+            ),
+            helper.make_tensor_value_info("presence_logit", TensorProto.FLOAT, [1]),
         ],
         initializers,
         path,
@@ -91,26 +94,31 @@ def four_class_model(path, input_name="image", size=64, extra_output=False):
     from onnx import TensorProto, helper
 
     nodes = [
-        helper.make_node("Conv", [input_name, "w", "b"], ["raw"],
-                         kernel_shape=[1, 1]),
-        helper.make_node("Resize", ["raw", "", "scales", ""], ["logits"],
-                         mode="nearest"),
+        helper.make_node("Conv", [input_name, "w", "b"], ["raw"], kernel_shape=[1, 1]),
+        helper.make_node(
+            "Resize", ["raw", "", "scales", ""], ["logits"], mode="nearest"
+        ),
     ]
     initializers = [
         _initializer("w", (4, 3, 1, 1), seed=3),
         _initializer("b", (4,), seed=4),
         helper.make_tensor("scales", TensorProto.FLOAT, [4], [1.0, 1.0, 1.0, 1.0]),
     ]
-    outputs = [helper.make_tensor_value_info(
-        "logits", TensorProto.FLOAT, [1, 4, size, size])]
+    outputs = [
+        helper.make_tensor_value_info("logits", TensorProto.FLOAT, [1, 4, size, size])
+    ]
     if extra_output:
         nodes.append(helper.make_node("Identity", ["logits"], ["aux"]))
-        outputs.append(helper.make_tensor_value_info(
-            "aux", TensorProto.FLOAT, [1, 4, size, size]))
+        outputs.append(
+            helper.make_tensor_value_info("aux", TensorProto.FLOAT, [1, 4, size, size])
+        )
     return _build(
         nodes,
-        [helper.make_tensor_value_info(input_name, TensorProto.FLOAT,
-                                       [1, 3, size, size])],
+        [
+            helper.make_tensor_value_info(
+                input_name, TensorProto.FLOAT, [1, 3, size, size]
+            )
+        ],
         outputs,
         initializers,
         path,
@@ -136,18 +144,32 @@ def page_clean_model(path, patch=64, dynamic_batch=True, output_scale=1):
         nodes.append(helper.make_node("Identity", ["mean"], ["logits"]))
         initializers = []
     else:
-        nodes.append(helper.make_node("Resize", ["mean", "", "scales", ""],
-                                      ["logits"], mode="nearest"))
-        initializers = [helper.make_tensor(
-            "scales", TensorProto.FLOAT, [4],
-            [1.0, 1.0, 1.0 / output_scale, 1.0 / output_scale])]
+        nodes.append(
+            helper.make_node(
+                "Resize", ["mean", "", "scales", ""], ["logits"], mode="nearest"
+            )
+        )
+        initializers = [
+            helper.make_tensor(
+                "scales",
+                TensorProto.FLOAT,
+                [4],
+                [1.0, 1.0, 1.0 / output_scale, 1.0 / output_scale],
+            )
+        ]
     batch = "N" if dynamic_batch else 1
     return _build(
         nodes,
-        [helper.make_tensor_value_info("image", TensorProto.FLOAT,
-                                       [batch, 3, patch, patch])],
-        [helper.make_tensor_value_info(
-            "logits", TensorProto.FLOAT, [batch, 1, out, out])],
+        [
+            helper.make_tensor_value_info(
+                "image", TensorProto.FLOAT, [batch, 3, patch, patch]
+            )
+        ],
+        [
+            helper.make_tensor_value_info(
+                "logits", TensorProto.FLOAT, [batch, 1, out, out]
+            )
+        ],
         initializers,
         path,
     )

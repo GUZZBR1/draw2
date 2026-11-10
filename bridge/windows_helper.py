@@ -141,9 +141,7 @@ def set_dpi_awareness():
     user32 = ctypes.WinDLL("user32", use_last_error=True)
     try:
         ok = user32.SetProcessDpiAwarenessContext(
-            ctypes.c_void_p(
-                DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
-            )
+            ctypes.c_void_p(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
         )
         if ok:
             return "SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)"
@@ -178,8 +176,7 @@ def _send_mouse(flags, nx=0, ny=0):
     sent = user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(INPUT))
     if sent != 1:
         raise OSError(
-            f"SendInput enviou {sent} de 1 evento "
-            f"(erro {ctypes.get_last_error()})"
+            f"SendInput enviou {sent} de 1 evento (erro {ctypes.get_last_error()})"
         )
 
 
@@ -240,8 +237,7 @@ def capture_frames():
     usar essa rota, a ressalva entra no relatorio da medida.
     """
     raise NotImplementedError(
-        "captura DirectShow/MSMF: implementar e testar numa sessao "
-        "real no Windows"
+        "captura DirectShow/MSMF: implementar e testar numa sessao real no Windows"
     )
 
 
@@ -265,9 +261,7 @@ def serve(port=DEFAULT_PORT):
         frame_id = 0
         for jpeg in capture_frames():
             capture_ts_us = time.perf_counter_ns() // 1000
-            header = HEADER.pack(
-                MAGIC, VERSION, 0, frame_id, capture_ts_us, len(jpeg)
-            )
+            header = HEADER.pack(MAGIC, VERSION, 0, frame_id, capture_ts_us, len(jpeg))
             conn.sendall(header + jpeg)
             frame_id += 1
 

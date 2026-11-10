@@ -43,14 +43,12 @@ def download_resume(url, target, attempts=5):
     os.makedirs(os.path.dirname(os.path.abspath(target)), exist_ok=True)
     last_error = None
     for _ in range(attempts):
-        result = subprocess.run(
-            ["curl", "-fsL", "-C", "-", "-o", target, url])
+        result = subprocess.run(["curl", "-fsL", "-C", "-", "-o", target, url])
         size = os.path.getsize(target) if os.path.exists(target) else 0
         if result.returncode == 0 and size > 0:
             return size, sha256_of(target)
         last_error = f"curl rc={result.returncode}, {size} B em disco"
-    raise IOError(f"download nao completou apos {attempts} "
-                  f"tentativas: {last_error}")
+    raise IOError(f"download nao completou apos {attempts} tentativas: {last_error}")
 
 
 def collect(files, dest):

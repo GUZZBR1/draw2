@@ -44,6 +44,7 @@ import numpy as np
 from . import hand as hand_module
 from . import config
 from . import ink as ink_module
+
 try:
     from . import ink_model as ink_model_module
 except ImportError:
@@ -428,9 +429,7 @@ def run(
         # a variavel de ambiente ou o modelo v3 no lugar de sempre.
         # main() resolve o mesmo padrao para a linha de comando.
         default_sheet = (
-            Path(__file__).resolve().parent.parent
-            / "models"
-            / "draw_seg_v3_dyn.onnx"
+            Path(__file__).resolve().parent.parent / "models" / "draw_seg_v3_dyn.onnx"
         )
         if default_sheet.exists():
             neural_model = str(default_sheet)
@@ -541,9 +540,7 @@ def run(
                 "geometria da tinta congela."
             )
             # Amostragem fora do laco (T4): o laco submete e colhe.
-            hand_presence_worker = _HandPresenceWorker(
-                clean_hand_presence
-            ).start()
+            hand_presence_worker = _HandPresenceWorker(clean_hand_presence).start()
 
     def detect_sheet(frame):
         return _detect_sheet_combined(frame, neural_detector)
@@ -555,9 +552,7 @@ def run(
         detection_worker = _SheetDetectionWorker(detect_sheet).start()
     png_writer = _PngWriter()
     save_path = Path(save_dir)
-    telemetry = telemetry_module.SessionTelemetry(
-        save_path / "telemetry.jsonl"
-    ).start()
+    telemetry = telemetry_module.SessionTelemetry(save_path / "telemetry.jsonl").start()
     format_metadata = {
         "paper_format": config.PAPER_FORMAT,
         "page_grid": [config.PAPER_W, config.PAPER_H],
@@ -574,6 +569,7 @@ def run(
         "Telemetria de sessao ligada: 1 registro/s em "
         f"{save_path / 'telemetry.jsonl'} (arquivo local e rotativo)."
     )
+
     # Relatorio de sessao: um JSON por corrida com cabecalho
     # (modelos com sha, abertura da camera, porta da mao) e os
     # agregados da sessao, para uma corrida que falha deixar dito
@@ -597,11 +593,12 @@ def run(
             "fonte": str(source),
             "modo_marcadores": bool(markers_mode),
             "modelo_folha": _model_header(
-                neural_model if neural_detector is not None else None),
+                neural_model if neural_detector is not None else None
+            ),
             "modelo_tinta": _model_header(
-                page_clean.model_path if page_clean is not None else None),
-            "tinta_modo": (
-                "page-clean" if page_clean is not None else "heuristica"),
+                page_clean.model_path if page_clean is not None else None
+            ),
+            "tinta_modo": ("page-clean" if page_clean is not None else "heuristica"),
             "mao_disponivel": clean_hand_presence is not None,
             "camera_abertura": capture_module._LAST_OPEN_PROBE,
         },
@@ -625,7 +622,8 @@ def run(
             model_paths["sheet"] = neural_model
         try:
             session_recorder = session_module.SessionRecorder(
-                save_path, model_paths=model_paths)
+                save_path, model_paths=model_paths
+            )
         except Exception as error:  # noqa: BLE001 - coleta nao derruba o app
             print(
                 "Aviso: a coleta de sessao nao iniciou "
@@ -787,7 +785,8 @@ def run(
                 tel_sheet_present = sheet_present
                 if sheet_present:
                     suggestion = format_suggester.observe(
-                        [markers[i] for i in config.MARKER_IDS], frame.shape,
+                        [markers[i] for i in config.MARKER_IDS],
+                        frame.shape,
                         sheet_boundary=False,
                     )
                     if suggestion is not None:
@@ -809,18 +808,14 @@ def run(
                     det_captured_at = None
                     ran_detection = False
                 if tracker.should_detect(frame_number):
-                    detection_worker.submit(
-                        frame, frame_capture_ms / 1000.0
-                    )
+                    detection_worker.submit(frame, frame_capture_ms / 1000.0)
                 if detection_worker.error is not None:
                     raise detection_worker.error
                 tracker_event = tracker.update(
                     detected_corners,
                     detected_verdict,
                     ran_detection,
-                    det_captured_at
-                    if ran_detection
-                    else time.monotonic(),
+                    det_captured_at if ran_detection else time.monotonic(),
                 )
                 if tracker_event == "drop":
                     ink_session_open = False
@@ -845,9 +840,7 @@ def run(
                 tel_sheet_present = sheet_present
                 warped = None
                 if ran_detection and sheet_present and detected_corners is not None:
-                    suggestion = format_suggester.observe(
-                        detected_corners, frame.shape
-                    )
+                    suggestion = format_suggester.observe(detected_corners, frame.shape)
                     if suggestion is not None:
                         _report_format_suggestion(telemetry, suggestion)
 
@@ -899,14 +892,8 @@ def run(
                     display_corners = None
                     display_gray = None
                 else:
-                    gray_now = cv2.cvtColor(
-                        frame, cv2.COLOR_BGR2GRAY
-                    )
-                    if (
-                        ran_detection
-                        or display_corners is None
-                        or display_gray is None
-                    ):
+                    gray_now = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    if ran_detection or display_corners is None or display_gray is None:
                         display_corners = tracker.corners.copy()
                     else:
                         tracked_display = _lk_track_corners(
@@ -922,9 +909,7 @@ def run(
                     if hand_presence_worker is not None:
                         # Submete com o carimbo de captura: e ele
                         # que alimenta o modo VIDEO do landmarker.
-                        hand_presence_worker.submit(
-                            frame, frame_capture_ms
-                        )
+                        hand_presence_worker.submit(frame, frame_capture_ms)
                     if not ink_session_open:
                         # Folha nova na cena: canvas e geometria recomecam.
                         ink_accumulator.reset()
@@ -952,13 +937,9 @@ def run(
                             freeze_pending = False
                         corner_history.clear()
                         ink_session_open = True
-                        if (
-                            session_recorder is not None
-                            and page_clean is None
-                        ):
+                        if session_recorder is not None and page_clean is None:
                             legacy_generation += 1
-                            session_recorder.start_generation(
-                                legacy_generation)
+                            session_recorder.start_generation(legacy_generation)
                     if restart_reference:
                         # Tecla C: novo ponto zero da sessao. O canvas
                         # acumulado zera junto, porque a pagina base nova
@@ -974,26 +955,22 @@ def run(
                             # aqui; a referencia dela e o warp deste
                             # momento (a pagina base do legado).
                             legacy_generation += 1
-                            session_recorder.start_generation(
-                                legacy_generation)
+                            session_recorder.start_generation(legacy_generation)
                     # Sem mao, a geometria da tinta congela na
                     # ultima mediana: a pagina esta assentada e a
                     # mediana viva seguiria andando com o balanco
                     # do detector, deslocando a tinta ja publicada.
-                    if clean_hand_present is not False or (
-                        not corner_history
-                    ):
+                    if clean_hand_present is not False or (not corner_history):
                         corner_history.append(tracker.corners.copy())
-                    ink_corners = np.median(
-                        np.stack(corner_history), axis=0
-                    ).astype(np.float32)
+                    ink_corners = np.median(np.stack(corner_history), axis=0).astype(
+                        np.float32
+                    )
                     if freeze_pending:
                         session_corners = ink_corners.copy()
                         freeze_pending = False
                     warp_corners = (
                         session_corners
-                        if session_ink is not None
-                        and session_corners is not None
+                        if session_ink is not None and session_corners is not None
                         else ink_corners
                     )
                     ink_warped = paper_module.warp_sheet(frame, warp_corners)
@@ -1026,36 +1003,36 @@ def run(
                         # a sua copia (a reimpressao da regua de
                         # 2026-11-05 em draw/ink_layers.py).
                         ink_worker.submit(
-                            ink_warped, clean_generation, warp_corners,
+                            ink_warped,
+                            clean_generation,
+                            warp_corners,
                             visible,
                         )
                         if session_recorder is not None:
-                            session_recorder.note_warp(
-                                clean_generation, ink_warped)
+                            session_recorder.note_warp(clean_generation, ink_warped)
                     else:
                         if session_ink is not None:
                             if not session_ink.ready:
                                 if baseline_armed:
                                     session_ink.add_sample(ink_warped, visible)
                                 observed = np.zeros(
-                                    ink_warped.shape[:2], dtype=np.uint8)
+                                    ink_warped.shape[:2], dtype=np.uint8
+                                )
                             else:
-                                observed = session_ink.observe(
-                                    ink_warped, visible)
+                                observed = session_ink.observe(ink_warped, visible)
                         else:
                             observed = ink_source(ink_warped)
                         accumulated_canvas = ink_module.render_canvas(
                             ink_accumulator.update(
-                                observed, visible,
-                                t_capture_ms=frame_capture_ms
+                                observed, visible, t_capture_ms=frame_capture_ms
                             ),
                             out=canvas_buffer,
                         )
                         if session_recorder is not None:
-                            session_recorder.note_warp(
-                                legacy_generation, ink_warped)
+                            session_recorder.note_warp(legacy_generation, ink_warped)
                             session_recorder.note_canvas(
-                                legacy_generation, accumulated_canvas)
+                                legacy_generation, accumulated_canvas
+                            )
 
                 if ink_worker is not None:
                     # Colhe a tinta assincrona pelo canal de
@@ -1080,16 +1057,15 @@ def run(
                         )
                         if session_recorder is not None:
                             session_recorder.note_canvas(
-                                clean_generation, accumulated_canvas)
+                                clean_generation, accumulated_canvas
+                            )
                     # Virada de pagina (U3): a trabalhadora detectou
                     # conteudo descorrelacionado do canvas por 2
                     # passadas. A pagina anterior vira snapshot em
                     # disco (nao se perde) e a geracao nova comeca em
                     # branco, com passada imediata (U4 via
                     # new_generation).
-                    turn_canvas = ink_worker.take_turn_event(
-                        clean_generation
-                    )
+                    turn_canvas = ink_worker.take_turn_event(clean_generation)
                     if turn_canvas is not None:
                         if clean_mask is not None:
                             save_path.mkdir(parents=True, exist_ok=True)
@@ -1099,9 +1075,7 @@ def run(
                             png_writer.save(
                                 turn_path,
                                 ink_module.render_canvas(turn_canvas),
-                                lambda path: print(
-                                    f"Pagina anterior salva em {path}"
-                                ),
+                                lambda path: print(f"Pagina anterior salva em {path}"),
                             )
                         clean_generation = ink_worker.new_generation()
                         clean_display_version = 0
@@ -1117,27 +1091,27 @@ def run(
                             "A tinta pagina->limpa falhou e a thread "
                             f"parou: {worker_error}. O canvas nao avanca."
                         )
-                        cv2.imshow("Draw", _error_view(
-                            last_view,
-                            "A tinta pagina->limpa falhou",
-                            [
-                                "O canvas parou de atualizar.",
-                                "Veja a mensagem no terminal e reinicie "
-                                "o app.",
-                            ],
-                        ))
+                        cv2.imshow(
+                            "Draw",
+                            _error_view(
+                                last_view,
+                                "A tinta pagina->limpa falhou",
+                                [
+                                    "O canvas parou de atualizar.",
+                                    "Veja a mensagem no terminal e reinicie o app.",
+                                ],
+                            ),
+                        )
                         cv2.waitKey(_DEAD_NOTICE_MS)
                         break
 
             status = frame.copy()
             if markers_mode:
-                for (x, y) in markers.values():
+                for x, y in markers.values():
                     cv2.circle(status, (int(x), int(y)), 8, (0, 255, 0), -1)
             elif tracker.corners is not None:
                 view_corners = (
-                    display_corners
-                    if display_corners is not None
-                    else tracker.corners
+                    display_corners if display_corners is not None else tracker.corners
                 )
                 outline = view_corners.astype(np.int32).reshape((-1, 1, 2))
                 cv2.polylines(status, [outline], True, (0, 255, 0), 2)
@@ -1145,9 +1119,7 @@ def run(
                     cv2.circle(status, (int(x), int(y)), 8, (0, 255, 0), -1)
             if not sheet_present:
                 if markers_mode:
-                    status_text = (
-                        f"Mostre a folha-modelo ({len(markers)}/4 marcadores)"
-                    )
+                    status_text = f"Mostre a folha-modelo ({len(markers)}/4 marcadores)"
                 else:
                     status_text = "Mostre uma folha para a camera"
                 cv2.putText(
@@ -1182,8 +1154,7 @@ def run(
                             )
                         else:
                             status_text = (
-                                "Folha detectada: aperte C para comecar "
-                                "(pagina base)"
+                                "Folha detectada: aperte C para comecar (pagina base)"
                             )
                         status_color = (0, 255, 255)
                     cv2.putText(
@@ -1196,12 +1167,8 @@ def run(
                         2,
                     )
                 if markers_mode:
-                    ink_mask = ink_module.extract_ink(
-                        warped, clear_markers=True
-                    )
-                    canvas = ink_module.render_canvas(
-                        ink_mask, out=view_canvas_buffer
-                    )
+                    ink_mask = ink_module.extract_ink(warped, clear_markers=True)
+                    canvas = ink_module.render_canvas(ink_mask, out=view_canvas_buffer)
                 elif accumulated_canvas is not None:
                     canvas = accumulated_canvas
                 elif page_clean is not None:
@@ -1219,9 +1186,7 @@ def run(
                             else tracker.corners,
                         )
                     )
-                    canvas = ink_module.render_canvas(
-                        ink_mask, out=view_canvas_buffer
-                    )
+                    canvas = ink_module.render_canvas(ink_mask, out=view_canvas_buffer)
                 last_view = _compose_view(status, canvas)
                 cv2.imshow("Draw", last_view)
 
@@ -1270,18 +1235,12 @@ def run(
             # de telemetria da trabalhadora (U0).
             try:
                 worker_telemetry = (
-                    ink_worker.telemetry_snapshot()
-                    if ink_worker is not None else None
+                    ink_worker.telemetry_snapshot() if ink_worker is not None else None
                 )
-                manifest_path = session_recorder.finish(
-                    telemetry=worker_telemetry)
-                print(
-                    f"Sessao gravada para o loop em {manifest_path}")
+                manifest_path = session_recorder.finish(telemetry=worker_telemetry)
+                print(f"Sessao gravada para o loop em {manifest_path}")
             except Exception as error:  # noqa: BLE001 - aviso, nao queda
-                print(
-                    "Aviso: nao consegui fechar a gravacao da "
-                    f"sessao ({error})."
-                )
+                print(f"Aviso: nao consegui fechar a gravacao da sessao ({error}).")
         telemetry.close()
         session_report.close()
         png_writer.close()
@@ -1385,7 +1344,9 @@ def main():
     )
     parser.add_argument("--save-dir", default="captures")
     parser.add_argument(
-        "--format", choices=list(config.FORMATS), default=None,
+        "--format",
+        choices=list(config.FORMATS),
+        default=None,
         help="formato da sessao em retrato (flag > DRAW_FORMAT > a4)",
     )
     args = parser.parse_args()
@@ -1411,9 +1372,7 @@ def main():
         # v3 estiver no lugar de sempre. Sem o arquivo, neural_model
         # fica None e run() avisa que caiu no classico puro.
         default_sheet = (
-            Path(__file__).resolve().parent.parent
-            / "models"
-            / "draw_seg_v3_dyn.onnx"
+            Path(__file__).resolve().parent.parent / "models" / "draw_seg_v3_dyn.onnx"
         )
         if default_sheet.exists():
             neural_model = str(default_sheet)
@@ -1444,9 +1403,7 @@ def main():
     if args.hand_model is not None:
         if args.markers:
             parser.error("--hand-model nao combina com --markers")
-        hand_model = (
-            args.hand_model or os.environ.get("DRAW_HAND_MODEL") or ""
-        )
+        hand_model = args.hand_model or os.environ.get("DRAW_HAND_MODEL") or ""
     try:
         run(
             source=args.source,

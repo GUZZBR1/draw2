@@ -66,10 +66,7 @@ class InkAccumulator:
             visible = visible_mask
         else:
             visible = visible_mask > 0
-        evidence = (
-            cv2.dilate(ink.astype(np.uint8), self._kernel).astype(bool)
-            & visible
-        )
+        evidence = cv2.dilate(ink.astype(np.uint8), self._kernel).astype(bool) & visible
         if len(self._ink_votes) == self._window:
             self._ink_counts -= self._ink_votes.popleft()
             self._vis_counts -= self._vis_votes.popleft()

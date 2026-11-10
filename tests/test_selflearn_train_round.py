@@ -23,8 +23,9 @@ try:
 except ImportError:  # ambiente sem torch (CI): os testes pulam
     _REAL_TORCH = None
 
-_PATH = (Path(__file__).resolve().parent.parent
-         / "tools" / "selflearn" / "train_round.py")
+_PATH = (
+    Path(__file__).resolve().parent.parent / "tools" / "selflearn" / "train_round.py"
+)
 _tr = None
 
 
@@ -36,8 +37,7 @@ def _train_round():
         # test_seg_metrics deixa um torch falso em sys.modules e nao o
         # restaura; o torch real capturado na coleta e o que vale aqui.
         sys.modules["torch"] = _REAL_TORCH
-        spec = importlib.util.spec_from_file_location("train_round",
-                                                      _PATH)
+        spec = importlib.util.spec_from_file_location("train_round", _PATH)
         _tr = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(_tr)
     return _tr
@@ -63,8 +63,7 @@ def test_geo_view_mask_fill_is_zero_not_wrapped_ink():
     tr = _train_round()
     mask = np.zeros((8, 8), dtype=np.float32)
     mask[3, 0] = 1.0  # tinta na borda esquerda
-    out, *_ = tr.geo_view(mask, _rng(), flip=False, dx=-2, dy=0,
-                          fill=0.0)
+    out, *_ = tr.geo_view(mask, _rng(), flip=False, dx=-2, dy=0, fill=0.0)
     # a tinta saiu pela esquerda e nao vira ground truth na direita
     assert out.sum() == 0.0
 
@@ -87,7 +86,7 @@ def test_consistency_targets_apply_classic_witness_veto():
     page = np.full((64, 64, 3), 0.94, dtype=np.float32)
     page[28:32, 10:50] = 0.12  # traco escuro de verdade
     prob = np.full((64, 64), 0.01, dtype=np.float32)
-    prob[5, 5] = 0.99    # rede ve tinta onde NAO ha escurecimento
+    prob[5, 5] = 0.99  # rede ve tinta onde NAO ha escurecimento
     prob[30, 30] = 0.99  # rede ve tinta sobre o traco
     target, weight = tr.consistency_targets(prob, page)
     # tinta confirmada pela testemunha: alvo 1, peso 1
@@ -115,8 +114,7 @@ def test_supervised_loss_ignores_invalid_pixels():
     assert torch.allclose(base, after, atol=1e-6)
     # sem a mascara, o mesmo erro muda a perda (a mascara e o que protege)
     unmasked = tr.supervised_loss(changed, target)
-    assert not torch.allclose(tr.supervised_loss(logits, target),
-                              unmasked, atol=1e-6)
+    assert not torch.allclose(tr.supervised_loss(logits, target), unmasked, atol=1e-6)
 
 
 def test_load_pages_preserves_bgr_and_manifest_lineage(tmp_path):
@@ -126,11 +124,12 @@ def test_load_pages_preserves_bgr_and_manifest_lineage(tmp_path):
     red_bgr = np.zeros((8, 8, 3), dtype=np.uint8)
     red_bgr[:] = (0, 0, 255)
     cv2.imwrite(str(tmp_path / "input" / "page0.png"), red_bgr)
-    cv2.imwrite(str(tmp_path / "mask" / "page0.png"),
-                np.zeros((8, 8), dtype=np.uint8))
+    cv2.imwrite(str(tmp_path / "mask" / "page0.png"), np.zeros((8, 8), dtype=np.uint8))
     row = {
-        "file": "page0", "session_id": "train-session",
-        "origin": "human_correction", "split": "train",
+        "file": "page0",
+        "session_id": "train-session",
+        "origin": "human_correction",
+        "split": "train",
     }
     (tmp_path / "manifest.jsonl").write_text(json.dumps(row) + "\n")
 
@@ -171,8 +170,14 @@ def _lineage_page(tr, session, holdout=False):
     mask = np.zeros((8, 8), dtype=np.float32)
     if holdout:
         return tr.PageExample(
-            image, mask, session, "independent_label", "h", split="holdout",
-            label_source="final_minus_reference", label_reviewed=True,
+            image,
+            mask,
+            session,
+            "independent_label",
+            "h",
+            split="holdout",
+            label_source="final_minus_reference",
+            label_reviewed=True,
         )
     return tr.PageExample(image, mask, session, "human_correction", "t")
 
@@ -199,7 +204,10 @@ def test_lineage_guard_keeps_previous_rounds_sealed():
     current_holdout = [_lineage_page(tr, "new-holdout", holdout=True)]
     with pytest.raises(ValueError, match="dois lados"):
         tr._guard_lineage(
-            labeled, [], current_holdout, previous_holdout_ids=["old-holdout-now-in-train"]
+            labeled,
+            [],
+            current_holdout,
+            previous_holdout_ids=["old-holdout-now-in-train"],
         )
 
 
@@ -209,7 +217,10 @@ def test_checkpoint_returns_sealed_sessions_for_next_round(tmp_path):
     model = torch.nn.Linear(2, 2)
     checkpoint = tmp_path / "round.pt"
     torch.save(
-        {"student": model.state_dict(), "holdout_sessions_not_for_training": ["sealed"]},
+        {
+            "student": model.state_dict(),
+            "holdout_sessions_not_for_training": ["sealed"],
+        },
         checkpoint,
     )
     loaded = tr._load_student_checkpoint(model, checkpoint, "cpu")

@@ -117,12 +117,11 @@ def _arm_compile_cache(out_dir):
     """
     cache = Path(out_dir) / "tpu_compile_cache"
     cache.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT",
-                          str(cache))
-    os.environ.setdefault("TORCH_TPU_TIER2_COMPILATION_CACHE",
-                          "draw_t7_tier2")
-    _log("CACHE_COMPILACAO tier3:", os.environ[
-        "TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT"])
+    os.environ.setdefault("TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT", str(cache))
+    os.environ.setdefault("TORCH_TPU_TIER2_COMPILATION_CACHE", "draw_t7_tier2")
+    _log(
+        "CACHE_COMPILACAO tier3:", os.environ["TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT"]
+    )
 
 
 SCOPED_VMEM_FLAG = "--xla_tpu_scoped_vmem_limit_kib"
@@ -145,8 +144,9 @@ def _scoped_vmem_in(args_str):
 
 def _with_scoped_vmem(args_str, kib):
     """String de flags com a flag scoped definida (troca ou anexa)."""
-    toks = [t for t in (args_str or "").split()
-            if not t.startswith(SCOPED_VMEM_FLAG + "=")]
+    toks = [
+        t for t in (args_str or "").split() if not t.startswith(SCOPED_VMEM_FLAG + "=")
+    ]
     if kib:
         toks.append(f"{SCOPED_VMEM_FLAG}={kib}")
     return " ".join(toks)
@@ -159,7 +159,7 @@ def _arm_scoped_vmem(kib):
     inicialização do backend e ignora mudança posterior no mesmo
     processo. Sem isto, o --compile da corrida T7 morre no 1º passo
     com o E1001 (o copy [32,128,128,128] do decode head pede
-  24,01M contra o default de 16384 KiB). Flag já presente no
+    24,01M contra o default de 16384 KiB). Flag já presente no
     ambiente vence (é o canal do run_t7.py na escada de retry e de
     quem lança à mão); ``kib=0`` desliga a intervenção. Devolve o
     limite efetivo em KiB, ou None.
@@ -170,13 +170,20 @@ def _arm_scoped_vmem(kib):
         _log("VMEM_SCOPED_KIB", current, "fonte=ambiente")
         return current
     if not kib:
-        _log("VMEM_SCOPED_KIB desligado (--scoped-vmem-kib 0); "
-             "vale o default do XLA (16384)")
+        _log(
+            "VMEM_SCOPED_KIB desligado (--scoped-vmem-kib 0); "
+            "vale o default do XLA (16384)"
+        )
         return None
     kib = min(int(kib), SCOPED_VMEM_MAX_KIB)
     os.environ["LIBTPU_INIT_ARGS"] = _with_scoped_vmem(existing, kib)
-    _log("VMEM_SCOPED_KIB", kib, "fonte=corpo",
-         "| LIBTPU_INIT_ARGS:", os.environ["LIBTPU_INIT_ARGS"])
+    _log(
+        "VMEM_SCOPED_KIB",
+        kib,
+        "fonte=corpo",
+        "| LIBTPU_INIT_ARGS:",
+        os.environ["LIBTPU_INIT_ARGS"],
+    )
     return kib
 
 
@@ -192,28 +199,33 @@ def _preflight():
         try:
             m = importlib.import_module(mod)
         except ImportError:
-            _log(f"ERRO: modulo '{mod}' ausente neste runtime. "
-                 "Rode pelo training/run_t7.py (ele instala os "
-                 "extras puros sozinho) ou instale manualmente: "
-                 "pip install opencv-python-headless "
-                 "transformers onnx onnxruntime albumentations")
+            _log(
+                f"ERRO: modulo '{mod}' ausente neste runtime. "
+                "Rode pelo training/run_t7.py (ele instala os "
+                "extras puros sozinho) ou instale manualmente: "
+                "pip install opencv-python-headless "
+                "transformers onnx onnxruntime albumentations"
+            )
             raise SystemExit(2)
         _log("MOD", mod, getattr(m, "__version__", "?"))
     try:
         m = importlib.import_module("albumentations")
         _log("MOD albumentations", getattr(m, "__version__", "?"))
     except ImportError:
-        _log("MOD FALTA albumentations (o augment do treino exige; "
-             "sem ele so o selftest, que nao aumenta, roda)")
+        _log(
+            "MOD FALTA albumentations (o augment do treino exige; "
+            "sem ele so o selftest, que nao aumenta, roda)"
+        )
     try:
         import onnx
         import onnxruntime
     except ImportError:
-        _log("ERRO: onnx/onnxruntime ausentes neste runtime. "
-             "Preparo: pip install onnx onnxruntime")
+        _log(
+            "ERRO: onnx/onnxruntime ausentes neste runtime. "
+            "Preparo: pip install onnx onnxruntime"
+        )
         raise SystemExit(2)
-    _log("MOD onnx", onnx.__version__, "| onnxruntime",
-         onnxruntime.__version__)
+    _log("MOD onnx", onnx.__version__, "| onnxruntime", onnxruntime.__version__)
 
 
 def _ensure_data(data_dir, seed, n_train, n_val, n_test):
@@ -222,10 +234,20 @@ def _ensure_data(data_dir, seed, n_train, n_val, n_test):
         _log("dados ja presentes em", data_dir)
         return
     t0 = time.time()
-    cmd = [sys.executable, str(REPO_ROOT / "tools" / "gen_synthetic.py"),
-           "--out", str(data_dir), "--seed", str(seed),
-           "--train", str(n_train), "--val", str(n_val),
-           "--test", str(n_test)]
+    cmd = [
+        sys.executable,
+        str(REPO_ROOT / "tools" / "gen_synthetic.py"),
+        "--out",
+        str(data_dir),
+        "--seed",
+        str(seed),
+        "--train",
+        str(n_train),
+        "--val",
+        str(n_val),
+        "--test",
+        str(n_test),
+    ]
     _log("gerando dados:", " ".join(cmd))
     r = subprocess.run(cmd, capture_output=True, text=True)
     _log("gen rc", r.returncode, f"{time.time() - t0:.1f}s")
@@ -268,7 +290,8 @@ def _patch_tpu_bf16_layer_norms(model):
             output_dtype = input.dtype
             with torch.autocast(device_type="tpu", enabled=False):
                 output = F.layer_norm(
-                    input.float(), self.normalized_shape,
+                    input.float(),
+                    self.normalized_shape,
                     self.weight.float() if self.weight is not None else None,
                     self.bias.float() if self.bias is not None else None,
                     self.eps,
@@ -308,18 +331,23 @@ def _resolve_device(kind):
         return torch.device("cpu"), {"name": "cpu", "world": 1}
     try:
         import torch_tpu  # noqa: F401  (registro explicito do backend)
+
         # A 0.2.0 pode nao expor __version__ (medido no Colab em
         # 2026-11-05): a versao e recibo, nunca motivo de queda.
         tpu_ver = getattr(torch_tpu, "__version__", "?")
     except ImportError:
-        _log("ERRO: torch_tpu nao instalado neste runtime — este corpo "
-             "e TorchTPU. No Colab atual ele ja vem na imagem; fora "
-             "dela: pip install torch_tpu==0.2.0 "
-             "--extra-index-url https://download.pytorch.org/whl/cpu")
+        _log(
+            "ERRO: torch_tpu nao instalado neste runtime — este corpo "
+            "e TorchTPU. No Colab atual ele ja vem na imagem; fora "
+            "dela: pip install torch_tpu==0.2.0 "
+            "--extra-index-url https://download.pytorch.org/whl/cpu"
+        )
         raise SystemExit(2)
     if not torch.accelerator.is_available():
-        _log("ERRO: torch.accelerator sem device disponivel — a sessao "
-             "nao tem TPU. Escolha TPU no tipo de tempo de execucao.")
+        _log(
+            "ERRO: torch.accelerator sem device disponivel — a sessao "
+            "nao tem TPU. Escolha TPU no tipo de tempo de execucao."
+        )
         raise SystemExit(2)
     dev = torch.device("tpu")
     probe = (torch.ones(1, device=dev) + 1).cpu()
@@ -329,8 +357,9 @@ def _resolve_device(kind):
     # da 0.2.0 nao expoe esse atributo (medido no Colab em
     # 2026-11-05: AttributeError derrubava o probe). Leitura
     # defensiva: HBM e cosmetico do recibo, nunca motivo de queda.
-    hbm = getattr(props, "hbm_bytes_per_device", None) \
-        or getattr(props, "hbm_bytes_per_chip", None)
+    hbm = getattr(props, "hbm_bytes_per_device", None) or getattr(
+        props, "hbm_bytes_per_chip", None
+    )
     info = {
         "name": getattr(props, "name", str(dev)),
         "world": torch.accelerator.device_count(),
@@ -355,8 +384,7 @@ def _loader_kwargs(num_workers):
     return kwargs
 
 
-def _budget_decision(elapsed_s, epoch_s, epochs_done, epochs_total,
-                     budget_s):
+def _budget_decision(elapsed_s, epoch_s, epochs_done, epochs_total, budget_s):
     """Portão de orçamento de parede (função pura, testável).
 
     Retorna (parar, projetado_s). Parar = terminar a PRÓXIMA época
@@ -374,19 +402,22 @@ def _budget_decision(elapsed_s, epoch_s, epochs_done, epochs_total,
     return (elapsed_s + epoch_s + reserve_s > budget_s), projected_s
 
 
-def _write_receipt(out_dir, rec, run_cfg, info, batch_global,
-                   epoch_s_list, wall0, budget_s):
+def _write_receipt(
+    out_dir, rec, run_cfg, info, batch_global, epoch_s_list, wall0, budget_s
+):
     """Grava o receipt.json (projeção + utilização) da época dada."""
     receipt = dict(rec)
-    receipt["projected_total_min"] = round(
-        rec["epoch_s"] * run_cfg["epochs"] / 60, 1)
+    receipt["projected_total_min"] = round(rec["epoch_s"] * run_cfg["epochs"] / 60, 1)
     if budget_s > 0:
         _, projected_s = _budget_decision(
-            time.time() - wall0, statistics.median(epoch_s_list),
-            rec["epoch"] + 1, run_cfg["epochs"], budget_s)
+            time.time() - wall0,
+            statistics.median(epoch_s_list),
+            rec["epoch"] + 1,
+            run_cfg["epochs"],
+            budget_s,
+        )
         receipt["budget_min"] = round(budget_s / 60, 1)
-        receipt["budget_projected_total_min"] = round(
-            projected_s / 60, 1)
+        receipt["budget_projected_total_min"] = round(projected_s / 60, 1)
     receipt["world"] = info["world"]
     receipt["batch_global"] = batch_global
     receipt["device"] = info["name"]
@@ -407,31 +438,32 @@ def _train(run_cfg, data_dir, out_dir, device_kind):
     import training.train as T
 
     dev, info = _resolve_device(device_kind)
-    _log("DEV_OK", dev, "|", json.dumps(info),
-         "| torch", torch.__version__)
+    _log("DEV_OK", dev, "|", json.dumps(info), "| torch", torch.__version__)
     torch.manual_seed(run_cfg["seed"])
     if dev.type == "tpu":
         # manual_seed_all do namespace tpu e conveniencia da API;
         # se uma versao do backend nao expoe-la, a seed global ja
         # foi fixada e a corrida nao pode cair por isso.
-        seed_all = getattr(getattr(torch, "tpu", None),
-                           "manual_seed_all", None)
+        seed_all = getattr(getattr(torch, "tpu", None), "manual_seed_all", None)
         if seed_all is not None:
             seed_all(run_cfg["seed"])
     cfg = T.load_config(str(REPO_ROOT / "training" / "config.json"))
-    train_ds = T.build_dataset(data_dir, "train", cfg,
-                               augment=run_cfg.get("augment", True))
+    train_ds = T.build_dataset(
+        data_dir, "train", cfg, augment=run_cfg.get("augment", True)
+    )
     val_ds = T.build_dataset(data_dir, "val", cfg, augment=False)
     lk = _loader_kwargs(run_cfg["num_workers"])
     train_loader = DataLoader(
-        train_ds, batch_size=run_cfg["batch"], shuffle=True,
-        drop_last=True, **lk)
-    val_loader = DataLoader(
-        val_ds, batch_size=run_cfg["batch"], shuffle=False, **lk)
+        train_ds, batch_size=run_cfg["batch"], shuffle=True, drop_last=True, **lk
+    )
+    val_loader = DataLoader(val_ds, batch_size=run_cfg["batch"], shuffle=False, **lk)
     model = _build_model_t7(cfg, run_cfg["decoder"])
-    _log("modelo T7 ok; linear_fuse:",
-         tuple(model.decode_head.linear_fuse.weight.shape),
-         "| params:", sum(p.numel() for p in model.parameters()))
+    _log(
+        "modelo T7 ok; linear_fuse:",
+        tuple(model.decode_head.linear_fuse.weight.shape),
+        "| params:",
+        sum(p.numel() for p in model.parameters()),
+    )
     use_amp = run_cfg["precision"] == "bf16" and dev.type == "tpu"
     if use_amp:
         patched_norms = _patch_tpu_bf16_layer_norms(model)
@@ -442,15 +474,19 @@ def _train(run_cfg, data_dir, out_dir, device_kind):
         train_model = torch.compile(model, backend="tpu")
         _log("COMPILE_ON torch.compile(backend='tpu')")
     tr = cfg["training"]
-    opt = torch.optim.AdamW(model.parameters(), lr=run_cfg["lr"],
-                            weight_decay=tr["weight_decay"])
+    opt = torch.optim.AdamW(
+        model.parameters(), lr=run_cfg["lr"], weight_decay=tr["weight_decay"]
+    )
     accum = max(1, run_cfg["grad_accum"])
     steps_per_epoch = max(1, len(train_loader) // accum)
     sched = T.warmup_cosine_scheduler(
-        opt, total_steps=run_cfg["epochs"] * steps_per_epoch,
-        warmup_ratio=tr["warmup_ratio"])
-    cw = torch.tensor(cfg["loss"]["cross_entropy_class_weights"],
-                      dtype=torch.float32, device=dev)
+        opt,
+        total_steps=run_cfg["epochs"] * steps_per_epoch,
+        warmup_ratio=tr["warmup_ratio"],
+    )
+    cw = torch.tensor(
+        cfg["loss"]["cross_entropy_class_weights"], dtype=torch.float32, device=dev
+    )
     out_dir = Path(out_dir)
     best_iou = -1.0
     t_start = time.time()
@@ -476,22 +512,29 @@ def _train(run_cfg, data_dir, out_dir, device_kind):
             masks = masks.to(dev, non_blocking=True)
             # autocast("tpu") so constroi com o backend registrado;
             # fora da TPU o passo roda em fp32 com nullcontext.
-            amp_ctx = torch.autocast(device_type="tpu",
-                                     dtype=torch.bfloat16) \
-                if use_amp else nullcontext()
+            amp_ctx = (
+                torch.autocast(device_type="tpu", dtype=torch.bfloat16)
+                if use_amp
+                else nullcontext()
+            )
             with amp_ctx:
                 logits = train_model(pixel_values=images).logits
                 if logits.shape[-2:] != masks.shape[-2:]:
                     logits = F.interpolate(
-                        logits, size=masks.shape[-2:], mode="bilinear",
-                        align_corners=False)
+                        logits,
+                        size=masks.shape[-2:],
+                        mode="bilinear",
+                        align_corners=False,
+                    )
                 loss = T.combined_loss(logits, masks, cw) / accum
             loss.backward()
             nb += 1
             if nb <= 3:
                 _sync(dev)
-                _log(f"PROBE_STEP epoca{epoch} passo{nb} acumulado "
-                     f"{time.time() - t0:.1f}s")
+                _log(
+                    f"PROBE_STEP epoca{epoch} passo{nb} acumulado "
+                    f"{time.time() - t0:.1f}s"
+                )
             if nb % accum == 0:
                 opt.step()
                 sched.step()
@@ -499,10 +542,12 @@ def _train(run_cfg, data_dir, out_dir, device_kind):
             if nb % run_cfg["log_every"] == 0:
                 sampled_loss_total += float(loss.detach()) * accum
                 sampled_loss_count += 1
-                _log(f"epoca{epoch} passo{nb}/{len(train_loader)} "
-                     f"loss_amostrada "
-                     f"{sampled_loss_total / sampled_loss_count:.4f} "
-                     f"({time.time() - t0:.0f}s)")
+                _log(
+                    f"epoca{epoch} passo{nb}/{len(train_loader)} "
+                    f"loss_amostrada "
+                    f"{sampled_loss_total / sampled_loss_count:.4f} "
+                    f"({time.time() - t0:.0f}s)"
+                )
         _sync(dev)
         dt = time.time() - t0
         if nb and nb % run_cfg["log_every"] != 0:
@@ -512,21 +557,31 @@ def _train(run_cfg, data_dir, out_dir, device_kind):
         metrics = T.evaluate(model, val_loader, dev)
         iou = metrics["mean_iou"]
         steps = max(nb, 1)
-        rec = {"epoch": epoch, "train_loss": round(mean_loss, 4),
-               "train_loss_samples": sampled_loss_count,
-               "val_mean_iou": round(iou, 4),
-               "epoch_s": round(dt, 1),
-               "s_per_step": round(dt / steps, 3),
-               "samples_s": round(steps * run_cfg["batch"] / dt, 2),
-               "elapsed_s": round(time.time() - t_start, 1)}
+        rec = {
+            "epoch": epoch,
+            "train_loss": round(mean_loss, 4),
+            "train_loss_samples": sampled_loss_count,
+            "val_mean_iou": round(iou, 4),
+            "epoch_s": round(dt, 1),
+            "s_per_step": round(dt / steps, 3),
+            "samples_s": round(steps * run_cfg["batch"] / dt, 2),
+            "elapsed_s": round(time.time() - t_start, 1),
+        }
         _log("EPOCA", json.dumps(rec))
         with open(out_dir / "history.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
         epoch_s_list.append(dt)
         if epoch == min(1, run_cfg["epochs"] - 1):
-            _write_receipt(out_dir, rec, run_cfg, info,
-                           run_cfg["batch"] * accum, epoch_s_list,
-                           wall0, budget_s)
+            _write_receipt(
+                out_dir,
+                rec,
+                run_cfg,
+                info,
+                run_cfg["batch"] * accum,
+                epoch_s_list,
+                wall0,
+                budget_s,
+            )
         sd = {k: v.cpu() for k, v in model.state_dict().items()}
         torch.save(sd, out_dir / "checkpoints" / "last.pt")
         if iou > best_iou:
@@ -536,25 +591,44 @@ def _train(run_cfg, data_dir, out_dir, device_kind):
         if budget_s > 0:
             elapsed_wall = time.time() - wall0
             stop, projected_s = _budget_decision(
-                elapsed_wall, statistics.median(epoch_s_list),
-                epoch + 1, run_cfg["epochs"], budget_s)
-            _log("BUDGET", json.dumps({
-                "elapsed_min": round(elapsed_wall / 60, 1),
-                "projected_total_min": round(projected_s / 60, 1),
-                "budget_min": round(budget_s / 60, 1),
-                "epochs_done": epoch + 1,
-                "epochs_total": run_cfg["epochs"]}))
+                elapsed_wall,
+                statistics.median(epoch_s_list),
+                epoch + 1,
+                run_cfg["epochs"],
+                budget_s,
+            )
+            _log(
+                "BUDGET",
+                json.dumps(
+                    {
+                        "elapsed_min": round(elapsed_wall / 60, 1),
+                        "projected_total_min": round(projected_s / 60, 1),
+                        "budget_min": round(budget_s / 60, 1),
+                        "epochs_done": epoch + 1,
+                        "epochs_total": run_cfg["epochs"],
+                    }
+                ),
+            )
             if stop:
                 run_cfg["budget_stopped"] = True
                 run_cfg["epochs_completed"] = epoch + 1
                 if not (out_dir / "receipt.json").exists():
-                    _write_receipt(out_dir, rec, run_cfg, info,
-                                   run_cfg["batch"] * accum,
-                                   epoch_s_list, wall0, budget_s)
-                _log("BUDGET_STOP: teto de "
-                     f"{budget_s / 60:.0f} min — encerrando com "
-                     f"{epoch + 1} épocas; export/grade seguem "
-                     "com o best.pt salvo.")
+                    _write_receipt(
+                        out_dir,
+                        rec,
+                        run_cfg,
+                        info,
+                        run_cfg["batch"] * accum,
+                        epoch_s_list,
+                        wall0,
+                        budget_s,
+                    )
+                _log(
+                    "BUDGET_STOP: teto de "
+                    f"{budget_s / 60:.0f} min — encerrando com "
+                    f"{epoch + 1} épocas; export/grade seguem "
+                    "com o best.pt salvo."
+                )
                 break
     run_cfg.setdefault("epochs_completed", run_cfg["epochs"])
     _log("TREINO_TORCHTPU_DONE")
@@ -571,8 +645,9 @@ def _export_and_grade(run_cfg, data_dir, out_dir, info):
     cfg = T.load_config(str(REPO_ROOT / "training" / "config.json"))
     out_dir = Path(out_dir)
     model = _build_model_t7(cfg, run_cfg["decoder"])
-    model.load_state_dict(torch.load(out_dir / "checkpoints" / "best.pt",
-                                     map_location="cpu"))
+    model.load_state_dict(
+        torch.load(out_dir / "checkpoints" / "best.pt", map_location="cpu")
+    )
     model = model.to("cpu")
     val_ds = T.build_dataset(data_dir, "val", cfg, augment=False)
     test_ds = T.build_dataset(data_dir, "test", cfg, augment=False)
@@ -580,17 +655,19 @@ def _export_and_grade(run_cfg, data_dir, out_dir, info):
     try:
         T.export_onnx(model, str(onnx_path), cfg)
         rep = T.validate_onnx(
-            model, str(onnx_path),
-            DataLoader(val_ds, batch_size=8, shuffle=False,
-                       num_workers=0),
-            "cpu", cfg)
+            model,
+            str(onnx_path),
+            DataLoader(val_ds, batch_size=8, shuffle=False, num_workers=0),
+            "cpu",
+            cfg,
+        )
     except Exception as exc:  # registrar sem perder o treino
         rep = {"status": "failed", "error": str(exc)}
         _log("AVISO: exportacao ONNX falhou:", exc)
-    final = T.evaluate(model, DataLoader(val_ds, batch_size=8,
-                                         num_workers=0), "cpu")
+    final = T.evaluate(model, DataLoader(val_ds, batch_size=8, num_workers=0), "cpu")
     final["test"] = T.evaluate(
-        model, DataLoader(test_ds, batch_size=8, num_workers=0), "cpu")
+        model, DataLoader(test_ds, batch_size=8, num_workers=0), "cpu"
+    )
     final["onnx_validation"] = rep
     final["delivery_status"] = T.onnx_delivery_status(rep)
     final["torchtpu_run"] = run_cfg
@@ -599,29 +676,39 @@ def _export_and_grade(run_cfg, data_dir, out_dir, info):
         "synthetic_root": str(data_dir),
         "generator": "tools/gen_synthetic.py (split por fonte)",
         "hands": "placeholder sintetico do gerador (sem --hands-dir)",
-        "counts": {"train": run_cfg["n_train"], "val": run_cfg["n_val"],
-                   "test": run_cfg["n_test"]},
+        "counts": {
+            "train": run_cfg["n_train"],
+            "val": run_cfg["n_val"],
+            "test": run_cfg["n_test"],
+        },
     }
-    (out_dir / "metrics.json").write_text(
-        json.dumps(final, indent=2), encoding="utf-8")
+    (out_dir / "metrics.json").write_text(json.dumps(final, indent=2), encoding="utf-8")
     (out_dir / "classes.json").write_text(
-        json.dumps(T.CLASSES, indent=2), encoding="utf-8")
-    _log("ONNX", onnx_path,
-         onnx_path.stat().st_size if onnx_path.exists() else -1)
-    _log("DELIVERY", final["delivery_status"], "| val_iou",
-         final["mean_iou"], "| test_iou", final["test"]["mean_iou"])
+        json.dumps(T.CLASSES, indent=2), encoding="utf-8"
+    )
+    _log("ONNX", onnx_path, onnx_path.stat().st_size if onnx_path.exists() else -1)
+    _log(
+        "DELIVERY",
+        final["delivery_status"],
+        "| val_iou",
+        final["mean_iou"],
+        "| test_iou",
+        final["test"]["mean_iou"],
+    )
     return 0 if final["delivery_status"] == "validated" else 3
 
 
 def _run(run_cfg, data_dir, out_dir, device_kind):
     import training.train as T
 
-    _, manifest_path, split_validation = T.load_split_manifest(
-        str(data_dir))
-    _log("split manifest:", manifest_path, "| familias verificadas:",
-         split_validation["checked_source_families"])
-    counts = T.pixel_counts(T.pair_images_masks(str(Path(data_dir)
-                                                    / "train")))
+    _, manifest_path, split_validation = T.load_split_manifest(str(data_dir))
+    _log(
+        "split manifest:",
+        manifest_path,
+        "| familias verificadas:",
+        split_validation["checked_source_families"],
+    )
+    counts = T.pixel_counts(T.pair_images_masks(str(Path(data_dir) / "train")))
     _log("pixels treino por classe:", counts.tolist())
     info = _train(run_cfg, data_dir, out_dir, device_kind)
     return _export_and_grade(run_cfg, data_dir, out_dir, info)
@@ -633,12 +720,21 @@ def _selftest():
 
     _preflight()
     run_cfg = {
-        "decoder": 128, "batch": 2, "epochs": 1, "lr": 6e-5,
-        "precision": "fp32", "seed": 42, "compile": False,
-        "grad_accum": 1, "num_workers": 0, "log_every": 1000,
+        "decoder": 128,
+        "batch": 2,
+        "epochs": 1,
+        "lr": 6e-5,
+        "precision": "fp32",
+        "seed": 42,
+        "compile": False,
+        "grad_accum": 1,
+        "num_workers": 0,
+        "log_every": 1000,
         "augment": False,  # albumentations e do augment do corpo;
         # o encanamento provado aqui e o mesmo com ou sem ele
-        "n_train": 8, "n_val": 2, "n_test": 2,
+        "n_train": 8,
+        "n_val": 2,
+        "n_test": 2,
     }
     with tempfile.TemporaryDirectory() as tmp:
         data_dir = Path(tmp) / "synthetic"
@@ -655,56 +751,67 @@ def _selftest():
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Treino T7 (SegFormer 4 classes, decoder C=128) "
-                    "em TPU via TorchTPU.")
+        "em TPU via TorchTPU."
+    )
     parser.add_argument("--decoder", type=int, default=128)
-    parser.add_argument("--batch", type=int, default=32,
-                        dest="batch")
-    parser.add_argument("--batch-per-core", type=int, default=None,
-                        dest="batch_per_core",
-                        help="Alias legado do corpo XLA; vale como "
-                             "--batch.")
+    parser.add_argument("--batch", type=int, default=32, dest="batch")
+    parser.add_argument(
+        "--batch-per-core",
+        type=int,
+        default=None,
+        dest="batch_per_core",
+        help="Alias legado do corpo XLA; vale como --batch.",
+    )
     parser.add_argument("--epochs", type=int, default=30)
-    parser.add_argument("--budget-min", type=float, default=0.0,
-                        help="Teto de parede em minutos (geração "
-                             "incluída; 0 = sem teto). Ao projetar "
-                             "estouro, o treino para no fim da época "
-                             "corrente e a entrega (export/grade) "
-                             "segue com o best.pt salvo.")
+    parser.add_argument(
+        "--budget-min",
+        type=float,
+        default=0.0,
+        help="Teto de parede em minutos (geração "
+        "incluída; 0 = sem teto). Ao projetar "
+        "estouro, o treino para no fim da época "
+        "corrente e a entrega (export/grade) "
+        "segue com o best.pt salvo.",
+    )
     parser.add_argument("--lr", type=float, default=1.4e-4)
-    parser.add_argument("--precision", choices=("bf16", "fp32"),
-                        default="bf16")
+    parser.add_argument("--precision", choices=("bf16", "fp32"), default="bf16")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--grad-accum", type=int, default=1)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--log-every", type=int, default=25)
-    parser.add_argument("--compile", action="store_true",
-                        help="torch.compile(backend='tpu') no treino.")
-    parser.add_argument("--scoped-vmem-kib", type=int, default=None,
-                        help="Limite de VMEM scoped do XLA em KiB "
-                             "(LIBTPU_INIT_ARGS). Padrao: "
-                             f"{SCOPED_VMEM_DEFAULT_KIB} em device "
-                             "tpu (o default do XLA, 16384, estoura "
-                             "o E1001 no copy do decode head); 0 "
-                             "desliga. Flag ja presente no ambiente "
-                             "vence este valor.")
+    parser.add_argument(
+        "--compile", action="store_true", help="torch.compile(backend='tpu') no treino."
+    )
+    parser.add_argument(
+        "--scoped-vmem-kib",
+        type=int,
+        default=None,
+        help="Limite de VMEM scoped do XLA em KiB "
+        "(LIBTPU_INIT_ARGS). Padrao: "
+        f"{SCOPED_VMEM_DEFAULT_KIB} em device "
+        "tpu (o default do XLA, 16384, estoura "
+        "o E1001 no copy do decode head); 0 "
+        "desliga. Flag ja presente no ambiente "
+        "vence este valor.",
+    )
     parser.add_argument("--train-count", type=int, default=4000)
     parser.add_argument("--val-count", type=int, default=400)
     parser.add_argument("--test-count", type=int, default=400)
     parser.add_argument("--data-dir", default=None)
     parser.add_argument("--out-dir", default=None)
-    parser.add_argument("--device", choices=("tpu", "cpu"),
-                        default="tpu")
-    parser.add_argument("--selftest", action="store_true",
-                        help="Prova local em CPU (sem TPU); não "
-                             "treina a corrida.")
+    parser.add_argument("--device", choices=("tpu", "cpu"), default="tpu")
+    parser.add_argument(
+        "--selftest",
+        action="store_true",
+        help="Prova local em CPU (sem TPU); não treina a corrida.",
+    )
     args = parser.parse_args(argv)
 
     if args.selftest:
         return _selftest()
 
     work = _default_workdir()
-    data_dir = Path(args.data_dir) if args.data_dir \
-        else work / "data" / "synthetic"
+    data_dir = Path(args.data_dir) if args.data_dir else work / "data" / "synthetic"
     out_dir = Path(args.out_dir) if args.out_dir else work / "out_t7"
     (out_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
 
@@ -715,28 +822,35 @@ def main(argv=None):
     scoped_kib = None
     if args.device == "tpu":
         scoped_kib = _arm_scoped_vmem(
-            SCOPED_VMEM_DEFAULT_KIB if args.scoped_vmem_kib is None
-            else args.scoped_vmem_kib)
+            SCOPED_VMEM_DEFAULT_KIB
+            if args.scoped_vmem_kib is None
+            else args.scoped_vmem_kib
+        )
 
-    batch = args.batch_per_core if args.batch_per_core is not None \
-        else args.batch
+    batch = args.batch_per_core if args.batch_per_core is not None else args.batch
     run_cfg = {
-        "decoder": args.decoder, "batch": batch,
-        "epochs": args.epochs, "lr": args.lr,
-        "precision": args.precision, "seed": args.seed,
-        "compile": args.compile, "scoped_vmem_kib": scoped_kib,
+        "decoder": args.decoder,
+        "batch": batch,
+        "epochs": args.epochs,
+        "lr": args.lr,
+        "precision": args.precision,
+        "seed": args.seed,
+        "compile": args.compile,
+        "scoped_vmem_kib": scoped_kib,
         "grad_accum": args.grad_accum,
-        "num_workers": args.num_workers, "log_every": args.log_every,
+        "num_workers": args.num_workers,
+        "log_every": args.log_every,
         "augment": True,
-        "n_train": args.train_count, "n_val": args.val_count,
-        "n_test": args.test_count, "backend": "torchtpu",
+        "n_train": args.train_count,
+        "n_val": args.val_count,
+        "n_test": args.test_count,
+        "backend": "torchtpu",
         "budget_min": args.budget_min,
         "t_wall0": time.time(),
     }
     _log("RUN_CFG", json.dumps(run_cfg))
     _preflight()
-    _ensure_data(data_dir, args.seed, args.train_count, args.val_count,
-                 args.test_count)
+    _ensure_data(data_dir, args.seed, args.train_count, args.val_count, args.test_count)
     try:
         return _run(run_cfg, str(data_dir), out_dir, args.device)
     except Exception as exc:
@@ -746,11 +860,13 @@ def main(argv=None):
             # processo novo (o run_t7.py faz isso sozinho na escada
             # de retry dele). A linha ERRO_E1001 e o sinal que ele
             # procura no log.
-            _log("ERRO_E1001: CompileTimeScopedVmemOom — o limite "
-                 f"scoped em vigor ({scoped_kib} KiB) nao coube. "
-                 "Relance em processo novo com --scoped-vmem-kib "
-                 f"maior (teto seguro v5e/v6e: {SCOPED_VMEM_MAX_KIB}) "
-                 "ou sem --compile.")
+            _log(
+                "ERRO_E1001: CompileTimeScopedVmemOom — o limite "
+                f"scoped em vigor ({scoped_kib} KiB) nao coube. "
+                "Relance em processo novo com --scoped-vmem-kib "
+                f"maior (teto seguro v5e/v6e: {SCOPED_VMEM_MAX_KIB}) "
+                "ou sem --compile."
+            )
         raise
 
 

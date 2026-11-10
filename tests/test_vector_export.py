@@ -49,9 +49,15 @@ def test_pipeline_simplifies_and_roundtrips(tmp_path):
     sx, sy = result["scale_mm_per_px"]
     thickness = max(int(round(result["stroke_width_px"])), 1)
     ink = result["ink"]
-    r_svg = ev.rasterize(ev.parse_svg_paths(svg_path), ink.shape, sx, sy,
-                         thickness)
-    r_dxf = ev.rasterize(ev.parse_dxf_polylines(dxf_path), ink.shape, sx, sy,
-                         thickness, flip_y=True, paper_h_mm=297.0)
+    r_svg = ev.rasterize(ev.parse_svg_paths(svg_path), ink.shape, sx, sy, thickness)
+    r_dxf = ev.rasterize(
+        ev.parse_dxf_polylines(dxf_path),
+        ink.shape,
+        sx,
+        sy,
+        thickness,
+        flip_y=True,
+        paper_h_mm=297.0,
+    )
     assert ev.iou(r_svg, ink) >= 0.45
     assert ev.iou(r_dxf, ink) >= 0.45

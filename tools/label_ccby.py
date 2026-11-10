@@ -125,15 +125,19 @@ def download_video(url: str, dest: Path) -> Path:
     if local.is_file():
         return local
     cmd = [
-        sys.executable, "-m", "yt_dlp",
-        "-f", "bv*[height<=720][ext=mp4]/b[height<=720]/b",
-        "--no-playlist", "-o", str(dest), url,
+        sys.executable,
+        "-m",
+        "yt_dlp",
+        "-f",
+        "bv*[height<=720][ext=mp4]/b[height<=720]/b",
+        "--no-playlist",
+        "-o",
+        str(dest),
+        url,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0 or not dest.is_file():
-        raise RuntimeError(
-            f"yt-dlp falhou ({url}): {result.stderr.strip()[-300:]}"
-        )
+        raise RuntimeError(f"yt-dlp falhou ({url}): {result.stderr.strip()[-300:]}")
     return dest
 
 
@@ -153,7 +157,10 @@ def sample_frames(video_path: Path, fps: float):
             small = cv2.resize(
                 cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (160, 90)
             ).astype(np.float32)
-            if last_small is None or float(np.mean(np.abs(small - last_small))) >= DEDUP_MIN_DIFF:
+            if (
+                last_small is None
+                or float(np.mean(np.abs(small - last_small))) >= DEDUP_MIN_DIFF
+            ):
                 last_small = small
                 yield idx, frame
         idx += 1
@@ -177,8 +184,9 @@ def shape_stats(mask: np.ndarray) -> tuple[float, float]:
     return share, fill
 
 
-def judge(detector: NeuralSheetDetector, frame: np.ndarray,
-          allow_negatives: bool = False) -> dict:
+def judge(
+    detector: NeuralSheetDetector, frame: np.ndarray, allow_negatives: bool = False
+) -> dict:
     presence_logit, mask255 = detector.predict(frame)
     p = sigmoid(float(presence_logit))
     neural = (mask255 > 0).astype(np.uint8)
@@ -222,15 +230,20 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--candidates", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--model", default=str(REPO_ROOT / "models" / "draw_seg_v3_dyn.onnx"))
+    ap.add_argument(
+        "--model", default=str(REPO_ROOT / "models" / "draw_seg_v3_dyn.onnx")
+    )
     ap.add_argument("--fps", type=float, default=2.0)
     ap.add_argument("--max-videos", type=int, default=0)
     ap.add_argument("--only-ids", default="")
     ap.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
     ap.add_argument("--sync-dir", default="")
     ap.add_argument("--keep-videos", action="store_true")
-    ap.add_argument("--allow-negatives", action="store_true",
-                    help="permite has_paper=0 (só fontes de ausência conhecida)")
+    ap.add_argument(
+        "--allow-negatives",
+        action="store_true",
+        help="permite has_paper=0 (só fontes de ausência conhecida)",
+    )
     args = ap.parse_args()
 
     import onnxruntime as ort
@@ -269,8 +282,20 @@ def main() -> int:
         if not labels_exist:
             lw.writerow(["file", "has_paper", "source", "video_id"])
         if not census_exist:
-            cw.writerow(["video_id", "title", "channel", "url", "duration_s",
-                         "sampled", "pos", "neg", "review", "accept_rate"])
+            cw.writerow(
+                [
+                    "video_id",
+                    "title",
+                    "channel",
+                    "url",
+                    "duration_s",
+                    "sampled",
+                    "pos",
+                    "neg",
+                    "review",
+                    "accept_rate",
+                ]
+            )
         for row in rows:
             vid = row["video_id"]
             done_path = out / "done" / f"{vid}.json"
@@ -285,30 +310,50 @@ def main() -> int:
                 res = judge(detector, frame, allow_negatives=args.allow_negatives)
                 stem = f"{vid}_{fidx:06d}"
                 if res["decision"] == "pos":
-                    cv2.imwrite(str(out / "frames" / f"{stem}.jpg"), frame,
-                                [cv2.IMWRITE_JPEG_QUALITY, 90])
-                    cv2.imwrite(str(out / "masks" / f"{stem}.png"),
-                                res["mask"] * 255)
+                    cv2.imwrite(
+                        str(out / "frames" / f"{stem}.jpg"),
+                        frame,
+                        [cv2.IMWRITE_JPEG_QUALITY, 90],
+                    )
+                    cv2.imwrite(str(out / "masks" / f"{stem}.png"), res["mask"] * 255)
                     lw.writerow([f"frames/{stem}.jpg", 1, "ccby_youtube", vid])
                 elif res["decision"] == "neg":
-                    cv2.imwrite(str(out / "frames" / f"{stem}.jpg"), frame,
-                                [cv2.IMWRITE_JPEG_QUALITY, 90])
+                    cv2.imwrite(
+                        str(out / "frames" / f"{stem}.jpg"),
+                        frame,
+                        [cv2.IMWRITE_JPEG_QUALITY, 90],
+                    )
                     lw.writerow([f"frames/{stem}.jpg", 0, "ccby_youtube", vid])
                 else:
-                    cv2.imwrite(str(out / "review" / f"{stem}.jpg"), frame,
-                                [cv2.IMWRITE_JPEG_QUALITY, 90])
+                    cv2.imwrite(
+                        str(out / "review" / f"{stem}.jpg"),
+                        frame,
+                        [cv2.IMWRITE_JPEG_QUALITY, 90],
+                    )
                 counts[res["decision"]] += 1
             lf.flush()
             accepted = counts["pos"] + counts["neg"]
             rate = accepted / counts["sampled"] if counts["sampled"] else 0.0
-            cw.writerow([vid, row.get("title", ""), row.get("channel", ""),
-                         row["url"], row.get("duration_s", ""),
-                         counts["sampled"], counts["pos"], counts["neg"],
-                         counts["review"], f"{rate:.3f}"])
+            cw.writerow(
+                [
+                    vid,
+                    row.get("title", ""),
+                    row.get("channel", ""),
+                    row["url"],
+                    row.get("duration_s", ""),
+                    counts["sampled"],
+                    counts["pos"],
+                    counts["neg"],
+                    counts["review"],
+                    f"{rate:.3f}",
+                ]
+            )
             cf.flush()
             with (out / "ATTRIBUTION.md").open("a", encoding="utf-8") as af:
-                af.write(f"- [{row.get('title', vid)}]({row['url']}) — "
-                         f"{row.get('channel', '')} — CC BY\n")
+                af.write(
+                    f"- [{row.get('title', vid)}]({row['url']}) — "
+                    f"{row.get('channel', '')} — CC BY\n"
+                )
             done_path.write_text(json.dumps(counts), encoding="utf-8")
             if args.sync_dir:
                 sync = Path(args.sync_dir)
@@ -322,16 +367,18 @@ def main() -> int:
             totals["videos"] += 1
             for k in ("sampled", "pos", "neg", "review"):
                 totals[k] += counts[k]
-            print(f"VIDEO {vid} amostrados {counts['sampled']} pos {counts['pos']} "
-                  f"neg {counts['neg']} revisão {counts['review']} "
-                  f"aceite {rate:.1%}", flush=True)
+            print(
+                f"VIDEO {vid} amostrados {counts['sampled']} pos {counts['pos']} "
+                f"neg {counts['neg']} revisão {counts['review']} "
+                f"aceite {rate:.1%}",
+                flush=True,
+            )
 
-    receipt = {**totals, "wall_s": round(time.time() - t0, 1),
-               "providers": providers}
-    (out / "run_receipt.json").write_text(json.dumps(receipt, indent=2),
-                                          encoding="utf-8")
-    print(f"LABEL_CCBY_OK {json.dumps(totals)} parede {receipt['wall_s']}s",
-          flush=True)
+    receipt = {**totals, "wall_s": round(time.time() - t0, 1), "providers": providers}
+    (out / "run_receipt.json").write_text(
+        json.dumps(receipt, indent=2), encoding="utf-8"
+    )
+    print(f"LABEL_CCBY_OK {json.dumps(totals)} parede {receipt['wall_s']}s", flush=True)
     return 0
 
 

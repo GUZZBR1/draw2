@@ -19,6 +19,16 @@ line-length = 88
 # não são o alvo do linter de biblioteca.
 extend-exclude = [".venv", "notebooks"]
 
+[tool.ruff.format]
+# Fontes vendada/gerada: preservar os patches ancorados e a reprodução byte a byte.
+# Runners congelados: o replay v2 usa o hash dos dois arquivos na comparação pareada.
+exclude = [
+    "training/train_body_tri.py",
+    "training/train_ink3.py",
+    "tools/replay_reregister.py",
+    "tools/replay_reregister_v2.py",
+]
+
 [tool.ruff.lint]
 # Subconjunto de erro de verdade (nome indefinido, sintaxe, import
 # quebrado). O estilo do repositório não é uniforme e uma regra

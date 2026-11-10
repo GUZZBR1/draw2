@@ -36,13 +36,10 @@ def main(argv=None):
     parser.add_argument("--candidate", required=True)
     parser.add_argument("--baseline", required=True)
     parser.add_argument("--dibco", default=None)
-    parser.add_argument("--min-sessions", type=int,
-                        default=gate.MIN_HOLDOUT_SESSIONS)
-    parser.add_argument("--min-pages", type=int,
-                        default=gate.MIN_HOLDOUT_PAGES)
+    parser.add_argument("--min-sessions", type=int, default=gate.MIN_HOLDOUT_SESSIONS)
+    parser.add_argument("--min-pages", type=int, default=gate.MIN_HOLDOUT_PAGES)
     parser.add_argument("--promote-margin", type=float, default=0.0)
-    parser.add_argument("--worst-group-tolerance", type=float,
-                        default=0.0)
+    parser.add_argument("--worst-group-tolerance", type=float, default=0.0)
     args = parser.parse_args(argv)
 
     result = gate.judge_candidate(

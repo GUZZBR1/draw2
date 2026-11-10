@@ -54,6 +54,7 @@ def _credentials():
         ) from error
     return dynamic_credentials
 
+
 BASE = "https://www.kaggle.com/api/v1"
 USER = "guzzbr"
 
@@ -72,7 +73,8 @@ def call(path, payload=None):
     request = urllib.request.Request(BASE + path, data=data, headers=headers)
     credentials = _credentials()
     credentials.add_surrogate_to_request(
-        request, "custom.kaggle", allowed_hosts=["www.kaggle.com"])
+        request, "custom.kaggle", allowed_hosts=["www.kaggle.com"]
+    )
     opener = urllib.request.build_opener(NoRedirect())
     with opener.open(request, timeout=120) as response:
         return credentials.read_json_response(response)
@@ -100,14 +102,12 @@ def push(recipe, mode=None):
 
 
 def status(recipe):
-    return call(f"/kernels/status?userName={USER}"
-                f"&kernelSlug={recipe.kernel_slug}")
+    return call(f"/kernels/status?userName={USER}&kernelSlug={recipe.kernel_slug}")
 
 
 def output(recipe, dest):
     os.makedirs(dest, exist_ok=True)
-    out = call(f"/kernels/output?userName={USER}"
-               f"&kernelSlug={recipe.kernel_slug}")
+    out = call(f"/kernels/output?userName={USER}&kernelSlug={recipe.kernel_slug}")
     files = out.get("files", []) if isinstance(out, dict) else []
     log = out.get("log", "") if isinstance(out, dict) else ""
     if log:

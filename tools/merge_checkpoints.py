@@ -70,16 +70,22 @@ def check_compatible(base: dict, target: dict) -> None:
         raise ValueError(f"chaves divergentes: faltam {missing[:5]} sobram {extra[:5]}")
     for k in target:
         if base[k].shape != target[k].shape:
-            raise ValueError(f"shape divergente em {k}: {base[k].shape} x {target[k].shape}")
+            raise ValueError(
+                f"shape divergente em {k}: {base[k].shape} x {target[k].shape}"
+            )
         if base[k].dtype != target[k].dtype:
-            raise ValueError(f"dtype divergente em {k}: {base[k].dtype} x {target[k].dtype}")
+            raise ValueError(
+                f"dtype divergente em {k}: {base[k].dtype} x {target[k].dtype}"
+            )
 
 
 def interpolate(base: dict, target: dict, alpha: float) -> dict:
     merged = {}
     for k, t in target.items():
         if t.is_floating_point():
-            merged[k] = ((1.0 - alpha) * base[k].double() + alpha * t.double()).to(t.dtype)
+            merged[k] = ((1.0 - alpha) * base[k].double() + alpha * t.double()).to(
+                t.dtype
+            )
         else:
             merged[k] = t.clone()
     return merged
@@ -87,7 +93,6 @@ def interpolate(base: dict, target: dict, alpha: float) -> dict:
 
 def argmax_iou_check(model, onnx_path: Path, cfg: dict) -> float:
     """IoU de argmax entre o modelo PyTorch (caminho de exportação) e o ONNX."""
-    import numpy as np
     import onnxruntime as ort
     import torch
 
@@ -119,8 +124,12 @@ def main(argv=None) -> int:
     ap.add_argument("--base-name", required=True)
     ap.add_argument("--target", required=True, type=Path)
     ap.add_argument("--target-name", required=True)
-    ap.add_argument("--config", required=True, type=Path,
-                    help="training_config.json resolvido da corrida do alvo")
+    ap.add_argument(
+        "--config",
+        required=True,
+        type=Path,
+        help="training_config.json resolvido da corrida do alvo",
+    )
     ap.add_argument("--alphas", default="0.50,0.65,0.75")
     ap.add_argument("--out-dir", required=True, type=Path)
     args = ap.parse_args(argv)
@@ -133,9 +142,11 @@ def main(argv=None) -> int:
     base_sd = load_state_dict(args.base)
     target_sd = load_state_dict(args.target)
     check_compatible(base_sd, target_sd)
-    print(f"[merge] compatível: {len(target_sd)} tensores, "
-          f"base {args.base_name} sha {sha256_16(args.base)}, "
-          f"alvo {args.target_name} sha {sha256_16(args.target)}")
+    print(
+        f"[merge] compatível: {len(target_sd)} tensores, "
+        f"base {args.base_name} sha {sha256_16(args.base)}, "
+        f"alvo {args.target_name} sha {sha256_16(args.target)}"
+    )
 
     cfg = json.loads(args.config.read_text(encoding="utf-8"))
     (cfg.get("training") or {})["init_checkpoint"] = None
@@ -157,22 +168,37 @@ def main(argv=None) -> int:
         iou = argmax_iou_check(model, onnx_path, cfg)
         info = {
             "tag": tag,
-            "base": {"name": args.base_name, "path": str(args.base), "sha256_16": sha256_16(args.base)},
-            "target": {"name": args.target_name, "path": str(args.target), "sha256_16": sha256_16(args.target)},
+            "base": {
+                "name": args.base_name,
+                "path": str(args.base),
+                "sha256_16": sha256_16(args.base),
+            },
+            "target": {
+                "name": args.target_name,
+                "path": str(args.target),
+                "sha256_16": sha256_16(args.target),
+            },
             "alpha_target": alpha,
             "formula": "(1-alpha)*base + alpha*target",
             "onnx_sha256_16": sha256_16(onnx_path),
             "argmax_iou_torch_vs_onnx_min": iou,
         }
-        (cand_dir / "merge_info.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
+        (cand_dir / "merge_info.json").write_text(
+            json.dumps(info, indent=2), encoding="utf-8"
+        )
         status = "OK" if iou >= 0.99 else "INVALIDO"
-        print(f"[merge] {tag}: alpha={alpha:.2f} onnx sha {info['onnx_sha256_16']} "
-              f"argmax IoU min {iou:.5f} -> {status}")
+        print(
+            f"[merge] {tag}: alpha={alpha:.2f} onnx sha {info['onnx_sha256_16']} "
+            f"argmax IoU min {iou:.5f} -> {status}"
+        )
         results.append(info)
         if iou < 0.99:
-            raise SystemExit(f"autochecagem falhou em {tag}: argmax IoU {iou:.5f} < 0,99")
+            raise SystemExit(
+                f"autochecagem falhou em {tag}: argmax IoU {iou:.5f} < 0,99"
+            )
     (args.out_dir / f"merge_{args.base_name}_summary.json").write_text(
-        json.dumps(results, indent=2), encoding="utf-8")
+        json.dumps(results, indent=2), encoding="utf-8"
+    )
     print(f"[merge] {len(results)} candidatos em {args.out_dir}")
     return 0
 

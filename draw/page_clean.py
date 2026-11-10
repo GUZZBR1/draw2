@@ -63,9 +63,7 @@ _ENV_THREADS_FALLBACK_VAR = "DRAW_ORT_THREADS"
 # caminho antigo de um bloco por chamada, para comparar no alvo.
 _ENV_BATCH_VAR = "DRAW_PAGE_CLEAN_BATCH"
 DEFAULT_MODEL_PATH = (
-    Path(__file__).resolve().parent.parent
-    / "models"
-    / "page_clean_unet.onnx"
+    Path(__file__).resolve().parent.parent / "models" / "page_clean_unet.onnx"
 )
 DEFAULT_THRESHOLD = 0.7
 # Teto combinado de pools (medido na mesa do Lucas, 2026-11-02):
@@ -158,8 +156,9 @@ def _output_patch_size(session):
             f"o arquivo declara {shape}"
         )
     height, width = shape[2], shape[3]
-    if not (isinstance(height, int) and isinstance(width, int)
-            and height > 0 and width > 0):
+    if not (
+        isinstance(height, int) and isinstance(width, int) and height > 0 and width > 0
+    ):
         raise RuntimeError(
             "a saída do modelo pagina->limpa precisa ter altura e "
             f"largura fixas; o arquivo declara {shape}"
@@ -219,19 +218,19 @@ class PageCleanInk:
     cada run(), que o lote não paga.
     """
 
-    def __init__(self, model_path=None, threshold=DEFAULT_THRESHOLD,
-                 threads=None, batch_size=None):
+    def __init__(
+        self,
+        model_path=None,
+        threshold=DEFAULT_THRESHOLD,
+        threads=None,
+        batch_size=None,
+    ):
         self.model_path = str(
-            model_path
-            or os.environ.get(_ENV_MODEL_VAR)
-            or DEFAULT_MODEL_PATH
+            model_path or os.environ.get(_ENV_MODEL_VAR) or DEFAULT_MODEL_PATH
         )
         self.threshold = float(threshold)
         self.threads = _page_clean_threads(threads)
-        self.batch_size = (
-            batch_size if batch_size is not None
-            else _env_batch_size()
-        )
+        self.batch_size = batch_size if batch_size is not None else _env_batch_size()
         self._session = None
         self._input_name = None
         self._dynamic_batch = False
@@ -249,7 +248,7 @@ class PageCleanInk:
         tiles = []
         for y in range(0, h, _PATCH):
             for x in range(0, w, _PATCH):
-                tile = warped_bgr[y:y + _PATCH, x:x + _PATCH]
+                tile = warped_bgr[y : y + _PATCH, x : x + _PATCH]
                 pad_h = _PATCH - tile.shape[0]
                 pad_w = _PATCH - tile.shape[1]
                 if pad_h or pad_w:
@@ -263,9 +262,7 @@ class PageCleanInk:
         # antigo criava ~2 tensores do tamanho do lote por passada
         # (20 blocos = ~16 MB cada) so de transitorio. A divisao por
         # 255 com out= escreve no buffer final; o valor e o mesmo.
-        tensor = np.empty(
-            (len(batch), 3, _PATCH, _PATCH), dtype=np.float32
-        )
+        tensor = np.empty((len(batch), 3, _PATCH, _PATCH), dtype=np.float32)
         for index, tile in enumerate(batch):
             np.divide(
                 tile.transpose(2, 0, 1),
@@ -288,12 +285,12 @@ class PageCleanInk:
         logits = np.zeros((h, w), dtype=np.float32)
         step = _batch_size(self.batch_size, len(tiles), self._dynamic_batch)
         for start in range(0, len(tiles), step):
-            group = tiles[start:start + step]
+            group = tiles[start : start + step]
             out = self._run_batch([tile for _y, _x, tile in group])
             for index, (y, x, _tile) in enumerate(group):
                 hh = min(_PATCH, h - y)
                 ww = min(_PATCH, w - x)
-                logits[y:y + hh, x:x + ww] = out[index, 0, :hh, :ww]
+                logits[y : y + hh, x : x + ww] = out[index, 0, :hh, :ww]
         return 1.0 / (1.0 + np.exp(-logits))
 
     def ink_mask(self, warped_bgr):

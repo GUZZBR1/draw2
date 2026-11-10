@@ -8,6 +8,7 @@ alimenta a cabeça com frames reais rotulados só com has_paper
 máscara. O backbone anda com LR de fine-tune e a cabeça, fresca,
 com LR 10-50x maior (grupos separados no otimizador).
 """
+
 import sys
 from pathlib import Path
 

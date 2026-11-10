@@ -74,21 +74,28 @@ class RAMImageBuffer:
         return self.size
 
     @classmethod
-    def from_pairs(cls, pairs, size, label, load_image_rgb, load_mask, cv2,
-                   ignore_index=255):
+    def from_pairs(
+        cls, pairs, size, label, load_image_rgb, load_mask, cv2, ignore_index=255
+    ):
         """pairs: lista de (img_path, mask_path, peso) ou (img, mask, peso, pres)."""
         images, masks, weights, presence = [], [], [], []
         for item in pairs:
             img_path, mask_path, weight = item[0], item[1], float(item[2])
             pres = float(item[3]) if len(item) > 3 else -1.0
-            im, mk = _load_resized(img_path, mask_path, size,
-                                   load_image_rgb, load_mask, cv2)
+            im, mk = _load_resized(
+                img_path, mask_path, size, load_image_rgb, load_mask, cv2
+            )
             images.append(im)
             masks.append(mk)
             weights.append(weight)
             presence.append(pres)
-        return cls(_stack_images(images), _stack_masks(masks),
-                   _floats(weights), _floats(presence), label)
+        return cls(
+            _stack_images(images),
+            _stack_masks(masks),
+            _floats(weights),
+            _floats(presence),
+            label,
+        )
 
     @classmethod
     def from_pool_dir(cls, pool_dir, size, load_image_rgb, cv2):
@@ -111,14 +118,16 @@ class RAMImageBuffer:
                 if not img_path.is_file():
                     raise FileNotFoundError(f"frame do pool ausente: {img_path}")
                 im = load_image_rgb(img_path)
-                images.append(cv2.resize(im, (size, size),
-                                         interpolation=cv2.INTER_LINEAR))
+                images.append(
+                    cv2.resize(im, (size, size), interpolation=cv2.INTER_LINEAR)
+                )
                 presence.append(has_paper)
         if not images:
             raise ValueError(f"pool de presença vazio: {labels_path}")
         n = len(images)
-        return cls(_stack_images(images), None,
-                   _floats([1.0] * n), _floats(presence), "pool")
+        return cls(
+            _stack_images(images), None, _floats([1.0] * n), _floats(presence), "pool"
+        )
 
     def sample(self, n, device, ignore_index=255):
         """(imagens uint8, máscaras int64, pesos, presenças) no device."""
@@ -128,8 +137,7 @@ class RAMImageBuffer:
         images = self.images[idx].to(device, non_blocking=True)
         if self.masks is None:
             h, w = images.shape[-2:]
-            masks = torch.full((n, h, w), ignore_index, dtype=torch.long,
-                               device=device)
+            masks = torch.full((n, h, w), ignore_index, dtype=torch.long, device=device)
         else:
             masks = self.masks[idx].to(device, non_blocking=True).long()
         weights = self.weights[idx].to(device, non_blocking=True)
@@ -150,8 +158,9 @@ class RAMPairBuffer:
         return self.size
 
     @classmethod
-    def from_pairs_dir(cls, pairs_dir, size, load_image_rgb, load_mask, cv2,
-                       split="train"):
+    def from_pairs_dir(
+        cls, pairs_dir, size, load_image_rgb, load_mask, cv2, split="train"
+    ):
         pairs_dir = Path(pairs_dir)
         manifest = pairs_dir / "pairs.csv"
         if not manifest.is_file():
@@ -165,22 +174,38 @@ class RAMPairBuffer:
             raise ValueError(f"nenhum par real com split={split!r} em {manifest}")
         ia, ma, ib, mb, ch = [], [], [], [], []
         for row in rows:
-            a, m_a = _load_resized(pairs_dir / row["frame_a"],
-                                   pairs_dir / row["mask_a"], size,
-                                   load_image_rgb, load_mask, cv2)
-            b, m_b = _load_resized(pairs_dir / row["frame_b"],
-                                   pairs_dir / row["mask_b"], size,
-                                   load_image_rgb, load_mask, cv2)
-            change = cv2.imread(str(pairs_dir / row["change"]),
-                                cv2.IMREAD_GRAYSCALE)
+            a, m_a = _load_resized(
+                pairs_dir / row["frame_a"],
+                pairs_dir / row["mask_a"],
+                size,
+                load_image_rgb,
+                load_mask,
+                cv2,
+            )
+            b, m_b = _load_resized(
+                pairs_dir / row["frame_b"],
+                pairs_dir / row["mask_b"],
+                size,
+                load_image_rgb,
+                load_mask,
+                cv2,
+            )
+            change = cv2.imread(str(pairs_dir / row["change"]), cv2.IMREAD_GRAYSCALE)
             if change is None:
                 raise FileNotFoundError(f"change ilegível: {row['change']}")
-            change = cv2.resize(change, (size, size),
-                                interpolation=cv2.INTER_NEAREST)
-            ia.append(a); ma.append(m_a); ib.append(b); mb.append(m_b)
+            change = cv2.resize(change, (size, size), interpolation=cv2.INTER_NEAREST)
+            ia.append(a)
+            ma.append(m_a)
+            ib.append(b)
+            mb.append(m_b)
             ch.append((change > 0).astype(np.uint8))
-        return cls(_stack_images(ia), _stack_masks(ma), _stack_images(ib),
-                   _stack_masks(mb), _stack_masks(ch))
+        return cls(
+            _stack_images(ia),
+            _stack_masks(ma),
+            _stack_images(ib),
+            _stack_masks(mb),
+            _stack_masks(ch),
+        )
 
     def sample_pairs(self, n, device):
         """(img_a, mask_a, img_b, mask_b, change) no device; máscaras int64."""

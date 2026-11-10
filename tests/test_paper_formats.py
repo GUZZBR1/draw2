@@ -22,9 +22,16 @@ def restore_a4():
     config.apply_format("a4")
 
 
-@pytest.mark.parametrize("name,width", [
-    ("a4", 850), ("a5", 846), ("a3", 849), ("carta", 929), ("caderno", 873),
-])
+@pytest.mark.parametrize(
+    "name,width",
+    [
+        ("a4", 850),
+        ("a5", 846),
+        ("a3", 849),
+        ("carta", 929),
+        ("caderno", 873),
+    ],
+)
 def test_paper_grid(name, width):
     assert config.paper_grid(name) == (width, 1200)
     w_mm, h_mm = config.FORMATS[name]
@@ -80,23 +87,27 @@ def test_consumidores_seguem_a_grade():
 
 def projected_quad(name="carta", pitch=25, yaw=15, roll=0):
     w, h = config.FORMATS[name]
-    points = np.array([[-w/2, -h/2, 0], [w/2, -h/2, 0],
-                       [w/2, h/2, 0], [-w/2, h/2, 0]])
+    points = np.array(
+        [[-w / 2, -h / 2, 0], [w / 2, -h / 2, 0], [w / 2, h / 2, 0], [-w / 2, h / 2, 0]]
+    )
     x, y, z = np.deg2rad([pitch, yaw, roll])
-    rx = np.array([[1, 0, 0], [0, np.cos(x), -np.sin(x)],
-                   [0, np.sin(x), np.cos(x)]])
-    ry = np.array([[np.cos(y), 0, np.sin(y)], [0, 1, 0],
-                   [-np.sin(y), 0, np.cos(y)]])
-    rz = np.array([[np.cos(z), -np.sin(z), 0],
-                   [np.sin(z), np.cos(z), 0], [0, 0, 1]])
+    rx = np.array([[1, 0, 0], [0, np.cos(x), -np.sin(x)], [0, np.sin(x), np.cos(x)]])
+    ry = np.array([[np.cos(y), 0, np.sin(y)], [0, 1, 0], [-np.sin(y), 0, np.cos(y)]])
+    rz = np.array([[np.cos(z), -np.sin(z), 0], [np.sin(z), np.cos(z), 0], [0, 0, 1]])
     camera = points @ (rz @ ry @ rx).T + [0, 0, 1000]
     return camera[:, :2] / camera[:, 2:] * (1.2 * 1280) + [640, 360]
 
 
-@pytest.mark.parametrize("name,label", [
-    ("carta", "carta"), ("a4", "serie_a"), ("a3", "serie_a"),
-    ("a5", "serie_a"), ("caderno", "caderno"),
-])
+@pytest.mark.parametrize(
+    "name,label",
+    [
+        ("carta", "carta"),
+        ("a4", "serie_a"),
+        ("a3", "serie_a"),
+        ("a5", "serie_a"),
+        ("caderno", "caderno"),
+    ],
+)
 @pytest.mark.parametrize("pitch,yaw", [(25, 15), (0, 0)])
 def test_estimador_sugere_classe_certa(name, label, pitch, yaw):
     result = paper.estimate_format(projected_quad(name, pitch, yaw), (720, 1280))
@@ -112,10 +123,14 @@ def test_estimador_se_abstem_com_um_vp_no_infinito():
     assert result["reason"] == "single_vp_at_infinity"
 
 
-@pytest.mark.parametrize("points", [
-    [[0, 0], [1, 1], [2, 2], [3, 3]], [[1, 1]] * 4,
-    [[0, 0], [1, 0], [np.nan, 1], [0, 1]],
-])
+@pytest.mark.parametrize(
+    "points",
+    [
+        [[0, 0], [1, 1], [2, 2], [3, 3]],
+        [[1, 1]] * 4,
+        [[0, 0], [1, 0], [np.nan, 1], [0, 1]],
+    ],
+)
 def test_estimador_se_abstem_com_quad_degenerado(points):
     result = paper.estimate_format(points, (720, 1280))
     assert result["suggestion"] is None
@@ -153,7 +168,7 @@ def test_sugestao_usa_mediana_de_15_e_nao_aplica(tmp_path, capsys):
     telemetry = SessionTelemetry(path, interval=3600).start()
     app._report_format_suggestion(telemetry, result)
     telemetry.close()
-    record, = [json.loads(line) for line in path.read_text().splitlines()]
+    (record,) = [json.loads(line) for line in path.read_text().splitlines()]
     assert record["event"] == "format_suggestion"
     assert record["suggestion"] == "carta"
     assert "carta" in capsys.readouterr().out
@@ -169,11 +184,15 @@ def test_sugestao_se_abstem_para_centros_de_marcadores():
     assert result["reason"] == "marker_centers_not_sheet_boundary"
 
 
-@pytest.mark.parametrize("flags,env,expected", [
-    ([], None, "a4"), ([], "carta", "carta"),
-    (["--format", "a5"], "carta", "a5"),
-    (["--format", "a4"], "invalido", "a4"),
-])
+@pytest.mark.parametrize(
+    "flags,env,expected",
+    [
+        ([], None, "a4"),
+        ([], "carta", "carta"),
+        (["--format", "a5"], "carta", "a5"),
+        (["--format", "a4"], "invalido", "a4"),
+    ],
+)
 def test_cli_resolve_formato_antes_de_abrir_sessao(monkeypatch, flags, env, expected):
     if env is None:
         monkeypatch.delenv("DRAW_FORMAT", raising=False)
@@ -223,8 +242,11 @@ def test_abertura_da_sessao_registra_formato(tmp_path, monkeypatch):
     monkeypatch.setattr(cv2, "waitKey", lambda *a: -1)
     monkeypatch.setattr(cv2, "destroyAllWindows", lambda: None)
     app.run(save_dir=tmp_path, legacy_ink=True)
-    records = [json.loads(line) for line in (tmp_path / "telemetry.jsonl").read_text().splitlines()]
-    opened, = [r for r in records if r.get("event") == "session_open"]
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "telemetry.jsonl").read_text().splitlines()
+    ]
+    (opened,) = [r for r in records if r.get("event") == "session_open"]
     assert opened["paper_format"] == "carta"
     assert opened["page_grid"] == [929, 1200]
     assert opened["mm_per_px"] == 279 / 1200
@@ -247,6 +269,10 @@ def test_export_usa_escala_config_em_ambos_os_eixos(tmp_path, name):
     ev.write_dxf(paths, dxf, w, h, *dimensions, 1.0)
     points_svg = ev.parse_svg_paths(svg)[0][0]
     points_dxf = ev.parse_dxf_polylines(dxf)[0][0]
-    np.testing.assert_allclose(points_svg, np.array([[100, 100], [300, 300]]) * unit, atol=.006)
-    np.testing.assert_allclose(points_dxf[:, 0], points_svg[:, 0], atol=.006)
-    np.testing.assert_allclose(points_dxf[:, 1], dimensions[1] - points_svg[:, 1], atol=.006)
+    np.testing.assert_allclose(
+        points_svg, np.array([[100, 100], [300, 300]]) * unit, atol=0.006
+    )
+    np.testing.assert_allclose(points_dxf[:, 0], points_svg[:, 0], atol=0.006)
+    np.testing.assert_allclose(
+        points_dxf[:, 1], dimensions[1] - points_svg[:, 1], atol=0.006
+    )

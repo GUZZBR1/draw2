@@ -28,9 +28,7 @@ def _blank_sheet():
     global _BLANK_SHEET
     shape = (ink_module.config.PAPER_H, ink_module.config.PAPER_W)
     if _BLANK_SHEET is None or _BLANK_SHEET.shape[:2] != shape:
-        _BLANK_SHEET = ink_module.render_canvas(
-            np.zeros(shape, dtype=np.uint8)
-        )
+        _BLANK_SHEET = ink_module.render_canvas(np.zeros(shape, dtype=np.uint8))
     return _BLANK_SHEET
 
 
@@ -55,8 +53,7 @@ def _compose_view(camera_img, canvas_img):
     if cam.shape[0] != sheet.shape[0]:
         h = min(cam.shape[0], sheet.shape[0])
         cam = cv2.resize(cam, (int(cam.shape[1] * h / cam.shape[0]), h))
-        sheet = cv2.resize(
-            sheet, (int(sheet.shape[1] * h / sheet.shape[0]), h))
+        sheet = cv2.resize(sheet, (int(sheet.shape[1] * h / sheet.shape[0]), h))
     cv2.putText(
         sheet,
         "folha ao vivo",
@@ -87,9 +84,7 @@ def _message_view(last_view, title, lines):
         view = last_view.copy()
     else:
         view = np.full((640, 1280, 3), (30, 30, 30), dtype=np.uint8)
-    cv2.putText(
-        view, title, (40, 90), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3
-    )
+    cv2.putText(view, title, (40, 90), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
     for index, line in enumerate(lines):
         cv2.putText(
             view,

@@ -84,9 +84,7 @@ def test_turn_abstains_when_hand_covers_the_ink():
     acc2 = app_module._LayeredInkAccumulator(0.7)
     for _ in range(4):
         acc2.add(_prob(BIG), _all_visible())
-    turns = [
-        acc2.add(nothing, _all_visible())["turn"] for _ in range(3)
-    ]
+    turns = [acc2.add(nothing, _all_visible())["turn"] for _ in range(3)]
     assert any(turns)
 
 
@@ -155,10 +153,8 @@ def _identity_events(worker):
 def test_identity_recall_ignores_occluded_prior_ink(monkeypatch, chamfer_flag):
     monkeypatch.setenv("DRAW_IDENTITY_CHAMFER", chamfer_flag)
     monkeypatch.setenv("DRAW_ECC_REFINE", "0")
-    monkeypatch.setattr(
-        ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
-    monkeypatch.setattr(
-        ink_layers_module, "_IDLE_PROBE_SECONDS", 0.02)
+    monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(ink_layers_module, "_IDLE_PROBE_SECONDS", 0.02)
     ink = _HalfInk()
     # Dois blocos de 50 px separados por 15 px. A regra de
     # identidade atual dilata a comparacao pela tolerancia de
@@ -220,14 +216,13 @@ def test_identity_recall_ignores_occluded_prior_ink(monkeypatch, chamfer_flag):
 
 @pytest.mark.parametrize("chamfer_flag", ["0", "1"])
 def test_identity_decision_deferred_when_prior_mostly_occluded(
-    monkeypatch, chamfer_flag,
+    monkeypatch,
+    chamfer_flag,
 ):
     monkeypatch.setenv("DRAW_IDENTITY_CHAMFER", chamfer_flag)
     monkeypatch.setenv("DRAW_ECC_REFINE", "0")
-    monkeypatch.setattr(
-        ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
-    monkeypatch.setattr(
-        ink_layers_module, "_IDLE_PROBE_SECONDS", 0.02)
+    monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(ink_layers_module, "_IDLE_PROBE_SECONDS", 0.02)
     ink = _HalfInk()
     worker = app_module._PageCleanWorker(ink).start()
     try:
@@ -243,9 +238,7 @@ def test_identity_decision_deferred_when_prior_mostly_occluded(
         visible[10:20, 11:20] = False
         generation = worker.new_generation(preserve_identity=True)
         _drive_visible(worker, generation, visible)
-        assert _identity_events(worker)[-1]["decision"] == (
-            "deferred_occlusion"
-        )
+        assert _identity_events(worker)[-1]["decision"] == ("deferred_occlusion")
         if chamfer_flag == "1":
             event = _identity_events(worker)[-1]
             assert event["shadow_decision"] == "deferred_occlusion"
@@ -254,7 +247,8 @@ def test_identity_decision_deferred_when_prior_mostly_occluded(
             assert record["page_identity_decision"] == "deferred_occlusion"
             for key, value in event.items():
                 if key.startswith("chamfer_") or key in (
-                    "shadow_decision", "ecc_refine_enabled",
+                    "shadow_decision",
+                    "ecc_refine_enabled",
                 ):
                     assert record[key] == value
         still = worker.poll(generation, 0)

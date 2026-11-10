@@ -133,8 +133,12 @@ def test_run_forwards_real_loss_weight_on_cuda_route():
 
 
 def test_sheet_night_configs_load_and_differ_only_where_declared():
-    a = json.loads((ROOT / "training/configs/t8-sheet-night.json").read_text(encoding="utf-8"))
-    b = json.loads((ROOT / "training/configs/t8-sheet-night-b.json").read_text(encoding="utf-8"))
+    a = json.loads(
+        (ROOT / "training/configs/t8-sheet-night.json").read_text(encoding="utf-8")
+    )
+    b = json.loads(
+        (ROOT / "training/configs/t8-sheet-night-b.json").read_text(encoding="utf-8")
+    )
     train_body = _load("training_train_cfg", "training/train.py")
     for cfg in (a, b):
         assert cfg["training"]["epochs"] == 60

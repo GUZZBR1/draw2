@@ -41,7 +41,7 @@ class _ShiftingInk:
         prob = np.zeros((H, W), dtype=np.float32)
         if self.moving:
             col = (self.calls * 7) % (W - 10)
-            prob[5:15, col:col + 5] = 0.9
+            prob[5:15, col : col + 5] = 0.9
         return prob
 
 
@@ -57,8 +57,7 @@ def _feed(worker, generation, seconds):
 def test_rest_without_hand_signal(monkeypatch):
     monkeypatch.setattr(ink_layers_module, "_PAGE_CLEAN_INTERVAL_SECONDS", 0.02)
     monkeypatch.setattr(ink_layers_module, "_IDLE_PROBE_SECONDS", 0.30)
-    monkeypatch.setattr(
-        ink_layers_module, "_NO_HAND_REST_AFTER_STILL_PASSES", 3)
+    monkeypatch.setattr(ink_layers_module, "_NO_HAND_REST_AFTER_STILL_PASSES", 3)
     fake = _ShiftingInk()
     worker = app_module._PageCleanWorker(fake).start()
     try:
@@ -71,15 +70,13 @@ def test_rest_without_hand_signal(monkeypatch):
         before = fake.calls
         _feed(worker, generation, 0.65)
         rested = fake.calls - before
-        assert rested <= 3, (
-            f"tinta parada sem mao deveria sondar devagar: {rested}")
+        assert rested <= 3, f"tinta parada sem mao deveria sondar devagar: {rested}"
 
         # Tinta andando: a cadencia ativa volta.
         fake.moving = True
         before = fake.calls
         _feed(worker, generation, 0.65)
         active = fake.calls - before
-        assert active >= 6, (
-            f"tinta mudando deveria voltar a cadencia ativa: {active}")
+        assert active >= 6, f"tinta mudando deveria voltar a cadencia ativa: {active}"
     finally:
         worker.stop()

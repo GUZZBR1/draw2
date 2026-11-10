@@ -36,8 +36,7 @@ def _sha256_of(path):
     return digest.hexdigest()
 
 
-def build_record(commit, model_path=None, metrics=None, note=None,
-                 example=False):
+def build_record(commit, model_path=None, metrics=None, note=None, example=False):
     """Monta o registro de uma rodada (dict pronto para JSON)."""
     model = None
     if model_path is not None:
@@ -66,8 +65,7 @@ def validate_record(record):
     if record.get("schema") != _SCHEMA:
         problems.append("schema ausente ou diferente de 1")
     if record.get("tipo") not in _TIPOS:
-        problems.append("tipo ausente ou fora de ('rodada', "
-                        "'backfill_exemplo')")
+        problems.append("tipo ausente ou fora de ('rodada', 'backfill_exemplo')")
     if not record.get("timestamp_utc"):
         problems.append("timestamp_utc ausente")
     if not record.get("commit"):
@@ -79,8 +77,7 @@ def validate_record(record):
         else:
             sha = model.get("sha256")
             if sha is not None and (
-                len(sha) != 64
-                or any(c not in "0123456789abcdef" for c in sha)
+                len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha)
             ):
                 problems.append("modelo.sha256 nao e um sha256 hex")
     metrics = record.get("metricas")
@@ -127,7 +124,7 @@ def run_selfcheck():
         fake_model.write_bytes(b"modelo sintetico do selfcheck\n")
         example_metrics = {
             "_origem": "backfill de exemplo: numeros ilustrativos do "
-                       "formato, nao uma medicao desta ferramenta",
+            "formato, nao uma medicao desta ferramenta",
             "presenca_positivos": "43/43",
             "falsos_positivos_negativos": 0,
             "iou_mascara_medio": 0.962,
@@ -161,8 +158,10 @@ def run_selfcheck():
         bad = dict(plain, commit=None)
         checks += 1
         assert validate_record(bad), "registro sem commit devia falhar"
-    print(f"SELFCHECK run_log OK: {checks} verificacoes, "
-          "esquema valido, sha256 conferido, JSONL de 1 linha relido.")
+    print(
+        f"SELFCHECK run_log OK: {checks} verificacoes, "
+        "esquema valido, sha256 conferido, JSONL de 1 linha relido."
+    )
     return 0
 
 
@@ -208,8 +207,9 @@ def main():
         example=args.exemplo,
     )
     append_record(args.out, record)
-    print(f"Registro anexado em {args.out}: commit {args.commit}, "
-          f"tipo {record['tipo']}.")
+    print(
+        f"Registro anexado em {args.out}: commit {args.commit}, tipo {record['tipo']}."
+    )
     return 0
 
 

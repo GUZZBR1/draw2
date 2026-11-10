@@ -50,7 +50,7 @@ class _SettlingInk:
         self.calls += 1
         prob = np.zeros((H, W), dtype=np.float32)
         col = 40 if self.frozen else 5 + (self.calls % 30)
-        prob[5:15, col:col + 8] = 0.95
+        prob[5:15, col : col + 8] = 0.95
         return prob
 
 
@@ -111,8 +111,7 @@ def test_total_rest_after_settle_without_hand(monkeypatch):
         before = fake.calls
         _feed(worker, generation, 0.35)
         probing = fake.calls - before
-        assert probing >= 3, (
-            f"saida mudando sem mao deveria sondar: {probing}")
+        assert probing >= 3, f"saida mudando sem mao deveria sondar: {probing}"
         assert not worker.stats()["resting"]
 
         # A tinta congela: o voto fecha e o descanso total entra.
@@ -124,7 +123,8 @@ def test_total_rest_after_settle_without_hand(monkeypatch):
             time.sleep(0.4)
             assert fake.calls == before, (
                 f"em descanso, {fake.calls - before} passadas "
-                "rodaram sobre a pagina parada")
+                "rodaram sobre a pagina parada"
+            )
 
             # A mao volta: acorda na hora e a cadencia ativa volta.
             worker.set_hand_presence(True)

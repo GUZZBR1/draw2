@@ -69,9 +69,9 @@ def test_predict_matches_legacy_softmax_and_normalization():
     resized = cv2.resize(rgb, (size, size), interpolation=cv2.INTER_LINEAR).astype(
         np.float32
     )
-    want_tensor = ((resized / 255.0 - neural._MEAN) / neural._STD).transpose(
-        2, 0, 1
-    )[None]
+    want_tensor = ((resized / 255.0 - neural._MEAN) / neural._STD).transpose(2, 0, 1)[
+        None
+    ]
     assert float(np.abs(sess.last_tensor - want_tensor).max()) < 1e-5
 
     c_bg, c_p = logits[0, 0], logits[0, 1]

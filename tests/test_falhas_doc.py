@@ -34,9 +34,7 @@ def test_doc_exists_and_map_matches_sections():
     text = _doc_text()
     for fid in EXPECTED_IDS:
         assert f"| {fid} |" in text, f"{fid} fora do mapa rapido"
-        assert re.search(rf"^## {fid} ", text, re.M), (
-            f"{fid} sem secao propria"
-        )
+        assert re.search(rf"^## {fid} ", text, re.M), f"{fid} sem secao propria"
 
 
 def test_repo_paths_cited_exist():
@@ -71,7 +69,8 @@ def test_every_failure_declares_a_ruler_status():
             by_id[m.group(1)] = section
     for fid in EXPECTED_IDS:
         body = "".join(
-            c for c in unicodedata.normalize("NFKD", by_id[fid].lower())
+            c
+            for c in unicodedata.normalize("NFKD", by_id[fid].lower())
             if not unicodedata.combining(c)
         )
         assert (

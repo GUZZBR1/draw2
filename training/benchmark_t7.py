@@ -16,10 +16,13 @@ def _csv_ints(value, name, minimum, maximum_count=3):
     try:
         values = [int(part.strip()) for part in value.split(",")]
     except ValueError as exc:
-        raise argparse.ArgumentTypeError(f"{name} precisa ser uma lista de inteiros") from exc
+        raise argparse.ArgumentTypeError(
+            f"{name} precisa ser uma lista de inteiros"
+        ) from exc
     if not values or len(values) > maximum_count:
         raise argparse.ArgumentTypeError(
-            f"{name} aceita de 1 a {maximum_count} valores")
+            f"{name} aceita de 1 a {maximum_count} valores"
+        )
     if any(value < minimum for value in values):
         raise argparse.ArgumentTypeError(f"{name} precisa ser >= {minimum}")
     return list(dict.fromkeys(values))
@@ -35,19 +38,22 @@ def _sync(torch, device):
 def _memory_stats(torch, device):
     if device.type == "cuda":
         return {
-            "device_memory_allocated_bytes": int(
-                torch.cuda.memory_allocated(device)),
-            "device_memory_peak_bytes": int(
-                torch.cuda.max_memory_allocated(device)),
+            "device_memory_allocated_bytes": int(torch.cuda.memory_allocated(device)),
+            "device_memory_peak_bytes": int(torch.cuda.max_memory_allocated(device)),
         }
     if device.type == "tpu":
         stats = {}
         namespace = getattr(torch, "tpu", None)
         for result_key, candidates in (
-                ("device_memory_allocated_bytes",
-                 ("memory_allocated", "memory_allocated_bytes")),
-                ("device_memory_peak_bytes",
-                 ("max_memory_allocated", "max_memory_allocated_bytes"))):
+            (
+                "device_memory_allocated_bytes",
+                ("memory_allocated", "memory_allocated_bytes"),
+            ),
+            (
+                "device_memory_peak_bytes",
+                ("max_memory_allocated", "max_memory_allocated_bytes"),
+            ),
+        ):
             for name in candidates:
                 fn = getattr(namespace, name, None)
                 if callable(fn):
@@ -65,22 +71,23 @@ def _profile(torch, train_step, loader, device, trace_dir, steps):
     device_activity = {"tpu": "TPU", "cuda": "CUDA"}[device.type]
     activity = getattr(torch.profiler.ProfilerActivity, device_activity, None)
     if activity is None:
-        raise RuntimeError(f"torch.profiler não expõe ProfilerActivity.{device_activity}")
+        raise RuntimeError(
+            f"torch.profiler não expõe ProfilerActivity.{device_activity}"
+        )
     activities.append(activity)
 
     profile_kwargs = {
         "activities": activities,
-        "schedule": torch.profiler.schedule(
-            wait=0, warmup=1, active=steps, repeat=1),
-        "on_trace_ready": torch.profiler.tensorboard_trace_handler(
-            str(trace_dir)),
+        "schedule": torch.profiler.schedule(wait=0, warmup=1, active=steps, repeat=1),
+        "on_trace_ready": torch.profiler.tensorboard_trace_handler(str(trace_dir)),
     }
     if device.type == "tpu":
         try:
             from torch.tpu.profiler import TpuProfilerConfig
+
             profile_kwargs["experimental_config"] = TpuProfilerConfig(
-                host_tracer_level=2, device_tracer_level=1,
-                run_dir=trace_dir)
+                host_tracer_level=2, device_tracer_level=1, run_dir=trace_dir
+            )
         except (ImportError, AttributeError, TypeError):
             _log("PROFILE_NOTE TpuProfilerConfig indisponível; usando config padrão")
 
@@ -94,15 +101,28 @@ def _profile(torch, train_step, loader, device, trace_dir, steps):
     summary_path = trace_dir / "operator_summary.txt"
     try:
         summary_path.write_text(
-            profiler.key_averages().table(row_limit=30), encoding="utf-8")
+            profiler.key_averages().table(row_limit=30), encoding="utf-8"
+        )
     except Exception as exc:  # profiler summary is supplemental to trace
         _log("PROFILE_SUMMARY_WARN", repr(exc))
     return str(trace_dir)
 
 
-def _run_trial(torch, T, model, source_state, cfg, device, batch_size,
-               num_workers, precision, warmup_steps, measured_steps,
-               compile_model, data_dir):
+def _run_trial(
+    torch,
+    T,
+    model,
+    source_state,
+    cfg,
+    device,
+    batch_size,
+    num_workers,
+    precision,
+    warmup_steps,
+    measured_steps,
+    compile_model,
+    data_dir,
+):
     import torch.nn.functional as F
     from torch.utils.data import DataLoader
 
@@ -115,18 +135,22 @@ def _run_trial(torch, T, model, source_state, cfg, device, batch_size,
 
     training_cfg = cfg["training"]
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=1.4e-4,
-        weight_decay=training_cfg["weight_decay"])
+        model.parameters(), lr=1.4e-4, weight_decay=training_cfg["weight_decay"]
+    )
     class_weights = torch.tensor(
-        cfg["loss"]["cross_entropy_class_weights"],
-        dtype=torch.float32, device=device)
+        cfg["loss"]["cross_entropy_class_weights"], dtype=torch.float32, device=device
+    )
     dataset = T.build_dataset(str(data_dir), "train", cfg, augment=True)
     loader = DataLoader(
-        dataset, batch_size=batch_size, shuffle=True, drop_last=True,
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        drop_last=True,
         num_workers=num_workers,
         persistent_workers=num_workers > 0,
         prefetch_factor=2 if num_workers > 0 else None,
-        pin_memory=device.type == "cuda")
+        pin_memory=device.type == "cuda",
+    )
     iterator = iter(loader)
     use_amp = precision == "bf16" and device.type in ("tpu", "cuda")
 
@@ -134,20 +158,22 @@ def _run_trial(torch, T, model, source_state, cfg, device, batch_size,
         images = images.to(device, non_blocking=True)
         masks = masks.to(device, non_blocking=True)
         if use_amp:
-            with torch.autocast(device_type=device.type,
-                                dtype=torch.bfloat16):
+            with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
                 logits = train_model(pixel_values=images).logits
                 if logits.shape[-2:] != masks.shape[-2:]:
                     logits = F.interpolate(
-                        logits, size=masks.shape[-2:], mode="bilinear",
-                        align_corners=False)
+                        logits,
+                        size=masks.shape[-2:],
+                        mode="bilinear",
+                        align_corners=False,
+                    )
                 loss = T.combined_loss(logits, masks, class_weights)
         else:
             logits = train_model(pixel_values=images).logits
             if logits.shape[-2:] != masks.shape[-2:]:
                 logits = F.interpolate(
-                    logits, size=masks.shape[-2:], mode="bilinear",
-                    align_corners=False)
+                    logits, size=masks.shape[-2:], mode="bilinear", align_corners=False
+                )
             loss = T.combined_loss(logits, masks, class_weights)
         loss.backward()
         optimizer.step()
@@ -187,10 +213,8 @@ def _run_trial(torch, T, model, source_state, cfg, device, batch_size,
         "first_step_s": round(first_step_s, 3),
         "elapsed_s": round(elapsed_s, 3),
         "seconds_per_step": round(elapsed_s / measured_steps, 4),
-        "samples_per_second": round(
-            batch_size * measured_steps / elapsed_s, 2),
-        "loader_wait_ms_per_step": round(
-            data_wait_s * 1000 / measured_steps, 2),
+        "samples_per_second": round(batch_size * measured_steps / elapsed_s, 2),
+        "loader_wait_ms_per_step": round(data_wait_s * 1000 / measured_steps, 2),
         **stats,
     }
     # optimizer fica vivo: o train_step devolvido o usa no profiling.
@@ -200,7 +224,8 @@ def _run_trial(torch, T, model, source_state, cfg, device, batch_size,
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Benchmark limitado e profiling do treino T7.")
+        description="Benchmark limitado e profiling do treino T7."
+    )
     parser.add_argument("--device", choices=("tpu", "cuda"), default="tpu")
     parser.add_argument("--precision", choices=("bf16", "fp32"), default="bf16")
     parser.add_argument("--data-dir", required=True)
@@ -225,8 +250,11 @@ def main(argv=None):
         parser.error("a busca aceita no máximo 6 combinações batch/workers")
     if args.compile and (len(batches) != 1 or len(workers) != 1):
         parser.error("--compile requer exatamente um batch e um valor de workers")
-    if not (1 <= args.steps <= 20 and 1 <= args.warmup_steps <= 5
-            and 2 <= args.profile_steps <= 10):
+    if not (
+        1 <= args.steps <= 20
+        and 1 <= args.warmup_steps <= 5
+        and 2 <= args.profile_steps <= 10
+    ):
         parser.error("limites: steps 1-20, warmup-steps 1-5, profile-steps 2-10")
 
     import training.train_torchtpu as train_t7
@@ -248,12 +276,14 @@ def main(argv=None):
 
     if args.device == "tpu":
         import torch_tpu  # noqa: F401
+
         if not torch.accelerator.is_available():
             raise SystemExit("TPU indisponível neste runtime")
         device = torch.device("tpu")
         props = torch.tpu.get_device_properties()
-        hbm = (getattr(props, "hbm_bytes_per_device", None)
-               or getattr(props, "hbm_bytes_per_chip", None))
+        hbm = getattr(props, "hbm_bytes_per_device", None) or getattr(
+            props, "hbm_bytes_per_chip", None
+        )
         if args.precision == "bf16":
             norm_count = None
         else:
@@ -270,8 +300,12 @@ def main(argv=None):
     cfg = T.load_config(str(REPO_ROOT / "training" / "config.json"))
     data_dir = Path(args.data_dir)
     train_t7._ensure_data(
-        data_dir, seed=42, n_train=args.train_count,
-        n_val=args.val_count, n_test=args.test_count)
+        data_dir,
+        seed=42,
+        n_train=args.train_count,
+        n_val=args.val_count,
+        n_test=args.test_count,
+    )
     torch.manual_seed(42)
     model_start = time.perf_counter()
     model = train_t7._build_model_t7(cfg, decoder=128)
@@ -279,46 +313,73 @@ def main(argv=None):
         norm_count = train_t7._patch_tpu_bf16_layer_norms(model)
     model = model.to(device)
     model_load_s = time.perf_counter() - model_start
-    source_state = {key: value.detach().cpu().clone()
-                    for key, value in model.state_dict().items()}
-    _log("BENCH_DEVICE", json.dumps({
-        "device": str(device), "name": getattr(props, "name", "cuda")
-        if device.type == "tpu" else torch.cuda.get_device_name(device),
-        "precision": args.precision, "hbm_bytes": hbm,
-        "layer_norm_fp32_patch_count": norm_count,
-        "model_load_s": round(model_load_s, 2),
-        "compile": args.compile,
-    }))
+    source_state = {
+        key: value.detach().cpu().clone() for key, value in model.state_dict().items()
+    }
+    _log(
+        "BENCH_DEVICE",
+        json.dumps(
+            {
+                "device": str(device),
+                "name": getattr(props, "name", "cuda")
+                if device.type == "tpu"
+                else torch.cuda.get_device_name(device),
+                "precision": args.precision,
+                "hbm_bytes": hbm,
+                "layer_norm_fp32_patch_count": norm_count,
+                "model_load_s": round(model_load_s, 2),
+                "compile": args.compile,
+            }
+        ),
+    )
 
     results = []
     profile_step = None
     for batch_size in batches:
         for num_workers in workers:
-            _log(f"BENCH_TRIAL batch={batch_size} workers={num_workers} "
-                 f"steps={args.steps} warmup={args.warmup_steps}")
+            _log(
+                f"BENCH_TRIAL batch={batch_size} workers={num_workers} "
+                f"steps={args.steps} warmup={args.warmup_steps}"
+            )
             result, train_step = _run_trial(
-                torch, T, model, source_state, cfg, device,
-                batch_size, num_workers, args.precision,
-                args.warmup_steps, args.steps, args.compile, data_dir)
+                torch,
+                T,
+                model,
+                source_state,
+                cfg,
+                device,
+                batch_size,
+                num_workers,
+                args.precision,
+                args.warmup_steps,
+                args.steps,
+                args.compile,
+                data_dir,
+            )
             results.append(result)
             _log("BENCH_RESULT", json.dumps(result))
             if profile_step is None:
                 profile_step = (train_step, batch_size, num_workers)
 
     train_step, profile_batch, profile_workers = profile_step
-    profile_loader = T.build_dataset(
-        str(data_dir), "train", cfg, augment=True)
+    profile_loader = T.build_dataset(str(data_dir), "train", cfg, augment=True)
     from torch.utils.data import DataLoader
+
     profile_loader = DataLoader(
-        profile_loader, batch_size=profile_batch, shuffle=True,
-        drop_last=True, num_workers=profile_workers,
+        profile_loader,
+        batch_size=profile_batch,
+        shuffle=True,
+        drop_last=True,
+        num_workers=profile_workers,
         persistent_workers=profile_workers > 0,
         prefetch_factor=2 if profile_workers > 0 else None,
-        pin_memory=device.type == "cuda")
+        pin_memory=device.type == "cuda",
+    )
     profile_status = "ok"
     try:
-        _profile(torch, train_step, profile_loader, device, trace_dir,
-                 args.profile_steps)
+        _profile(
+            torch, train_step, profile_loader, device, trace_dir, args.profile_steps
+        )
     except Exception as exc:
         profile_status = f"failed: {type(exc).__name__}: {exc}"
         _log("PROFILE_FAILED", profile_status)
@@ -326,9 +387,11 @@ def main(argv=None):
     report = {
         "created_utc": stamp,
         "device": str(device),
-        "device_name": (getattr(props, "name", "tpu")
-                        if device.type == "tpu"
-                        else torch.cuda.get_device_name(device)),
+        "device_name": (
+            getattr(props, "name", "tpu")
+            if device.type == "tpu"
+            else torch.cuda.get_device_name(device)
+        ),
         "precision": args.precision,
         "model": "SegFormer T7 decoder=128",
         "compile": args.compile,
@@ -341,12 +404,17 @@ def main(argv=None):
     report_path = run_dir / "benchmark.json"
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     best = max(results, key=lambda result: result["samples_per_second"])
-    _log("BENCH_BEST", json.dumps({
-        "batch": best["batch"],
-        "num_workers": best["num_workers"],
-        "samples_per_second": best["samples_per_second"],
-        "seconds_per_step": best["seconds_per_step"],
-    }))
+    _log(
+        "BENCH_BEST",
+        json.dumps(
+            {
+                "batch": best["batch"],
+                "num_workers": best["num_workers"],
+                "samples_per_second": best["samples_per_second"],
+                "seconds_per_step": best["seconds_per_step"],
+            }
+        ),
+    )
     _log("BENCHMARK_REPORT", report_path)
     _log("BENCHMARK_JSON", json.dumps(report))
     return 0

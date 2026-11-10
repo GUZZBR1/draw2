@@ -34,8 +34,7 @@ def test_explicit_scale_wins():
 def test_svg_absolute_extent_off_grid(tmp_path):
     # Um segmento de canto a canto numa página 400x560 "A4" tem que medir
     # 210x297 mm no SVG — nem um fio a mais em x.
-    lines = [{"points": np.array([[0.0, 0.0], [399.0, 559.0]]),
-              "closed": False}]
+    lines = [{"points": np.array([[0.0, 0.0], [399.0, 559.0]]), "closed": False}]
     out = tmp_path / "extent.svg"
     write_svg(lines, str(out), 400, 560, 210, 297, 0.3)
     text = out.read_text(encoding="utf-8")

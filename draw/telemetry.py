@@ -72,17 +72,14 @@ class SessionTelemetry:
             if counter in record:
                 previous = self._previous_counters.get(counter)
                 record[f"{counter}_delta"] = (
-                    record[counter] if previous is None
-                    else record[counter] - previous
+                    record[counter] if previous is None else record[counter] - previous
                 )
                 self._previous_counters[counter] = record[counter]
         return record
 
     def _rotate_if_needed(self):
         try:
-            if self._path.exists() and (
-                self._path.stat().st_size >= self._max_bytes
-            ):
+            if self._path.exists() and (self._path.stat().st_size >= self._max_bytes):
                 backup = self._path.with_name(self._path.name + ".1")
                 self._path.replace(backup)
         except OSError:

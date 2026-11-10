@@ -31,9 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from draw.app import _SheetTracker  # noqa: E402
 
-CORNERS = np.array(
-    [[100, 100], [500, 100], [500, 400], [100, 400]], dtype=np.float32
-)
+CORNERS = np.array([[100, 100], [500, 100], [500, 400], [100, 400]], dtype=np.float32)
 _DT = 1.0 / 30.0
 
 
@@ -107,9 +105,7 @@ def test_static_sheet_fast_detection_never_drops():
 
 
 def test_sheet_removed_still_drops():
-    confirm, drops, first_drop = _run_async(
-        "paper", 0.15, 12.0, remove_at=5.0
-    )
+    confirm, drops, first_drop = _run_async("paper", 0.15, 12.0, remove_at=5.0)
     assert confirm is not None
     assert drops >= 1
     # A queda mede o tempo de cena: remoção aos 5 s, queda pouco
