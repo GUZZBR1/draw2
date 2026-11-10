@@ -355,6 +355,64 @@ def _registration_is_identity(matrix):
     )
 
 
+# Disciplina de registro (M1, auditoria de 2026-11-10, draw-lab/
+# live-audit-2026-11-10/, provas P2/P3a/P3b): o voto de tinta e
+# destruido pelo jitter do quad de registro, e o jitter real e
+# evento discreto (flip de modo do detector, pouso de salto), nao
+# ruido. Duas correcoes aprovadas em replay, ambas atras de flag e
+# so sobre o quad que alimenta _registration_matrix (warp do app,
+# rastreador e exibicao intocados):
+# - DRAW_REG_ANCHOR_MEDIAN3: a ancora da geracao e a mediana por
+#   componente dos cantos das _REG_ANCHOR_MEDIAN_SAMPLES primeiras
+#   passadas com quad valido (mediana das que houver antes disso),
+#   nao a 1a amostra — um quad espurio na passada 0 nao projeta a
+#   pagina inteira no quadro errado.
+# - DRAW_REG_DEADBAND: o registro usa um quad congelado por geracao
+#   enquanto o deslocamento maximo de canto contra ele for
+#   < _REG_DEADBAND_TAU_PX; >= tau por _REG_DEADBAND_RELEASE_PASSES
+#   passadas seguidas libera (o congelado salta para o quad da
+#   passada). Spike de 1 passada nunca libera. tau precisa exceder o
+#   diametro do jitter assentado: tau=3 foi medido e reprovado
+#   (libera no ruido). EMA/One Euro foram reprovados na P3b (a tinta
+#   fica para tras quando a pagina anda de verdade).
+_REG_ANCHOR_MEDIAN_ENV = "DRAW_REG_ANCHOR_MEDIAN3"
+_REG_ANCHOR_MEDIAN_SAMPLES = 3
+_REG_DEADBAND_ENV = "DRAW_REG_DEADBAND"
+_REG_DEADBAND_TAU_PX = 10
+_REG_DEADBAND_RELEASE_PASSES = 2
+
+
+def _reg_anchor_median_enabled():
+    value = os.environ.get(_REG_ANCHOR_MEDIAN_ENV, "0").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _reg_deadband_enabled():
+    value = os.environ.get(_REG_DEADBAND_ENV, "0").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _median_anchor(samples):
+    """Mediana por componente de uma lista de quads (4, 2)."""
+    return np.median(np.stack(samples), axis=0).astype(np.float32)
+
+
+def _deadband_step(frozen, corners, over):
+    """Um passo da banda morta: (quad de registro, congelado, over, liberou, desvio).
+
+    over conta as passadas seguidas com desvio >= tau contra o
+    congelado; a liberacao so ocorre na _REG_DEADBAND_RELEASE_PASSES-esima.
+    """
+    shift = float(np.max(np.linalg.norm(corners - frozen, axis=1)))
+    if shift < _REG_DEADBAND_TAU_PX:
+        return frozen, frozen, 0, False, shift
+    over += 1
+    if over >= _REG_DEADBAND_RELEASE_PASSES:
+        frozen = corners.copy()
+        return frozen, frozen, 0, True, shift
+    return frozen, frozen, over, False, shift
+
+
 # Fonte fixada pelos hashes da pre-inscricao do replay v2.
 # fmt: off
 def _refine_ink_ecc(reference, observed, hand_mask=None):
@@ -724,6 +782,13 @@ class _PageCleanWorker:
         # chamadores que nao informam cantos (ferramentas, testes
         # antigos) seguem com a evidencia na propria geometria.
         self._anchor_corners = None
+        # Disciplina de registro (flags DRAW_REG_*, desligadas por
+        # padrao): amostras de cantos da ancora-mediana e o quad
+        # congelado da banda morta, ambos por geracao.
+        self._anchor_samples = []
+        self._reg_frozen_corners = None
+        self._reg_deadband_over = 0
+        self._reg_deadband_releases = 0
         self._identity_reference = None
         self._identity_reference_corners = None
         self._identity_recovery_requested = False
@@ -798,6 +863,9 @@ class _PageCleanWorker:
                 self._identity_reference = None
                 self._identity_reference_corners = None
             self._generation += 1
+            self._anchor_samples = []
+            self._reg_frozen_corners = None
+            self._reg_deadband_over = 0
             self._still_passes = 0
             self._generation_passes = 0
             self._quiet_passes = 0
@@ -938,7 +1006,7 @@ class _PageCleanWorker:
         curto de passadas. Nenhum campo muda comportamento.
         """
         with self._condition:
-            return {
+            snapshot = {
                 "submits": self._telemetry_submits,
                 "submits_replaced": self._telemetry_replaced,
                 "passes": self._telemetry_passes,
@@ -948,6 +1016,9 @@ class _PageCleanWorker:
                     dict(event) for event in self._identity_events
                 ],
             }
+            if _reg_deadband_enabled() or self._reg_deadband_releases:
+                snapshot["reg_deadband_releases"] = self._reg_deadband_releases
+            return snapshot
 
     def poll(self, generation, after_version):
         """(versao, copia do canvas confirmado) se ha publicado
@@ -1065,6 +1136,9 @@ class _PageCleanWorker:
             ecc_refine_enabled = int(_ecc_refinement_enabled())
             identity_geometry_registered = False
             identity_chamfer = {}
+            reg_anchor_median = _reg_anchor_median_enabled()
+            reg_deadband = _reg_deadband_enabled()
+            reg_info = {}
             ecc_info = {
                 "ecc_ms": 0.0,
                 "ecc_rejected": False,
@@ -1098,6 +1172,47 @@ class _PageCleanWorker:
                         if first_pass
                         else self._anchor_corners
                     )
+                    registration_corners = corners
+                    if not recovering and corners is not None:
+                        if (
+                            reg_anchor_median
+                            and not first_pass
+                            and 0
+                            < len(self._anchor_samples)
+                            < _REG_ANCHOR_MEDIAN_SAMPLES
+                        ):
+                            self._anchor_samples.append(corners.copy())
+                            self._anchor_corners = _median_anchor(self._anchor_samples)
+                            anchor = self._anchor_corners
+                        if reg_anchor_median:
+                            reg_info["reg_anchor_samples"] = max(
+                                1 if first_pass else 0, len(self._anchor_samples)
+                            )
+                        if reg_deadband:
+                            if self._reg_frozen_corners is None:
+                                self._reg_frozen_corners = corners.copy()
+                                self._reg_deadband_over = 0
+                            (
+                                registration_corners,
+                                self._reg_frozen_corners,
+                                self._reg_deadband_over,
+                                released,
+                                shift,
+                            ) = _deadband_step(
+                                self._reg_frozen_corners,
+                                corners,
+                                self._reg_deadband_over,
+                            )
+                            if released:
+                                self._reg_deadband_releases += 1
+                            reg_info.update(
+                                {
+                                    "reg_deadband_shift_px": shift,
+                                    "reg_deadband_held": not released,
+                                    "reg_deadband_pending": self._reg_deadband_over,
+                                    "reg_deadband_released": released,
+                                }
+                            )
                     confirmed = self._accumulator._confirmed
                     ecc_reference = (
                         confirmed.astype(np.float32) / 255.0
@@ -1111,7 +1226,7 @@ class _PageCleanWorker:
                 # ECC nao segura o lock que submit/poll/new_generation usam.
                 registered_prob, registered_visible, ecc_info = (
                     _register_ink_probability(
-                        prob, anchor, corners, ecc_reference, visible
+                        prob, anchor, registration_corners, ecc_reference, visible
                     )
                 )
             except Exception as error:  # noqa: BLE001 - vai para o laco
@@ -1299,6 +1414,9 @@ class _PageCleanWorker:
                             # A proxima passada estabelece outra ancora.
                             self._accumulator.reset()
                             self._anchor_corners = None
+                            self._anchor_samples = []
+                            self._reg_frozen_corners = None
+                            self._reg_deadband_over = 0
                             self._worker_generation = -1
                             self._generation_passes = 0
                             self._quiet_passes = 0
@@ -1306,6 +1424,11 @@ class _PageCleanWorker:
                         elif not keep_page:
                             self._accumulator.reset()
                             self._anchor_corners = corners
+                            self._anchor_samples = (
+                                [corners.copy()]
+                                if reg_anchor_median and corners is not None
+                                else []
+                            )
                         # Keep the old anchor when identity matched: all future
                         # observations remain registered into the same canvas.
                         self._identity_reference = None
@@ -1398,6 +1521,7 @@ class _PageCleanWorker:
                     {
                         **ecc_info,
                         **identity_chamfer,
+                        **reg_info,
                         "ecc_refine_enabled": ecc_refine_enabled,
                         "quarantine_reason": quarantine_reason,
                         "quarantine_frames": quarantine_frames,
