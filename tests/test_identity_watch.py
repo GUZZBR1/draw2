@@ -131,8 +131,13 @@ def test_content_rupture_arms_judge_and_splits_clean(worker, monkeypatch):
     record = drive(worker, generation, page_b())
     assert record["identity_watch_recall"] == 0.0
     assert record["identity_watch_streak"] == 1
-    for _ in range(6):
-        drive(worker, generation, page_b())
+    # Vigia v3: a 2a passada de ruptura arma com 1 voto semeado —
+    # o veredito sai na 4a passada de ruptura (2 de vigia + 2 de
+    # juiz), nao antes.
+    drive(worker, generation, page_b())
+    drive(worker, generation, page_b())
+    assert worker.take_identity_split(generation) is None
+    drive(worker, generation, page_b())
     seen = decisions(worker)
     assert seen[0] == "armed"
     assert events(worker)[0]["reason"] == "content_rupture"
@@ -174,6 +179,47 @@ def test_geometry_sway_never_arms(worker, monkeypatch):
     shifted = QUAD + np.float32([20.0, 0.0])
     for _ in range(5):
         record = drive(worker, generation, page_b(), corners=shifted)
+        assert record["identity_watch_recall"] is None
+        assert record["identity_watch_streak"] == 0
+    assert events(worker) == []
+    assert worker.take_identity_split(generation) is None
+
+
+def test_unsettled_geometry_never_counts(worker, monkeypatch):
+    monkeypatch.setenv("DRAW_IDENTITY_WATCH", "1")
+    worker, _control = worker
+    generation, _canvas_a = settle(worker)
+    # Quads alternando +-10 px a cada passada: degrau de 20 px
+    # entre consecutivos — geometria nunca assentada, a vigia
+    # nao conta nem com ruptura total de conteudo.
+    for k in range(5):
+        corners = QUAD + np.float32([10.0 if k % 2 else -10.0, 0.0])
+        record = drive(worker, generation, page_b(), corners=corners)
+        assert record["identity_watch_recall"] is None
+        assert record["identity_watch_streak"] == 0
+    assert events(worker) == []
+    assert worker.take_identity_split(generation) is None
+
+
+def test_creep_beyond_anchor_bound_never_counts(worker, monkeypatch):
+    monkeypatch.setenv("DRAW_IDENTITY_WATCH", "1")
+    worker, _control = worker
+    generation, _canvas_a = settle(worker)
+    # Deriva lenta (degrau de 3 px, assentado) leva o quad a
+    # 18 px da ancora com a MESMA pagina: nada arma no caminho.
+    for k in range(1, 7):
+        corners = QUAD + np.float32([3.0 * k, 0.0])
+        drive(worker, generation, page_a(), corners=corners)
+    assert events(worker) == []
+    # Alem do teto de deslocamento (16 px), nem a ruptura total
+    # conta: a referencia congelada nao e mais comparavel.
+    for _ in range(3):
+        record = drive(
+            worker,
+            generation,
+            page_b(),
+            corners=QUAD + np.float32([18.0, 0.0]),
+        )
         assert record["identity_watch_recall"] is None
         assert record["identity_watch_streak"] == 0
     assert events(worker) == []
@@ -252,7 +298,38 @@ def test_tracker_reports_big_jump_once_sustained():
         tracker.update(jumped.copy(), "paper", True, step * 0.2)
     assert tracker.big_jump_seq == 1
     assert tracker.last_big_jump["distance_px"] > 100.0
+    # Episodio LIMPO (candidato fixo, papel o tempo todo, sem
+    # perda): o reposicionamento continuo do Lucas — vigia v3
+    # nao arma o juiz por este salto.
+    assert tracker.last_big_jump["episode_discontinuous"] is False
     assert app_module._corner_distance(tracker.corners, jumped) < 30.0
+
+
+def test_tracker_marks_episode_when_candidate_is_replaced():
+    tracker = app_module._SheetTracker()
+    tracker.update(BASE.copy(), "paper", True, 0.0)
+    candidate_a = BASE + np.array([150.0, 0.0], dtype=np.float32)
+    # A sustentado ate se estabelecer (o filtro temporal assenta
+    # e o candidato fixa); so entao B o substitui.
+    for step in range(1, 6):
+        tracker.update(candidate_a.copy(), "paper", True, step * 0.2)
+    candidate_b = BASE + np.array([320.0, 0.0], dtype=np.float32)
+    for step in range(6, 13):
+        tracker.update(candidate_b.copy(), "paper", True, step * 0.2)
+    assert tracker.big_jump_seq == 1
+    assert tracker.last_big_jump["episode_discontinuous"] is True
+
+
+def test_tracker_marks_episode_on_nonpaper_verdict_mid_episode():
+    tracker = app_module._SheetTracker()
+    tracker.update(BASE.copy(), "paper", True, 0.0)
+    jumped = BASE + np.array([150.0, 0.0], dtype=np.float32)
+    tracker.update(jumped.copy(), "paper", True, 0.2)
+    tracker.update(jumped.copy(), "blank_maybe", True, 0.4)
+    for step in range(3, 13):
+        tracker.update(jumped.copy(), "paper", True, step * 0.2)
+    assert tracker.big_jump_seq == 1
+    assert tracker.last_big_jump["episode_discontinuous"] is True
 
 
 def test_tracker_small_move_is_not_a_big_jump():

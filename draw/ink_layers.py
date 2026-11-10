@@ -344,7 +344,23 @@ _IDENTITY_WATCH_MIN_CANVAS_PX = 2000
 _IDENTITY_WATCH_MIN_SEEN_PX = 200
 _IDENTITY_WATCH_MAX_RECALL = 0.30
 _IDENTITY_WATCH_PASSES = 2
-_IDENTITY_WATCH_MAX_DISPLACEMENT_PX = 8.0
+# Portoes de geometria da vigia — v3 (frente 32, 2026-11-10): a v1
+# exigia deslocamento da ancora <= 8 px e isso (i) bloqueou as
+# passadas da virada real (9,53 px, a perturbacao da propria
+# virada) e (ii) cegava a vigia sob deriva. A v3 conta a passada
+# quando a geometria esta ASSENTADA (degrau entre quads
+# consecutivos <= _IDENTITY_WATCH_MAX_STEP_PX, a definicao da
+# arbitragem) E o deslocamento acumulado da ancora segue <=
+# _IDENTITY_WATCH_MAX_DISPLACEMENT_PX (trava de deriva lenta: a
+# era de posicionamento que se condenou sozinha estava a >= 25 px;
+# a virada precisa de >= 9,53 — margens de ~1,7x dos dois lados,
+# amarradas ao material gravado). E o armamento por ruptura
+# SEMEIA 1 voto de troca no juiz: as 2 passadas da vigia medem
+# recall <= 0,30 — evidencia mais estrita em recall que 1 voto
+# do juiz (< 0,65); o juiz segue decidindo com o consenso dele.
+_IDENTITY_WATCH_MAX_DISPLACEMENT_PX = 16.0
+_IDENTITY_WATCH_MAX_STEP_PX = 6.0
+_IDENTITY_WATCH_SEED_VOTES = 1
 
 
 def _identity_watch_enabled():
@@ -975,6 +991,7 @@ class _PageCleanWorker:
         self._identity_arm_reason = None
         self._identity_split_event = None
         self._identity_watch_streak = 0
+        self._identity_watch_prev_corners = None
         self._accumulator = _LayeredInkAccumulator(
             threshold=getattr(page_clean, "threshold", 0.7)
         )
@@ -1034,6 +1051,7 @@ class _PageCleanWorker:
             self._identity_arm_reason = None
             self._identity_split_event = None
             self._identity_watch_streak = 0
+            self._identity_watch_prev_corners = None
             if preserve_identity:
                 reference = self._accumulator._confirmed
                 self._identity_reference = (
@@ -1542,7 +1560,7 @@ class _PageCleanWorker:
         with self._condition:
             return self._arm_identity_check_locked(reason)
 
-    def _arm_identity_check_locked(self, reason):
+    def _arm_identity_check_locked(self, reason, seed_votes=0):
         if not _identity_watch_enabled():
             return False
         if self._identity_reference is not None:
@@ -1561,7 +1579,7 @@ class _PageCleanWorker:
         )
         self._identity_recovery_requested = True
         self._identity_defer_count = 0
-        self._identity_switch_votes = 0
+        self._identity_switch_votes = int(seed_votes)
         self._identity_armed_mid_generation = True
         self._identity_arm_reason = reason
         self._identity_events.append(
@@ -1605,7 +1623,9 @@ class _PageCleanWorker:
             self._identity_split_event = None
             return canvas, reason
 
-    def _identity_watch_step(self, registered_prob, registered_visible, corners):
+    def _identity_watch_step(
+        self, registered_prob, registered_visible, corners, step_px
+    ):
         """Um passo da vigia de conteudo (lock ja segurado).
 
         Mede o recall dilatado do canvas confirmado na passada
@@ -1635,6 +1655,12 @@ class _PageCleanWorker:
         if displacement > _IDENTITY_WATCH_MAX_DISPLACEMENT_PX:
             self._identity_watch_streak = 0
             return None, False
+        if step_px is None or step_px > _IDENTITY_WATCH_MAX_STEP_PX:
+            # Geometria nao assentada (a folha ainda esta mexendo
+            # entre passadas): conteudo nao e decidivel neste
+            # material — nem conta, nem arma.
+            self._identity_watch_streak = 0
+            return None, False
         seen = registered_prob > self._accumulator.threshold
         if int(np.count_nonzero(seen)) < _IDENTITY_WATCH_MIN_SEEN_PX:
             self._identity_watch_streak = 0
@@ -1658,7 +1684,9 @@ class _PageCleanWorker:
             self._identity_watch_streak = 0
         if self._identity_watch_streak >= _IDENTITY_WATCH_PASSES:
             self._identity_watch_streak = 0
-            return recall, self._arm_identity_check_locked("content_rupture")
+            return recall, self._arm_identity_check_locked(
+                "content_rupture", seed_votes=_IDENTITY_WATCH_SEED_VOTES
+            )
         return recall, self._identity_watch_streak >= 1
 
     def _work(self):
@@ -1868,6 +1896,20 @@ class _PageCleanWorker:
                     self._worker_generation = generation
                     self._generation_passes = 0
                     self._quiet_passes = 0
+                # Degrau geometrico entre passadas consecutivas
+                # (a vigia v3 so conta passada assentada).
+                watch_step_px = None
+                if corners is not None:
+                    if self._identity_watch_prev_corners is not None:
+                        watch_step_px = float(
+                            np.max(
+                                np.linalg.norm(
+                                    corners - self._identity_watch_prev_corners,
+                                    axis=1,
+                                )
+                            )
+                        )
+                    self._identity_watch_prev_corners = corners.copy()
                 # A decisao de identidade roda na primeira passada e,
                 # enquanto estiver em quarentena, nas seguintes
                 # — a referencia so e consumida quando a decisao sai.
@@ -2176,7 +2218,7 @@ class _PageCleanWorker:
                         reg_info["identity_watch_recall"],
                         identity_watch_suspect,
                     ) = self._identity_watch_step(
-                        registered_prob, registered_visible, corners
+                        registered_prob, registered_visible, corners, watch_step_px
                     )
                     reg_info["identity_watch_streak"] = self._identity_watch_streak
                 if (

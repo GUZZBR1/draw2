@@ -166,6 +166,14 @@ class _SheetTracker:
         # decide nada com isto — so reporta.
         self.big_jump_seq = 0
         self.last_big_jump = None
+        # Episodio do salto em curso foi DESCONTINUO? (candidato
+        # substituido no meio, veredito nao-paper com candidato
+        # ativo, ou candidato morto por perda de deteccao). Um
+        # reposicionamento continuo da mesma folha nao marca nada
+        # disto — e a distincao que a vigia v3 usa para armar (ou
+        # nao) o juiz de identidade num salto de pose.
+        self._episode_discontinuous = False
+        self._pending_sustain_count = 0
         self._pending = None
         self._pending_since = None
         self._frames_since_seen = 0
@@ -212,7 +220,11 @@ class _SheetTracker:
                     "seq": self.big_jump_seq,
                     "distance_px": float(jump_distance),
                     "at": now,
+                    "episode_discontinuous": bool(self._episode_discontinuous),
                 }
+        # Toda confirmacao encerra o episodio do candidato: o
+        # marcador de descontinuidade nao vaza pro proximo salto.
+        self._episode_discontinuous = False
         # Confirmacao que SALTA (primeira folha ou candidato a
         # salto) recomeca a janela do filtro na posicao nova: sem
         # isso, a mediana das proximas deteccoes misturaria a
@@ -226,6 +238,7 @@ class _SheetTracker:
         self.verdict = verdict
         self._pending = None
         self._pending_since = None
+        self._pending_sustain_count = 0
         self._frames_since_seen = 0
         self._last_seen_at = now
         self.missed = False
@@ -299,6 +312,11 @@ class _SheetTracker:
                     confirm_seconds = max(
                         confirm_seconds, _SHEET_BIG_JUMP_PERSIST_SECONDS
                     )
+                if self._pending is not None and verdict != "paper":
+                    # Candidato ativo julgado nao-papel no meio do
+                    # episodio: a transicao nao foi uma folha so
+                    # andando em cena.
+                    self._episode_discontinuous = True
                 if (
                     self._pending is not None
                     and _corner_distance(self._pending, detected)
@@ -310,10 +328,21 @@ class _SheetTracker:
                     # atras dos modos errantes do detector e
                     # confirmar um salto que nenhuma posicao fixa
                     # sustentou pelo tempo de persistencia.
-                    pass
+                    self._pending_sustain_count += 1
                 else:
+                    if (
+                        self._pending is not None
+                        and self._pending_sustain_count >= 2
+                    ):
+                        # Candidato ESTABELECIDO substituido no meio
+                        # do episodio: transicao descontinua. (A
+                        # troca nas primeiras deteccoes e o transi-
+                        # ente do filtro temporal varrendo da pose
+                        # velha pra nova — nao marca.)
+                        self._episode_discontinuous = True
                     self._pending = detected.copy()
                     self._pending_since = now
+                    self._pending_sustain_count = 0
 
                 if (
                     self._pending_since is not None
@@ -333,8 +362,13 @@ class _SheetTracker:
                     self.missed = True
         elif self.corners is not None:
             if ran_detection:
+                if self._pending is not None:
+                    # Candidato morto por perda de deteccao no meio
+                    # do episodio: transicao descontinua.
+                    self._episode_discontinuous = True
                 self._pending = None
                 self._pending_since = None
+                self._pending_sustain_count = 0
                 self.missed = True
             self._frames_since_seen += 1
 
@@ -366,6 +400,8 @@ class _SheetTracker:
             self.verdict = None
             self._pending = None
             self._pending_since = None
+            self._pending_sustain_count = 0
+            self._episode_discontinuous = False
             self._frames_since_seen = 0
             self._recent.clear()
             self.missed = False

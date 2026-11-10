@@ -961,11 +961,21 @@ def run(
                         and ink_session_open
                         and os.environ.get("DRAW_IDENTITY_WATCH", "").strip()
                         == "1"
+                        and (tracker.last_big_jump or {}).get(
+                            "episode_discontinuous"
+                        )
                     ):
                         # Salto grande de pose com a folha presente
-                        # (frente 28): arma o juiz de identidade no
-                        # meio da geracao. Mesma pagina andando
-                        # passa no conteudo; folha trocada divide.
+                        # E episodio descontínuo (frentes 28/32): so
+                        # ai o juiz de identidade e armado no meio
+                        # da geracao. Reposicionamento continuo da
+                        # mesma folha (candidato fixo, papel o tempo
+                        # todo, sem perda) NAO arma: neste material
+                        # (spread enrolado), o conteudo deformado e
+                        # indistinguivel de pagina nova pro juiz, e
+                        # partir um desenho por reposicionamento e o
+                        # erro mais caro. A troca em repouso segue
+                        # com a vigia de conteudo.
                         ink_worker.arm_identity_check("pose_jump")
 
                 frame_number += 1

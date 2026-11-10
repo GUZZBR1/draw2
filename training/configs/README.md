@@ -47,6 +47,26 @@ DRAW_WORK=<dir_de_saida> python training/train_ink3.py \
   --config training/configs/ink-3class-smoke.json
 ```
 
+Configs do fine-tune de tinta sobre pares reais
+(`training/finetune_real.py` — módulo da linhagem page-clean para a
+corrida que o corpo de destilação não cobre: fine-tune do w8 sobre o
+pacote drawfmt de pares reais, com ignore de verdade e split por
+sessão; esquema plano como o do corpo irmão):
+
+- `ink-finetune-real-v1.json` — corrida completa da frente 31:
+  init nos pesos do w8, 20 épocas, patches 256², sessões de treino
+  nomeadas no arquivo (os pares temporais ficam fora, como régua).
+- `ink-finetune-real-smoke.json` — smoke da mesma corrida
+  (`smoke: true`, 2 épocas, cadeia inteira em miniatura).
+
+Uso:
+
+```bash
+python training/finetune_real.py \
+  --config training/configs/ink-finetune-real-v1.json \
+  --data-dir <pacote drawfmt> --out-dir <saida>
+```
+
 Convenções úteis em qualquer config (bloco `training`):
 
 - `"batch_size": "auto"` — dimensiona o batch pela VRAM rodando o passo

@@ -1174,6 +1174,37 @@ default ou veredito F-11 acima muda; defeito do caminho que esses
 registros revelarem entra aqui como achado separado, sem conserto no
 mesmo PR.
 
+**Vigia de identidade v1: latência na virada e puxão indistinguível
+(2026-11-10).** A prova da vigia v1 (`DRAW_IDENTITY_WATCH`) sobre as
+sessões gravadas aprovou a regressão sintética e a telemetria, mas
+reprovou dois portões reais com causa medida. (1) A virada da tarde
+ficou a UMA passada do veredito: as duas primeiras passadas
+pós-virada foram bloqueadas pelo portão de geometria quieta da
+própria vigia (deslocamento de 9,53 px contra o teto de 8,0 px — a
+perturbação da própria virada), e a gravação acabou com 2 de 3 votos.
+(2) O puxão do caderno (mesma página, pose nova, spread enrolado) foi
+partido como página nova: retificado na pose nova e registrado sobre
+a âncora congelada, o conteúdo sobrepõe ~0,05 com o canvas anterior —
+e a frente seguinte provou que NÃO existe separador de conteúdo
+nesta régua: a cobertura em raio grande satura com a densidade da
+tinta, não com a identidade (a página da substituição cobre a
+referência melhor que a mesma página deformada em todo raio
+8–48 px), e a condenação do puxão nasce antes dele, na era de
+posicionamento (recall 0,19 medido sobre conteúdo ainda derivando
+sobre a âncora). A v3 (mesma flag, default 0) responde sem inventar
+evidência: a vigia conta só passada assentada (degrau entre quads
+consecutivos ≤ 6 px) com deslocamento da âncora ≤ 16 px; o
+armamento por ruptura semeia 1 voto no juiz (a evidência da vigia,
+recall ≤ 0,30 ×2, é mais estrita que 1 voto, < 0,65); e o chamador
+`pose_jump` só arma quando o episódio do salto foi DESCONTÍNUO
+(candidato estabelecido substituído, veredito não-papel no meio do
+episódio, ou candidato morto por perda de detecção — marcadores do
+rastreador em `draw/sheet_track.py`), porque reposicionamento
+contínuo é o gesto constante do usuário e partir um desenho em
+andamento é o erro mais caro. Assimetria declarada: troca de folha
+em episódio limpo direto pra pose nova está fora deste chamador; a
+vigia de conteúdo e a porta da ausência seguem cobrindo o resto.
+
 Amarração com a bancada: o mapa ID → régua acima é a referência que o
 `JULGAMENTO.md` pode citar; nenhuma régua da bancada foi alterada por
 este documento. A guarda automática desta página é
