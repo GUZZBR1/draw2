@@ -193,6 +193,67 @@ def test_open_event_births_no_confirmation(fast):
     )
 
 
+def _permute(img, k):
+    # A construcao FISICA da frente 23 (independente do codigo sob
+    # teste): a prob que o warp posicional entrega quando a folha
+    # assentou rodada de k x 90 graus.
+    k %= 4
+    if k == 0:
+        return img
+    if k == 2:
+        return np.rot90(img, 2).copy()
+    rotated = np.rot90(img, 1 if k == 1 else -1)
+    return cv2.resize(
+        rotated, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_LINEAR
+    ).astype(np.float32)
+
+
+@pytest.mark.lento
+@pytest.mark.parametrize("k", [1, 2])
+def test_rotated_landing_relabels_anchor_by_k(fast, k):
+    # Frente 23/24: sob rotacao, a correspondencia posicional nao
+    # distingue "folha rodada" de "quad errado" — o conteudo sim,
+    # pontuado como permutacao da imagem entregue. Geometria
+    # dedicada onde a pagina ENCHE o quadro entregue (como no
+    # pipeline real, em que a prob e o warp da pagina): o veredito
+    # tem que ser landing_rotated com o k fisico, a ancora carrega
+    # os rotulos re-rotulados, o estado nao se move e as passadas
+    # seguintes (ainda entregues rodadas) confirmam sobre o MESMO
+    # canvas — e esse ultimo ponto que fixa a direcao do roll.
+    full = np.array(
+        [[0.0, 0.0], [199.0, 0.0], [199.0, 99.0], [0.0, 99.0]], dtype=np.float32
+    )
+    moved = full + np.array([30.0, 10.0], dtype=np.float32)
+    content = np.zeros(SHAPE, dtype=np.float32)
+    content[15:22, 30:110] = 1.0
+    content[45:70, 55:63] = 1.0
+    content[75:82, 120:180] = 1.0
+    rotated = _permute(content, k)
+    sequence = (
+        [(content, full.copy()) for _ in range(3)]
+        + [(rotated, moved.copy()) for _ in range(3)]
+        + [(rotated, moved.copy()) for _ in range(3)]
+    )
+    worker, confirmed, _provisional = _run(sequence)
+    snapshot = worker.telemetry_snapshot()
+    assert snapshot["anchor_arbitration_actions"] == 1
+    events = snapshot["anchor_arbitration_events"]
+    assert [e["verdict"] for e in events] == ["landing_rotated"]
+    assert events[0]["rotation_k"] == k
+    np.testing.assert_allclose(worker._anchor_corners, np.roll(moved, k, axis=0))
+    _tw, truth, _p2 = _run([(content, full.copy()) for _ in range(3)])
+    # Retencao exata (nada do canvas se perde) e IoU alto; a
+    # igualdade byte a byte dos outros contratos nao esta
+    # disponivel aqui: a miniatura reamostra a prob de forma
+    # anisotropica e a permutacao acontece antes dessa reamostragem
+    # num braco e nao no outro — a borda de ~1 px e artefato da
+    # miniatura; quem julga o numero real e a bancada da frente 23.
+    assert np.count_nonzero(truth & ~confirmed) == 0
+    inter = np.count_nonzero(confirmed & truth)
+    union = np.count_nonzero(confirmed | truth)
+    assert inter / union >= 0.85
+
+
 @pytest.mark.lento
 def test_no_mass_defaults_to_anchor_swap(fast):
     content = _content()

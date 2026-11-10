@@ -334,6 +334,25 @@ def _corners_page_matrix(corners, width, height):
     return cv2.getPerspectiveTransform(source, destination)
 
 
+def _permute_prob(prob, k):
+    """A prob como o warp posicional a entrega sob rotacao de k x 90
+    graus: rot90 + resize de volta ao canonico nos k impares (a
+    forma medida na frente 23 — NAO e o registro com cantos
+    rolados, que a frente 24 provou nao reconstruir a evidencia
+    entregue: escores 0,005 contra 0,23-0,27 da permutacao)."""
+    k %= 4
+    if k == 0:
+        return prob
+    if k == 2:
+        return np.rot90(prob, 2).copy()
+    rotated = np.rot90(prob, 1 if k == 1 else -1)
+    return cv2.resize(
+        rotated,
+        (prob.shape[1], prob.shape[0]),
+        interpolation=cv2.INTER_LINEAR,
+    )
+
+
 def _registration_matrix(anchor_corners, corners, shape):
     """M que leva o mapa desta passada para a grade da ancora.
 
@@ -906,6 +925,10 @@ class _PageCleanWorker:
         self._arb_snapshot = None
         self._arb_actions = 0
         self._arb_events = deque(maxlen=128)
+        # Rotulacao ciclica que a ancora corrente carrega em relacao
+        # aos quads posicionais (0 = posicional; k = cantos rolados
+        # por k apos um pouso rodado julgado pela arbitragem).
+        self._anchor_roll = 0
         self._identity_reference = None
         self._identity_reference_corners = None
         self._identity_recovery_requested = False
@@ -989,6 +1012,7 @@ class _PageCleanWorker:
             self._arb_streak_quads = []
             self._arb_scores = []
             self._arb_snapshot = None
+            self._anchor_roll = 0
             self._still_passes = 0
             self._generation_passes = 0
             self._quiet_passes = 0
@@ -1187,6 +1211,7 @@ class _PageCleanWorker:
         reg_deadband,
         raw_prob,
         registered_prob,
+        visible=None,
     ):
         """Avanca o evento de arbitragem; arbitra no fecho do streak.
 
@@ -1204,7 +1229,17 @@ class _PageCleanWorker:
         if identity_owned or corners is None or old_anchor is None:
             self._arb_close_event()
             return "closed", None
-        matrix = _registration_matrix(old_anchor, corners, shape)
+        # O gatilho compara em termos POSICIONAIS: uma ancora que ja
+        # carrega rotulos rolados (pouso rodado anterior) nao pode
+        # fazer toda passada seguinte parecer deslocada pela
+        # permutacao — o deslocamento que abre evento e o da pose,
+        # nao o da rotulacao.
+        trigger_anchor = (
+            old_anchor
+            if self._anchor_roll == 0
+            else np.roll(old_anchor, -self._anchor_roll, axis=0)
+        )
+        matrix = _registration_matrix(trigger_anchor, corners, shape)
         displacement = _matrix_grid_displacement(matrix, shape)
         if displacement <= _ANCHOR_MIGRATION_DISPLACEMENT_PX:
             self._arb_close_event()
@@ -1234,39 +1269,74 @@ class _PageCleanWorker:
         if snapshot is None or raw_total <= 0.0 or registered_total <= 0.0:
             score_page = 0.0
             score_camera = 0.0
+            cyclic = (0.0, 0.0, 0.0)
         else:
             score_page = float(np.sum(raw_prob * snapshot) / raw_total)
             score_camera = float(np.sum(registered_prob * snapshot) / registered_total)
+            # Colocacoes ciclicas (frentes 23/24): a hipotese "a
+            # folha assentou rodada de k x 90 graus" pontuada como a
+            # medicao manda — a prob ENTREGUE permutada por -k
+            # (rot90 + resize) contra o snapshot. A forma anterior
+            # (registrar com os cantos rolados) marcava 0,005 onde
+            # esta marca 0,23-0,27 na mesma passada real: reprovada
+            # e substituida. So dentro do evento, e so a partir de
+            # uma ancora posicional (roll == 0): uma segunda rotacao
+            # na mesma geracao e regime nao medido — abstem.
+            if self._anchor_roll != 0:
+                cyclic = (0.0, 0.0, 0.0)
+            else:
+                cyclic = tuple(
+                    float(np.sum(_permute_prob(raw_prob, -k) * snapshot) / raw_total)
+                    for k in (1, 2, 3)
+                )
         pass_mass = int(np.count_nonzero(raw_prob > 0.5))
-        self._arb_scores.append((score_page, score_camera, pass_mass))
+        self._arb_scores.append(
+            (score_page, score_camera, cyclic[0], cyclic[1], cyclic[2], pass_mass)
+        )
         if len(self._arb_streak_quads) < _ANCHOR_MIGRATION_PASSES:
             return "open", None
         mean_page = float(np.mean([s[0] for s in self._arb_scores]))
         mean_camera = float(np.mean([s[1] for s in self._arb_scores]))
-        mean_mass = float(np.mean([s[2] for s in self._arb_scores]))
+        mean_cyclic = [
+            float(np.mean([s[2 + k] for s in self._arb_scores])) for k in range(3)
+        ]
+        mean_mass = float(np.mean([s[5] for s in self._arb_scores]))
         canvas_px = (
             0
             if self._arb_snapshot is None
             else int(np.count_nonzero(self._arb_snapshot))
         )
+        rotation_k = 0
         if canvas_px < _ARB_MIN_CANVAS_PX or mean_mass < _ARB_MIN_PASS_PX:
             # Sem massa para julgar nao ha copia a fabricar nem a
             # proteger: trocar a ancora e custo zero nas duas
             # hipoteses.
             verdict = "landing_default"
-        elif mean_page - mean_camera > _ARB_DELTA:
-            verdict = "landing"
-        elif mean_camera - mean_page > _ARB_DELTA:
-            verdict = "spurious"
         else:
-            verdict = "indeterminate"
+            family = [
+                ("landing", mean_page),
+                ("spurious", mean_camera),
+                ("landing_rotated", mean_cyclic[0]),
+                ("landing_rotated", mean_cyclic[1]),
+                ("landing_rotated", mean_cyclic[2]),
+            ]
+            order = sorted(range(len(family)), key=lambda i: family[i][1], reverse=True)
+            best, second = order[0], order[1]
+            if family[best][1] - family[second][1] <= _ARB_DELTA:
+                verdict = "indeterminate"
+            else:
+                verdict = family[best][0]
+                if verdict == "landing_rotated":
+                    rotation_k = best - 1
         event = {
             "generation": generation,
             "pass_index": self._generation_passes,
             "verdict": verdict,
-            "action": verdict in ("landing", "landing_default"),
+            "action": verdict in ("landing", "landing_default", "landing_rotated"),
             "score_page": mean_page,
             "score_camera": mean_camera,
+            "scores_cyclic": [mean_camera, *mean_cyclic],
+            "rotation_k": rotation_k,
             "canvas_px": canvas_px,
             "pass_mass_px": mean_mass,
             "displacement_px": displacement,
@@ -1275,7 +1345,19 @@ class _PageCleanWorker:
         self._arb_events.append(event)
         if event["action"]:
             new_anchor = _median_anchor(self._arb_streak_quads)
+            if rotation_k:
+                # Pouso com rotacao: a ancora nova carrega os rotulos
+                # fisicos — os cantos da mediana re-rotulados por k,
+                # a mesma permutacao que venceu a pontuacao. O estado
+                # nao se move (a v3 inteira e troca de ancora).
+                new_anchor = np.roll(new_anchor, rotation_k, axis=0)
             self._anchor_corners = new_anchor
+            # So o pouso rodado muda a rotulacao: nos demais
+            # vereditos a mediana do streak ja esta na rotulacao
+            # corrente (os cantos chegam pareados), e o roll se
+            # preserva.
+            if verdict == "landing_rotated":
+                self._anchor_roll = rotation_k
             if reg_anchor_median:
                 self._anchor_samples = [quad.copy() for quad in self._arb_streak_quads]
             if reg_deadband:
@@ -1797,6 +1879,7 @@ class _PageCleanWorker:
                         reg_deadband,
                         prob,
                         registered_prob,
+                        visible,
                     )
                     arbitration_abstain = arb_status == "open"
                     reg_info["arb_event_open"] = self._arb_event_open
@@ -1805,6 +1888,7 @@ class _PageCleanWorker:
                         reg_info["arb_verdict"] = arb_event["verdict"]
                         reg_info["arb_score_page"] = arb_event["score_page"]
                         reg_info["arb_score_camera"] = arb_event["score_camera"]
+                        reg_info["arb_rotation_k"] = arb_event["rotation_k"]
                     if (
                         arb_status == "verdict"
                         and arb_event is not None

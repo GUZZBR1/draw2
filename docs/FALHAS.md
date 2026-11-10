@@ -537,6 +537,71 @@ canvas sobrevive, mas a frente de correspondência física de
 cantos é pré-requisito para ligar por padrão). Ligar por padrão
 segue decisão do Lucas, com teste ao vivo na mesa.
 
+**Extensão cíclica (frentes 23/24, 2026-11-10).** A
+correspondência física não vem de geometria (o quad posicional é
+quase-invariante sob rotação: girar 180° custa 20–57 px e a
+continuidade do tracker acerta 0/307 passos reais) nem de
+classificador de orientação por warp (teto ~0,65 neste material:
+spread, pauta ondulada, página em branco). Vem do mesmo sinal da
+arbitragem, estendido às colocações cíclicas contra o snapshot.
+A **primeira implementação foi reprovada pela prova da frente
+24**: pontuar pelo registro com os cantos rolados marca 0,005
+onde a permutação da imagem marca 0,23–0,27 na mesma passada
+real (a construção do teste de contrato era auto-consistente e
+fisicamente outra — lição registrada). A forma que a medição
+manda, e a implementada: no streak, pontuar a **prob entregue
+permutada por −k** (rot90 + resize ao canônico, a forma da
+frente 23) contra o snapshot. Veredito `landing_rotated`: a
+âncora nova é a mediana do streak **re-rotulada por k** (o
+estado, como sempre na v3, não se move); a trabalhadora guarda
+o roll corrente da âncora — o gatilho de deslocamento compara
+em termos posicionais (uma âncora rolada não pode fazer toda
+passada seguinte parecer evento) e uma **segunda rotação na
+mesma geração abstém** (regime não medido). Os 4 escores vão
+para a telemetria do evento. Contratos em
+`tests/test_anchor_arbitration.py` (construção física: página
+enchendo o quadro, prob permutada). **Prova (frente 26, física
+do app, braço arbitragem+mediana): o pouso rodado ISOLADO está
+aprovado** — rot_90/180/270 com IoU 0,967–0,976, `rotation_k`
+correto em 100% dos eventos (margens 0,13–0,23 contra o teto de
+ruído 0,012), âncora final a 1,2–1,5 px do quad físico, zero
+eventos espúrios depois de cada pouso rodado, regressão reta
+idêntica à régua da frente 25. Ressalva registrada: dup de
+evento = 2 px em rot_90/rot_180 contra o portão absoluto de
+zero — diagnóstico por fase mostra borda de ~1 px/fase do voto
+através da âncora permutada (0 px na passada do veredito), não
+segunda cópia. **Limite aberto: pouso DEPOIS de pouso rodado na
+mesma geração (pousos_3_rot reprova)** — na era reta seguinte os
+escores leem ~0 (Sp 0,0017, Sc 0,0023), o evento fecha
+`indeterminate` e as passadas de fecho plantam a cópia
+permutada (1.635 px; perda 0, como sempre nesta família). A
+correção indicada pela frente 26 (parear os cantos por −roll no
+registro) foi tentada e medida na miniatura: planta a cópia já
+na era rodada — a decomposição correta sai de diagnóstico
+sobre passadas capturadas da bancada (frente seguinte), não de
+derivação. Rotação pura no lugar, sem deslocamento que abra
+evento, segue invisível ao gatilho — limite declarado.
+
+**Física da bancada (frente 25, 2026-11-10) — a disciplina
+re-medida sob a física do app.** O app retifica cada frame pelo
+quad da passada e submete (warp, quad) juntos; as bancadas
+originais da disciplina usavam prob fixa com cantos variando.
+Sob a física do app: a **banda morta PREJUDICA** (registrar com
+quad congelado ≠ quad que retificou quebra o cancelamento
+warp↔registro: descarte 0,66–0,93 no jitter, IoU 0,035 no
+pouso_40 sozinha) — reprovada como componente, fica atrás da
+flag desligada; a **mediana sozinha cobra pedágio de abertura**
+(a grade anda nas passadas 1–3 sem re-expressar o estado) e só
+sobrevive como parceira da arbitragem, onde limpa o piso do
+pouso profundo (0,61 → 0,07); a **arbitragem SOBREVIVE** e a
+composição medida é **arbitragem + mediana, sem banda morta**
+(pousos dup-evento 0 px, IoU 0,960/0,954). A produção (OFF) é
+quase perfeita onde a folha não anda — sua ferida é só o pouso.
+Limites medidos da arbitragem: inanição por abstenção sob
+jitter sustentado de ±8 px (19/20 abstenções; no ruído real
+σ ≈ 1 px não morde) e o pedágio de descarte 0,16–0,37 da
+mediana nas séries de evento.
+
 ## F-09 — Folha perdida com o caderno movido
 
 **Sintoma:** a pessoa move o caderno (ou o detector perde a folha por
