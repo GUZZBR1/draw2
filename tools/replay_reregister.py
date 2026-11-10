@@ -1296,9 +1296,13 @@ def run_drop(base, settled, hand_config, lost_frames, mode, return_pages=None):
             and out["new_confirmed_px_outside_tol"] <= RECOVERY_GROWTH_TOL_PX
         )
     else:
+        terminal_decisions = [
+            decision for decision in out["identity_decisions"]
+            if decision != "deferred_switch_consensus"
+        ]
         # Sem drop nao ha identidade a decidir: o cenario e trivial.
         out["passes_gate"] = out["drops"] == 0 or (
-            out["identity_decisions"] == ["new_page"]
+            terminal_decisions == ["new_page"]
             and not out["canvas_survived"]
             and out["generations_created"] >= 1
         )

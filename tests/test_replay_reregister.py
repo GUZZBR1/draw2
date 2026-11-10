@@ -254,6 +254,11 @@ def test_reduced_run_reports_contract_fields(monkeypatch, chamfer_flag):
     # pelo caminho de drop: é o que a régua tem de enxergar.
     lost = results["drop_and_return"]["page_out_long_150f"]["presente_mexendo"]
     assert lost["drops"] == 1 and lost["generations_created"] >= 1
+    turned = results["drop_and_turn"]["page_out_long_150f"]["presente_mexendo"]
+    assert turned["identity_decisions"] == [
+        "deferred_switch_consensus", "deferred_switch_consensus", "new_page"
+    ]
+    assert turned["passes_gate"]
     assert set(results["summary"]) >= {
         "control_static",
         "move_same_canvas",
