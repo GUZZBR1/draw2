@@ -215,7 +215,7 @@ def _refine_corners(frame, corners):
         0.01,
     )
     cv2.cornerSubPix(padded, refined, (10, 10), (-1, -1), criteria)
-    return (refined.reshape(4, 2) - pad).astype(np.float32)
+    return (refined.reshape(-1, 2) - pad).astype(np.float32)
 
 
 _TEXTURE_ERODE_KERNEL = np.ones((9, 9), np.uint8)

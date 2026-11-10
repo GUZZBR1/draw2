@@ -422,7 +422,7 @@ def _line_normal_shift_at(point, line_ref):
     return abs(float((point - pt_ref) @ normal))
 
 
-def _best_inlier_seed_line(side, along):
+def _best_inlier_seed_line(side, along, pixel_scale=1.0):
     """Escolhe semente linear robusta a entalhe de braço no meio da aresta."""
     candidates = [_fit_line(side)]
     order = np.argsort(along)
@@ -433,14 +433,14 @@ def _best_inlier_seed_line(side, along):
             p1 = side[order[int(q1 * (n - 1))]]
             chord = p1 - p0
             chord_len = float(np.linalg.norm(chord))
-            if chord_len >= 12.0:
+            if chord_len >= 12.0 * pixel_scale:
                 candidates.append((chord / chord_len, p0))
 
     best_line = candidates[0]
     best_score = (-1, -1e9)
     for cand in candidates:
         res = _line_residuals(side, cand)
-        inliers = res <= _FIT_MAX_INLIER_RESIDUAL_PX
+        inliers = res <= _FIT_MAX_INLIER_RESIDUAL_PX * pixel_scale
         count = int(inliers.sum())
         neg_med = -float(np.median(res[inliers])) if count > 0 else -1e9
         score = (count, neg_med)
@@ -450,7 +450,7 @@ def _best_inlier_seed_line(side, along):
     return best_line
 
 
-def _edge_line(side, start, end, centroid, fallback=None):
+def _edge_line(side, start, end, centroid, fallback=None, pixel_scale=1.0):
     """A reta de uma aresta: ajustada, herdada ou travada na direção.
 
     Com cobertura boa E colinearidade real dentro de resíduo absoluto
@@ -468,24 +468,24 @@ def _edge_line(side, start, end, centroid, fallback=None):
     along = (side - start) @ direction
     coverage = float(along.max() - along.min()) / length
     if coverage >= _FIT_MIN_EDGE_COVERAGE:
-        seed = _best_inlier_seed_line(side, along)
+        seed = _best_inlier_seed_line(side, along, pixel_scale)
         residuals = _line_residuals(side, seed)
         tol = min(
-            _FIT_MAX_INLIER_RESIDUAL_PX,
-            max(3.0, float(np.percentile(residuals, 70))),
+            _FIT_MAX_INLIER_RESIDUAL_PX * pixel_scale,
+            max(3.0 * pixel_scale, float(np.percentile(residuals, 70))),
         )
         keep = residuals <= tol
         if int(keep.sum()) >= 8:
             line = _fit_line(side[keep])
             residuals = _line_residuals(side, line)
-            inliers = residuals <= _FIT_MAX_INLIER_RESIDUAL_PX
+            inliers = residuals <= _FIT_MAX_INLIER_RESIDUAL_PX * pixel_scale
             if int(inliers.sum()) >= 8:
                 line = _fit_line(side[inliers])
                 residuals = _line_residuals(side, line)
-                inliers = residuals <= _FIT_MAX_INLIER_RESIDUAL_PX
+                inliers = residuals <= _FIT_MAX_INLIER_RESIDUAL_PX * pixel_scale
         else:
             line = seed
-            inliers = residuals <= _FIT_MAX_INLIER_RESIDUAL_PX
+            inliers = residuals <= _FIT_MAX_INLIER_RESIDUAL_PX * pixel_scale
 
         n_inliers = int(inliers.sum())
         if n_inliers >= 8:
@@ -501,7 +501,7 @@ def _edge_line(side, start, end, centroid, fallback=None):
             if (
                 inlier_cov >= _FIT_MIN_EDGE_COVERAGE
                 and ratio_ok
-                and inlier_rms <= _FIT_MAX_INLIER_RMS_PX
+                and inlier_rms <= _FIT_MAX_INLIER_RMS_PX * pixel_scale
             ):
                 return line, False, True
 
@@ -514,7 +514,7 @@ def _edge_line(side, start, end, centroid, fallback=None):
     return (direction, start + offset * normal), True, False
 
 
-def _refit_corners(contour, quad, frame_shape, fallback_lines=None):
+def _refit_corners(contour, quad, frame_shape, fallback_lines=None, scale=(1.0, 1.0)):
     """Reajusta os cantos como interseções das retas das arestas.
 
     Cada ponto do contorno é atribuído à aresta mais próxima. Pontos
@@ -534,6 +534,9 @@ def _refit_corners(contour, quad, frame_shape, fallback_lines=None):
     reajuste inteiro é abandonado.
     """
     frame_h, frame_w = frame_shape
+    # Resíduos usam limites conservadores; deslocamentos dos quatro cantos
+    # usam a métrica exata do frame, inclusive quando scale_x != scale_y.
+    pixel_scale = 1.0 / max(scale)
     points = contour.reshape(-1, 2).astype(np.float64)
     distances = np.stack(
         [_segment_distances(points, quad[i], quad[(i + 1) % 4]) for i in range(4)],
@@ -550,8 +553,8 @@ def _refit_corners(contour, quad, frame_shape, fallback_lines=None):
         side = points[assignment == i]
         if len(side) < 8:
             return quad, None, None
-        near_vertex = (np.linalg.norm(side - start, axis=1) < 25) | (
-            np.linalg.norm(side - end, axis=1) < 25
+        near_vertex = (np.linalg.norm(side - start, axis=1) < 25 * pixel_scale) | (
+            np.linalg.norm(side - end, axis=1) < 25 * pixel_scale
         )
         side = side[~near_vertex]
         on_border = (
@@ -568,7 +571,9 @@ def _refit_corners(contour, quad, frame_shape, fallback_lines=None):
         fallback = None
         if fallback_lines is not None:
             fallback = fallback_lines[i]
-        line, is_locked, is_trusted = _edge_line(side, start, end, centroid, fallback)
+        line, is_locked, is_trusted = _edge_line(
+            side, start, end, centroid, fallback, pixel_scale
+        )
         lines.append(line)
         locked.append(is_locked)
         trusted.append(is_trusted)
@@ -594,12 +599,12 @@ def _refit_corners(contour, quad, frame_shape, fallback_lines=None):
             shf = _line_normal_shift_at(proj_mid, prev)
             if (
                 ang <= _MEMORY_STATIONARY_ANGLE_DEG
-                and shf <= _MEMORY_STATIONARY_SHIFT_PX
+                and shf <= _MEMORY_STATIONARY_SHIFT_PX * pixel_scale
             ):
                 steady.append(i)
             elif (
                 ang > _MEMORY_SINGLE_OUTLIER_ANGLE_DEG
-                or shf > _MEMORY_SINGLE_OUTLIER_SHIFT_PX
+                or shf > _MEMORY_SINGLE_OUTLIER_SHIFT_PX * pixel_scale
             ):
                 jumped.append(i)
         if len(steady) >= 2 and len(jumped) == 1:
@@ -615,7 +620,7 @@ def _refit_corners(contour, quad, frame_shape, fallback_lines=None):
             continue
         if locked[i - 1] or locked[i]:
             refined[i] = corner
-        elif np.linalg.norm(corner - quad[i]) <= _FIT_MAX_DISPLACE_PX:
+        elif np.linalg.norm((corner - quad[i]) * scale) <= _FIT_MAX_DISPLACE_PX:
             refined[i] = corner
     refined = _order_corners(refined)
     if not cv2.isContourConvex(refined.reshape(4, 1, 2).astype(np.float32)):
@@ -638,22 +643,12 @@ def _refine_inside(frame, corners):
     ]
     if not inside:
         return corners
-    pad = 12
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    padded = cv2.copyMakeBorder(gray, pad, pad, pad, pad, cv2.BORDER_REPLICATE)
-    selected = (corners[inside] + pad).reshape(-1, 1, 2).astype(np.float32)
-    criteria = (
-        cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
-        40,
-        0.01,
-    )
-    cv2.cornerSubPix(padded, selected, (10, 10), (-1, -1), criteria)
     refined = corners.copy()
-    refined[inside] = selected.reshape(-1, 2) - pad
+    refined[inside] = _paper._refine_corners(frame, corners[inside])
     return refined.astype(np.float32)
 
 
-def _fit_quad_impl(mask_bin, frame, fallback_lines):
+def _fit_quad_impl(mask_bin, frame, fallback_lines, scale_x=1.0, scale_y=1.0):
     """O ajuste completo sobre a máscara, com herança opcional.
 
     Retorna (quadrilatero ou None, retas usadas ou None, confiavel
@@ -666,20 +661,24 @@ def _fit_quad_impl(mask_bin, frame, fallback_lines):
     frame_area = float(mask_bin.shape[0] * mask_bin.shape[1])
     if cv2.contourArea(contour) < frame_area * _MIN_CONTOUR_AREA_RATIO:
         return None, None, None
+    scale = np.array([scale_x, scale_y], dtype=np.float32)
     quad = _approx_quad(contour)
     if quad is None:
-        return _min_area_quad(contour).astype(np.float32), None, None
+        return _min_area_quad(contour) * scale, None, None
     quad, lines, trusted = _refit_corners(
-        contour, quad, mask_bin.shape[:2], fallback_lines
+        contour, quad, mask_bin.shape[:2], fallback_lines, scale
     )
+    quad = quad * scale
     if frame is not None:
         quad = _refine_inside(frame, quad)
     return quad.astype(np.float32), lines, trusted
 
 
-def fit_quad(mask_bin, frame=None):
+def fit_quad(mask_bin, frame=None, *, scale_x=1.0, scale_y=1.0):
     """Ajusta o quadrilátero da folha sobre a máscara binária.
 
+    Contornos e retas ficam na grade da máscara; scale_x/scale_y
+    levam apenas os quatro cantos ao espaço do frame antes do refino.
     Retorna float32[4,2] TL/TR/BR/BL ou None quando a máscara não
     tem contorno ou é pequena demais para sustentar um quadrilátero.
     Se a escada de epsilon não fecha, vale a reserva de
@@ -688,7 +687,7 @@ def fit_quad(mask_bin, frame=None):
     subpixel sobre a imagem. Esta função não tem estado: a memória
     de arestas entre chamadas mora no NeuralSheetDetector.
     """
-    quad, _lines, _trusted = _fit_quad_impl(mask_bin, frame, None)
+    quad, _lines, _trusted = _fit_quad_impl(mask_bin, frame, None, scale_x, scale_y)
     return quad
 
 
@@ -700,7 +699,8 @@ class NeuralSheetDetector:
     "paper" quando o logit de presença é positivo e o quadrilátero
     fecha; fora isso, (None, None, máscara). A máscara é uint8
     0/255 no tamanho do frame, limiarizada em 0,5 como na avaliação
-    da fase 2.
+    da fase 2. return_mask=False evita materializar essa máscara;
+    o ajuste e a memória de arestas usam sempre a grade nativa.
 
     O detector guarda as retas confiáveis das arestas entre chamadas
     (a memória de arestas): quando uma aresta perde cobertura numa
@@ -725,6 +725,7 @@ class NeuralSheetDetector:
         self._contract_session = None
         self._edge_lines = None
         self._memory_mask = None
+        self._memory_geometry = None
         self.last_presence_logit = None
         self._timing_enabled = os.environ.get("DRAW_TIMING") == "1"
         self._timing_stats = {
@@ -796,16 +797,27 @@ class NeuralSheetDetector:
             return None
         return self._edge_lines
 
-    def _fit(self, mask, frame=None):
+    def _fit(self, mask, frame=None, *, scale_x=1.0, scale_y=1.0):
         """fit_quad com a memória de arestas do detector.
 
         A guarda de plausibilidade (_fit_plausible) fecha o caminho:
         quadrilátero recusado devolve None e não alimenta a memória
         de arestas, para a geometria selvagem não virar herança.
         """
+        geometry = (mask.shape, scale_x, scale_y)
+        if geometry != self._memory_geometry:
+            self._edge_lines = None
+            self._memory_mask = None
+            self._memory_geometry = geometry
         fallback = self._fallback_lines(mask)
-        corners, lines, trusted = _fit_quad_impl(mask, frame, fallback)
-        ref_shape = frame.shape if frame is not None else mask.shape
+        corners, lines, trusted = _fit_quad_impl(
+            mask, frame, fallback, scale_x, scale_y
+        )
+        ref_shape = (
+            frame.shape
+            if frame is not None
+            else (mask.shape[0] * scale_y, mask.shape[1] * scale_x)
+        )
         if corners is not None and not _fit_plausible(corners, ref_shape):
             return None
         if lines is not None:
@@ -821,9 +833,11 @@ class NeuralSheetDetector:
         self._memory_mask = mask[::_MEMORY_MASK_STRIDE, ::_MEMORY_MASK_STRIDE] > 0
         return corners
 
-    def predict(self, frame):
+    def predict(self, frame, *, native=False):
         """Roda o modelo. Retorna (sinal de presença, máscara 0/255).
 
+        native=True mantém a resolução de saída do modelo, sem resize.
+        O padrão preserva a máscara full-res para diagnóstico/avaliação.
         O contrato legado tem uma máscara binária e um logit de presença.
         O SegFormer de quatro classes exporta apenas logits semânticos;
         nesse caso, papel e tinta formam a região da folha (a mão continua
@@ -903,10 +917,9 @@ class NeuralSheetDetector:
                 "'presence_logit' ou 'logits' com quatro classes; "
                 f"recebi {output_names}"
             )
-        mask = (
-            cv2.resize(mask_small, (frame_w, frame_h), interpolation=cv2.INTER_NEAREST)
-            * 255
-        )
+        mask = mask_small * 255
+        if not native:
+            mask = cv2.resize(mask, (frame_w, frame_h), interpolation=cv2.INTER_NEAREST)
         if self._timing_enabled:
             postprocess_end = time.perf_counter()
             self._record_timing(
@@ -918,21 +931,28 @@ class NeuralSheetDetector:
             )
         return self.last_presence_logit, mask
 
-    def __call__(self, frame):
+    def __call__(self, frame, *, return_mask=True):
         if frame is None or frame.size == 0:
             self.last_presence_logit = None
             return None, None, None
-        presence, mask = self.predict(frame)
-        if presence <= 0:
-            return None, None, mask
-        corners = self._fit(mask, frame)
-        if corners is None:
-            return None, None, mask
-        return corners, "paper", mask
+        presence, mask = self.predict(frame, native=True)
+        frame_h, frame_w = frame.shape[:2]
+        mask_h, mask_w = mask.shape
+        corners = None
+        if presence > 0:
+            corners = self._fit(
+                mask, frame, scale_x=frame_w / mask_w, scale_y=frame_h / mask_h
+            )
+        verdict = "paper" if corners is not None else None
+        if return_mask:
+            mask = cv2.resize(mask, (frame_w, frame_h), interpolation=cv2.INTER_NEAREST)
+        else:
+            mask = None
+        return corners, verdict, mask
 
     def detect_sheet_with_confidence(self, frame):
         """O par (cantos, veredito) do contrato de draw.paper."""
-        corners, verdict, _ = self(frame)
+        corners, verdict, _ = self(frame, return_mask=False)
         return corners, verdict
 
 
