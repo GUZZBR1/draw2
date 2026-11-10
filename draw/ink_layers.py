@@ -1320,6 +1320,7 @@ class _PageCleanWorker:
                     )
                     registration_corners = corners
                     if not recovering and corners is not None:
+                        anchor_rebased = False
                         if (
                             reg_anchor_median
                             and not first_pass
@@ -1330,6 +1331,7 @@ class _PageCleanWorker:
                             self._anchor_samples.append(corners.copy())
                             self._anchor_corners = _median_anchor(self._anchor_samples)
                             anchor = self._anchor_corners
+                            anchor_rebased = True
                         if reg_anchor_median:
                             reg_info["reg_anchor_samples"] = max(
                                 1 if first_pass else 0, len(self._anchor_samples)
@@ -1338,27 +1340,58 @@ class _PageCleanWorker:
                             if self._reg_frozen_corners is None:
                                 self._reg_frozen_corners = corners.copy()
                                 self._reg_deadband_over = 0
-                            (
-                                registration_corners,
-                                self._reg_frozen_corners,
-                                self._reg_deadband_over,
-                                released,
-                                shift,
-                            ) = _deadband_step(
-                                self._reg_frozen_corners,
-                                corners,
-                                self._reg_deadband_over,
-                            )
-                            if released:
-                                self._reg_deadband_releases += 1
-                            reg_info.update(
-                                {
-                                    "reg_deadband_shift_px": shift,
-                                    "reg_deadband_held": not released,
-                                    "reg_deadband_pending": self._reg_deadband_over,
-                                    "reg_deadband_released": released,
-                                }
-                            )
+                            if anchor_rebased:
+                                # Rebase (interacao das duas flags,
+                                # prova composta de 2026-11-10): a
+                                # ancora ainda esta assentando (a
+                                # janela da mediana acabou de andar);
+                                # o congelado acompanha a ancora em
+                                # vez de ficar preso na amostra 1, e o
+                                # contador de liberacao recomeca.
+                                # Fechada a janela, vale a semantica
+                                # da banda morta do #57.
+                                self._reg_frozen_corners = self._anchor_corners.copy()
+                                self._reg_deadband_over = 0
+                                registration_corners = self._reg_frozen_corners
+                                shift = float(
+                                    np.max(
+                                        np.linalg.norm(
+                                            corners - self._reg_frozen_corners,
+                                            axis=1,
+                                        )
+                                    )
+                                )
+                                reg_info.update(
+                                    {
+                                        "reg_deadband_shift_px": shift,
+                                        "reg_deadband_held": True,
+                                        "reg_deadband_pending": 0,
+                                        "reg_deadband_released": False,
+                                        "reg_deadband_rebased": True,
+                                    }
+                                )
+                            else:
+                                (
+                                    registration_corners,
+                                    self._reg_frozen_corners,
+                                    self._reg_deadband_over,
+                                    released,
+                                    shift,
+                                ) = _deadband_step(
+                                    self._reg_frozen_corners,
+                                    corners,
+                                    self._reg_deadband_over,
+                                )
+                                if released:
+                                    self._reg_deadband_releases += 1
+                                reg_info.update(
+                                    {
+                                        "reg_deadband_shift_px": shift,
+                                        "reg_deadband_held": not released,
+                                        "reg_deadband_pending": self._reg_deadband_over,
+                                        "reg_deadband_released": released,
+                                    }
+                                )
                     confirmed = self._accumulator._confirmed
                     ecc_reference = (
                         confirmed.astype(np.float32) / 255.0

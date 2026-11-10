@@ -416,6 +416,22 @@ intocados. Régua no repo: `tests/test_reg_discipline.py` (contratos
 das flags e paridade byte a byte com as duas desligadas). Ligar
 qualquer uma por padrão exige teste ao vivo na mesa do Lucas.
 
+**Interação das duas flags (prova composta, 2026-11-10).** Com as
+duas ligadas no worker real, o braço composto pagava um pedágio de
+abertura: descarte 0,285 em jitter de ±4 px (portão 0,25), com 100%
+dele nascendo até a passada 5 e zero da 6 à 20. Mecanismo: a âncora
+anda nas passadas 1–3 (mediana assentando) enquanto o congelado da
+banda morta ficava preso na amostra 1 — as primeiras passadas
+registravam contra um congelado que a própria âncora já abandonara.
+Correção (sem constante nova): enquanto a janela de amostras da
+mediana está aberta, o congelado é rebaseado para a âncora corrente
+e o contador de liberação recomeca (`reg_deadband_rebased` na
+telemetria); fechada a janela, vale a semântica da banda morta.
+Depois da correção, o braço composto iguala o controle sem jitter
+em ±2 e ±4 px (descarte 0,000, IoU 0,933, inflação 1,07×). Régua:
+`tests/test_reg_rebase.py` + a bancada da prova composta
+(`17-prova-composta-flags.md`, no laboratório).
+
 ### M2 — pouso sustentado: a segunda cópia é desenho, não bug (2026-11-10)
 
 **Defeito.** Quando a folha anda de verdade e assenta em pose nova
