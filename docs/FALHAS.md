@@ -416,6 +416,66 @@ intocados. Régua no repo: `tests/test_reg_discipline.py` (contratos
 das flags e paridade byte a byte com as duas desligadas). Ligar
 qualquer uma por padrão exige teste ao vivo na mesa do Lucas.
 
+### M2 — pouso sustentado: a segunda cópia é desenho, não bug (2026-11-10)
+
+**Defeito.** Quando a folha anda de verdade e assenta em pose nova
+no meio de uma geração (pouso sustentado, presença contínua), o
+registro em `_registration_matrix` (`draw/ink_layers.py`) leva a
+tinta nova para a âncora velha como se a folha tivesse ficado parada
+e só o quad tivesse andado: a mesma tinta entra deslocada pelo
+movimento e o voto confirma uma **segunda cópia**. É o comportamento
+especificado do registro (feito para o tremor/flip do quad com a
+folha parada), não um bug de implementação. Evidência:
+`~/workspace/draw-lab/live-audit-2026-11-10/10-p3b-estabilizadores.md`
+(no regime de eventos o seguidor duplica 1,55–1,72×; pouso não é
+decidível por filtro de passada) e
+`~/workspace/draw-lab/live-audit-2026-11-10/12-estudo-pouso.md`.
+
+**Decisão do Lucas (2026-11-10): opção A** — re-ancorar e
+re-registrar o canvas por substituição no pouso (registrar uma vez,
+adaptar por substituição, nunca acumular). **Opção B descartada**
+(fechar a geração e passar pela identidade) por defeito estrutural:
+`new_generation()` não toca no acumulador, então no pouso B ou mantém
+âncora velha e canvas intactos (a segunda cópia sobrevive) ou apaga o
+canvas confirmado.
+
+**Estado da implementação: atrás de `DRAW_ANCHOR_MIGRATION`, padrão
+`0`, REPROVADA na prova de replay.** O mecanismo segue a
+especificação: deslocamento médio da grade sob a matriz de registro
+(`_matrix_grid_displacement`) > `_ANCHOR_MIGRATION_DISPLACEMENT_PX`
+(8) por `_ANCHOR_MIGRATION_PASSES` (3) passadas com quad válido e sem
+identidade pendente ⇒ `_LayeredInkAccumulator.migrate()` re-projeta
+confirmada/provisória (vizinho mais próximo), janela do voto
+(bilinear) e invalida os buffers derivados, com a matriz inversa do
+registro âncora-nova→âncora-velha; a âncora nova é a mediana dos
+quads do streak; a passada da migração força a publicação
+(`poll()` devolve o canvas migrado na mesma passada); contador
+`anchor_migrations` e eventos `anchor_migration_events` na
+telemetria. Contratos em `tests/test_anchor_migration.py`; com a flag
+desligada o canvas é byte-idêntico ao golden.
+
+A prova (`tools/replay_anchor_migration.py`, fonte **sintética** — o
+laboratório não estava nesta máquina; 5 séries × 3 braços, sem ECC,
+contra o oráculo de substituição) reprovou com (8 px, K=3) e com o
+único reajuste permitido (K=4): duplicação 0,69–1,14 do canvas
+pré-pouso nos pousos de 40/120 px (a base mede 0,44–0,77), IoU
+0,57–0,74, perda e retenção fora do portão nos 3 pousos, 2 migrações
+no pouso de 120 px (o streak fecha no meio do movimento). Passaram:
+0 migrações em flips e no controle quieto, isca de modo espúrio com
+IoU 0,999, churn do quieto sem regressão no braço só-migração.
+
+**Diagnóstico (medido, sem portão):** a inversa do registro assume
+que a tinta ficou no mesmo ponto da câmera — certo para o modo
+espúrio do detector (folha parada, quad errado), errado para o pouso
+(a tinta anda com a folha e, na grade da página, não se mexe). Um
+braço diagnóstico que só troca a âncora sem mover o estado inverte o
+quadro: pousos com IoU 0,92 e retenção 1,0, mas a isca de modo cai
+para IoU 0,74. As duas hipóteses são indistinguíveis pelo quad; o
+próximo desenho precisa arbitrar pelo conteúdo (a evidência da
+passada casa com o canvas na grade da página ou na da câmera?) —
+decisão de desenho, não reajuste de limiar. Ligar a flag por padrão
+está vetado até uma prova nova passar.
+
 ## F-09 — Folha perdida com o caderno movido
 
 **Sintoma:** a pessoa move o caderno (ou o detector perde a folha por
