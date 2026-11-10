@@ -1747,6 +1747,289 @@ def train_one_epoch(
     return total / n
 
 
+def train_steps(
+    model,
+    replay_buffer,
+    pool_buffer,
+    pair_buffer,
+    *,
+    steps,
+    batch_replay,
+    batch_pool,
+    batch_pairs,
+    augmenter,
+    optimizer,
+    class_weights,
+    device,
+    scaler=None,
+    scheduler=None,
+    amp_dtype=None,
+    consistency_weight=0.0,
+    consistency_mode="mse",
+    consistency_trim=0.0,
+    temporal_area_weight=0.0,
+    presence_weight=0.0,
+    presence_pos_weight=None,
+    hnbs_weight=0.0,
+    hnbs_threshold=0.35,
+    hnbs_topk_fraction=0.005,
+    ema=None,
+    ema_model=None,
+    step_stats=None,
+    stats_every=50,
+    profile_window=None,
+):
+    """Loop guiado por PASSOS sobre buffers em RAM (Fase 2, 2026-11-09).
+
+    Alternativa ao caminho de épocas para FINE-TUNE incremental: em vez
+    de varrer ~20,8 mil imagens/época (decode + albumentations em CPU por
+    item — passo de parede medido de 0,567 s na A100 contra 0,0445 s de
+    passo puro), cada passo amostra índices dos buffers residentes
+    (training/ram_buffer.py), transfere uint8 pro device e aumenta/
+    normaliza na GPU (draw/gpu_augmenter.py). A matemática de loss é A
+    MESMA do train_one_epoch: lote principal supervisionado (replay +
+    pool, com pesos por amostra e alvos de presença) + lote de pares
+    supervisionado pelas máscaras do teacher + consistência temporal
+    mascarada — os pares seguem supervisionados, como na Rodada 3/t14
+    (não só o termo temporal). Composição do lote (batch 32, frações da
+    config t14): 12 replay + 10 pool + 5 pares (10 frames).
+
+    Divergências deliberadas do caminho de épocas, registradas:
+    - augmentation geométrica por passo é só flip horizontal (na GPU);
+      affine/perspective/blur/HSV ficam de fora — a diversidade
+      geométrica do replay nasce na geração das amostras do buffer.
+    - imagens do buffer já estão redimensionadas pro tamanho do modelo
+      (a mesma troca do cache_mode="resized").
+    - sem acumulação de gradiente: 1 passo = 1 update.
+    - estatísticas de presença (pstats) e o acumulado da loss NÃO
+      sincronizam a cada passo: cada `.item()` drena a fila da GPU e
+      custa o passo inteiro (o smoke A100 mediu 0,375 s/passo contra
+      0,0445 s de passo puro — ~9-11 syncs/passo). pstats roda só no
+      lote principal a cada `stats_every` passos (passo 0 incluído) e
+      o total da loss acumula em tensor no device, com UM `.item()`
+      no retorno. As médias de presença em step_stats seguem válidas
+      (amostradas); o caminho de épocas tem o mesmo vício e fica para
+      depois — aqui só o caminho de passos é o portão.
+    - perfil por fase (opcional, `profile_window=(inicio, fim)`): nos
+      passos da janela, cada fase (sample/augment/forward/loss/
+      temporal/backward/optim_ema) é medida com sync nas fronteiras —
+      cada fase paga o próprio custo serializado e a soma fecha o
+      tempo do passo. Nasceu da refutação da hipótese dos `.item()`:
+      o re-run mediu 0,401 s/passo com os syncs removidos, então o
+      recibo seguinte tem que dizer ONDE o tempo mora em vez de
+      outro chute. Fora da janela, custo zero.
+    - curva por passo: com perfil ativo, `step_stats["step_wall_ms"]`
+      guarda a parede de CADA passo da janela (sync nas duas pontas do
+      passo inteiro). Nasceu do smoke perfilado de 2026-11-09: as fases
+      somaram ~150 ms/passo nos passos 10–29, mas a capa do recibo
+      seguiu 0,403 s/passo — a curva diz ONDE a média se concentra
+      (warmup nos primeiros passos × custo uniforme) em vez de média
+      de fases sobre uma janela só.
+    """
+    import contextlib
+    import time as _time
+
+    import torch
+    import torch.nn.functional as F
+
+    model.train()
+    total = torch.zeros((), device=device)
+    n = 0
+    pstats = {"total": 0.0, "n": 0, "pos_sum": 0.0, "pos_n": 0,
+              "neg_sum": 0.0, "neg_n": 0}
+    device_type = torch.device(device).type
+
+    phase_acc: dict = {}
+    phase_steps = 0
+    step_wall: list = []
+
+    @contextlib.contextmanager
+    def _phase(name, active):
+        if not active:
+            yield
+            return
+        if device_type == "cuda":
+            torch.cuda.synchronize()
+        _t0 = _time.perf_counter()
+        try:
+            yield
+        finally:
+            if device_type == "cuda":
+                torch.cuda.synchronize()
+            phase_acc[name] = phase_acc.get(name, 0.0) + (
+                _time.perf_counter() - _t0
+            )
+
+    def supervised(images_u8, masks, sample_weights, pres_targets, flip,
+                   collect_stats=False, prof=False):
+        with _phase("augment", prof):
+            images, masks = augmenter(images_u8, masks, jitter=True, flip=flip)
+        with _phase("forward", prof):
+            if presence_weight > 0.0:
+                logits, presence_logit = _model_logits_and_presence(
+                    model, images
+                )
+                if presence_logit is None:
+                    raise RuntimeError(
+                        "presence_weight > 0 mas o modelo não devolveu "
+                        "presence_logit (cabeça de presença desligada na "
+                        "config ou wrapper multi-GPU descartando a saída)."
+                    )
+            else:
+                logits = _model_logits(model, images)
+                presence_logit = None
+            if logits.shape[-2:] != masks.shape[-2:]:
+                logits = F.interpolate(
+                    logits, size=masks.shape[-2:], mode="bilinear",
+                    align_corners=False,
+                )
+        with _phase("loss", prof):
+            loss = combined_loss(
+                logits,
+                masks,
+                class_weights,
+                sample_weights=sample_weights,
+                hnbs_weight=hnbs_weight,
+                hnbs_threshold=hnbs_threshold,
+                hnbs_topk_fraction=hnbs_topk_fraction,
+            )
+            if presence_logit is not None:
+                p_loss = presence_loss(
+                    presence_logit,
+                    masks,
+                    sample_weights,
+                    targets=pres_targets,
+                    pos_weight=presence_pos_weight,
+                )
+                loss = loss + presence_weight * p_loss
+        if presence_logit is not None and collect_stats:
+            pstats["total"] += float(p_loss.detach().item())
+            pstats["n"] += 1
+            with torch.no_grad():
+                eff_targets = presence_targets(masks)
+                if pres_targets is not None:
+                    eff_targets = torch.where(
+                        pres_targets >= 0, pres_targets, eff_targets
+                    )
+                probs = torch.sigmoid(presence_logit.detach())
+                pos_sel = eff_targets >= 0.5
+                if bool(pos_sel.any()):
+                    pstats["pos_sum"] += float(probs[pos_sel].sum())
+                    pstats["pos_n"] += int(pos_sel.sum())
+                if bool((~pos_sel).any()):
+                    pstats["neg_sum"] += float(probs[~pos_sel].sum())
+                    pstats["neg_n"] += int((~pos_sel).sum())
+        return loss, logits
+
+    for step_idx in range(steps):
+        prof = (
+            profile_window is not None
+            and profile_window[0] <= step_idx < profile_window[1]
+        )
+        if prof and device_type == "cuda":
+            torch.cuda.synchronize()
+        _step_t0 = _time.perf_counter() if prof else None
+        optimizer.zero_grad(set_to_none=True)
+        with torch.autocast(
+            device_type=device_type,
+            dtype=amp_dtype,
+            enabled=amp_dtype is not None,
+        ):
+            with _phase("sample", prof):
+                imgs, msks, wts, pres = [], [], [], []
+                if batch_replay > 0:
+                    i, m, w, p = replay_buffer.sample(batch_replay, device)
+                    imgs.append(i); msks.append(m); wts.append(w); pres.append(p)
+                if pool_buffer is not None and batch_pool > 0:
+                    i, m, w, p = pool_buffer.sample(batch_pool, device)
+                    imgs.append(i); msks.append(m); wts.append(w); pres.append(p)
+                main_batch = (
+                    torch.cat(imgs), torch.cat(msks), torch.cat(wts),
+                    torch.cat(pres),
+                )
+            loss, _ = supervised(
+                *main_batch, flip=True,
+                collect_stats=(step_idx % stats_every == 0),
+                prof=prof,
+            )
+            if pair_buffer is not None and batch_pairs > 0:
+                with _phase("sample", prof):
+                    ia, ma, ib, mb, change = pair_buffer.sample_pairs(
+                        batch_pairs, device
+                    )
+                    pair_batch = (
+                        torch.cat([ia, ib]), torch.cat([ma, mb]),
+                    )
+                pair_loss, pair_logits = supervised(
+                    *pair_batch, None, None, flip=False, prof=prof,
+                )
+                loss = loss + pair_loss
+                if consistency_weight > 0.0:
+                    with _phase("temporal", prof):
+                        half = ia.shape[0]
+                        loss = loss + consistency_weight * (
+                            masked_temporal_consistency_loss(
+                                pair_logits[:half], pair_logits[half:],
+                                change, mode=consistency_mode,
+                                trim=consistency_trim,
+                            )
+                        )
+                        if temporal_area_weight > 0.0:
+                            loss = loss + (
+                                temporal_area_weight
+                                * temporal_area_loss(
+                                    pair_logits[:half], pair_logits[half:]
+                                )
+                            )
+        with _phase("backward", prof):
+            if scaler is not None:
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
+        with _phase("optim_ema", prof):
+            if scaler is not None:
+                previous_scale = scaler.get_scale()
+                scaler.step(optimizer)
+                scaler.update()
+                did_step = scaler.get_scale() >= previous_scale
+            else:
+                optimizer.step()
+                did_step = True
+            optimizer.zero_grad(set_to_none=True)
+            if scheduler is not None and did_step:
+                scheduler.step()
+            if ema is not None:
+                ema.update(ema_model if ema_model is not None else model)
+        if prof:
+            phase_steps += 1
+            if device_type == "cuda":
+                torch.cuda.synchronize()
+            step_wall.append(
+                round((_time.perf_counter() - _step_t0) * 1000.0, 2)
+            )
+        total = total + loss.detach()
+        n += 1
+    if n == 0:
+        raise ValueError("train_steps sem passos executados")
+    if step_stats is not None:
+        step_stats["pair_batches"] = n if pair_buffer is not None else 0
+        if phase_steps:
+            step_stats["phase_profile_ms"] = {
+                k: round(v * 1000.0 / phase_steps, 2)
+                for k, v in sorted(phase_acc.items())
+            }
+            step_stats["phase_profile_steps"] = phase_steps
+        if step_wall:
+            step_stats["step_wall_ms"] = step_wall
+        if pstats["n"]:
+            step_stats["presence_loss"] = pstats["total"] / pstats["n"]
+        if pstats["pos_n"]:
+            step_stats["presence_mean_pos"] = pstats["pos_sum"] / pstats["pos_n"]
+        if pstats["neg_n"]:
+            step_stats["presence_mean_neg"] = pstats["neg_sum"] / pstats["neg_n"]
+    return float((total / n).detach().item())
+
+
 def evaluate(model, loader, device, target_loader=None):
     """Avalia todo o loader usando as métricas compartilhadas do projeto.
 
@@ -2418,10 +2701,77 @@ def main(argv=None):
         print(f"EMA de pesos: LIGADA (decay {ema.decay}) — best/avaliação usam EMA")
     optimizer = build_optimizer(base_model, tr)
     accumulation_steps = max(int(tr.get("gradient_accumulation_steps", 1)), 1)
+    # --- Fase 2 (2026-11-09): modo de treino guiado por passos.
+    # training.mode="steps" troca a varredura de épocas por max_steps
+    # passos sobre buffers em RAM (fine-tune incremental); o caminho de
+    # épocas segue intacto como padrão ("epochs").
+    steps_mode = str(tr.get("mode", "epochs")).lower() == "steps"
+    max_steps = int(tr.get("max_steps", 1500)) if steps_mode else 0
+    eval_interval = int(tr.get("eval_interval_steps", 300)) if steps_mode else 0
+    _pw = tr.get("profile_window_steps") if steps_mode else None
+    profile_window = (
+        (int(_pw[0]), int(_pw[1])) if _pw and len(_pw) == 2 else None
+    )
+    replay_buffer = pool_buffer = pair_buffer = None
+    augmenter = None
+    batch_replay = batch_pool = batch_pairs = 0
+    if steps_mode:
+        import random as _random
+
+        from draw.gpu_augmenter import GPUBatchAugmenter
+        from training.ram_buffer import RAMImageBuffer, RAMPairBuffer
+
+        size = cfg["model"]["input"]["height"]
+        replay_size = int(tr.get("replay_size", 1500))
+        rng = _random.Random(int(tr.get("seed", 42)))
+        real_items = [(p[0], p[1], real_loss_weight) for p in real_pairs]
+        syn_items = [(p[0], p[1], 1.0) for p in synthetic_train_pairs]
+        rng.shuffle(syn_items)
+        replay_items = real_items + syn_items[: max(0, replay_size - len(real_items))]
+        rng.shuffle(replay_items)
+        replay_buffer = RAMImageBuffer.from_pairs(
+            replay_items, size, "replay", load_image_rgb, load_mask, cv2
+        )
+        if args.presence_pool_dir:
+            pool_buffer = RAMImageBuffer.from_pool_dir(
+                args.presence_pool_dir, size, load_image_rgb, cv2
+            )
+        if args.real_pairs_dir:
+            pair_buffer = RAMPairBuffer.from_pairs_dir(
+                args.real_pairs_dir, size, load_image_rgb, load_mask, cv2,
+                split="train",
+            )
+        norm = cfg["model"]["input"]["normalization"]
+        augmenter = GPUBatchAugmenter(mean=norm["mean"], std=norm["std"]).to(device)
+        pool_fraction = (
+            float(tr.get("presence_pool_fraction", 0.30)) if pool_buffer else 0.0
+        )
+        pair_frames = (
+            int(round(batch_size * tset["pair_fraction"]))
+            if pair_buffer is not None and tset["enabled"]
+            else 0
+        )
+        batch_pairs = pair_frames // 2
+        batch_pool = int(round(batch_size * pool_fraction)) if pool_buffer else 0
+        batch_replay = batch_size - batch_pool - 2 * batch_pairs
+        if batch_replay <= 0:
+            parser.error(
+                "modo steps: a composição do lote estourou o batch "
+                f"(replay {batch_replay} + pool {batch_pool} + pares "
+                f"{2 * batch_pairs} > {batch_size})"
+            )
+        print(
+            f"modo steps: max_steps {max_steps} | avaliação a cada "
+            f"{eval_interval} | lote = {batch_replay} replay + {batch_pool} "
+            f"pool + {batch_pairs} pares | buffers em RAM: replay "
+            f"{len(replay_buffer)} amostras"
+            + (f", pool {len(pool_buffer)}" if pool_buffer else "")
+            + (f", pares {len(pair_buffer)}" if pair_buffer else "")
+        )
     steps_per_epoch = math.ceil(len(train_loader) / accumulation_steps)
     scheduler = warmup_cosine_scheduler(
         optimizer,
-        total_steps=epochs * max(steps_per_epoch, 1),
+        total_steps=max_steps if steps_mode else epochs * max(steps_per_epoch, 1),
         warmup_ratio=tr["warmup_ratio"],
     )
     print(f"precisão de treino: {precision}; acumulação: {accumulation_steps}")
@@ -2429,7 +2779,7 @@ def main(argv=None):
     best_iou, bad_epochs = -1.0, 0
     history = []
     run_started = time.perf_counter()
-    for epoch in range(epochs):
+    for epoch in range(0 if steps_mode else epochs):
         epoch_started = time.perf_counter()
         epoch_stats: dict = {}
         loss = train_one_epoch(
@@ -2533,6 +2883,166 @@ def main(argv=None):
             print(f"early stopping na época {epoch} (val_mean_iou sem melhora há {bad_epochs} épocas).")
             break
 
+    steps_steady_s_per_step = None
+    if steps_mode:
+        # Blocos de passos com a MESMA contabilidade do caminho de épocas:
+        # avaliar, régua de flicker, recibo no 1º bloco, best por
+        # val_mean_iou (EMA quando ligada) e early stopping por bloco.
+        n_blocks = math.ceil(max_steps / eval_interval)
+        done_steps = 0
+        for block in range(n_blocks):
+            block_steps = min(eval_interval, max_steps - done_steps)
+            block_started = time.perf_counter()
+            block_stats: dict = {}
+            loss = train_steps(
+                model,
+                replay_buffer,
+                pool_buffer,
+                pair_buffer,
+                steps=block_steps,
+                batch_replay=batch_replay,
+                batch_pool=batch_pool,
+                batch_pairs=batch_pairs,
+                augmenter=augmenter,
+                optimizer=optimizer,
+                class_weights=class_weights,
+                device=device,
+                scaler=scaler,
+                scheduler=scheduler,
+                amp_dtype=amp_dtype,
+                consistency_weight=tset["consistency_weight"],
+                consistency_mode=tset["mode"],
+                consistency_trim=tset["trim"],
+                temporal_area_weight=tset["area_weight"],
+                presence_weight=presence_weight,
+                presence_pos_weight=presence_pos_weight,
+                hnbs_weight=hnbs_weight,
+                hnbs_threshold=hnbs_threshold,
+                hnbs_topk_fraction=hnbs_topk_fraction,
+                ema=ema,
+                ema_model=base_model,
+                step_stats=block_stats,
+                profile_window=profile_window,
+            )
+            done_steps += block_steps
+            block_s = time.perf_counter() - block_started
+            metrics = evaluate(model, val_loader, device)
+            history_entry = {
+                "epoch": block,
+                "step": done_steps,
+                "train_loss": loss,
+                "val": metrics,
+                "epoch_s": round(block_s, 1),
+            }
+            if real_pair_val_ds is not None:
+                fl = flicker_metrics(model, real_pair_val_ds, device)
+                history_entry["flicker"] = fl
+                print(
+                    f"passo {done_steps}: flicker real — centróide mediano "
+                    f"{fl.get('centroid_step_median')} px | tIoU "
+                    f"{fl.get('tiou_mean')} | Δárea {fl.get('area_diff_median')} "
+                    f"({fl.get('pairs')} pares)"
+                )
+            if "presence_loss" in block_stats:
+                history_entry["presence_loss"] = round(block_stats["presence_loss"], 4)
+            for _key in ("presence_mean_pos", "presence_mean_neg"):
+                if _key in block_stats:
+                    history_entry[_key] = round(block_stats[_key], 4)
+            if tset["enabled"]:
+                history_entry["pair_batches"] = block_stats.get("pair_batches", 0)
+            history.append(history_entry)
+            if block == 0:
+                receipt = utilization_receipt(
+                    torch,
+                    device,
+                    block_s,
+                    block_steps,
+                    batch_size,
+                    precision,
+                    probe_report=probe_report,
+                )
+                if tset["enabled"] and pair_buffer is not None:
+                    receipt["temporal"] = {
+                        "pair_fraction": tset["pair_fraction"],
+                        "consistency_weight": tset["consistency_weight"],
+                        "pair_batches_block0": block_stats.get("pair_batches", 0),
+                        "pairs_total": len(pair_buffer),
+                    }
+                receipt["efficiency"] = {
+                    "cache_mode": "ram_buffer",
+                    "compile": compile_enabled,
+                    "ema_decay": ema.decay if ema is not None else None,
+                }
+                receipt["steps_mode"] = {
+                    "max_steps": max_steps,
+                    "eval_interval": eval_interval,
+                    "batch_replay": batch_replay,
+                    "batch_pool": batch_pool,
+                    "batch_pairs": batch_pairs,
+                    "replay_size": len(replay_buffer),
+                }
+                if "phase_profile_ms" in block_stats:
+                    receipt["phase_profile_ms"] = block_stats[
+                        "phase_profile_ms"
+                    ]
+                    receipt["phase_profile_steps"] = block_stats.get(
+                        "phase_profile_steps"
+                    )
+                if "step_wall_ms" in block_stats:
+                    receipt["step_wall_ms"] = block_stats["step_wall_ms"]
+                receipt["projected_total_min"] = round(block_s * n_blocks / 60, 1)
+                receipt["elapsed_s"] = round(time.perf_counter() - run_started, 1)
+                (out_dir / "receipt.json").write_text(
+                    json.dumps(receipt, indent=2), encoding="utf-8"
+                )
+                print(f"RECEIPT {json.dumps(receipt)}")
+            print(
+                f"passos {done_steps}/{max_steps} (bloco {block}): loss "
+                f"{loss:.4f}, val_mean_iou {metrics['mean_iou']:.4f}"
+            )
+            torch.save(base_model.state_dict(), out_dir / "checkpoints" / "last.pt")
+            monitor = metrics
+            ema_backup = None
+            if ema is not None:
+                ema_backup = ema.apply(base_model)
+                ema_metrics = evaluate(model, val_loader, device)
+                history_entry["val_ema"] = ema_metrics
+                monitor = ema_metrics
+                print(
+                    f"bloco {block}: val_mean_iou EMA {ema_metrics['mean_iou']:.4f}"
+                )
+            if monitor["mean_iou"] > best_iou:
+                best_iou = monitor["mean_iou"]
+                bad_epochs = 0
+                torch.save(
+                    base_model.state_dict(), out_dir / "checkpoints" / "best.pt"
+                )
+            else:
+                bad_epochs += 1
+            if ema_backup is not None:
+                ema.restore(base_model, ema_backup)
+            if bad_epochs >= tr["early_stopping"]["patience_epochs"]:
+                print(
+                    f"early stopping no bloco {block} (val_mean_iou sem "
+                    f"melhora há {bad_epochs} blocos)."
+                )
+                break
+
+    if steps_mode and len(history) > 1:
+        # s/passo em estado estacionário: blocos depois do primeiro (o
+        # bloco 0 carrega o warmup único — autotune/alocador — que no
+        # smoke de 100 passos inflou a média pra 0,403 com passo real
+        # de ~0,155; medido 2026-11-09). O recibo do bloco 0 segue
+        # como portão de lançamento; este número é o custo por passo
+        # de uma corrida longa, e vai pras métricas finais.
+        _s, _n, _prev = 0.0, 0, int(history[0]["step"])
+        for _e in history[1:]:
+            _s += float(_e["epoch_s"])
+            _n += int(_e["step"]) - _prev
+            _prev = int(_e["step"])
+        if _n:
+            steps_steady_s_per_step = round(_s / _n, 4)
+
     # Exportação ONNX a partir do melhor checkpoint.
     # Não-fatal: se a exportação falhar, as métricas e os demais artefatos
     # ainda são escritos, e a falha fica registrada em onnx_validation —
@@ -2550,6 +3060,8 @@ def main(argv=None):
     final_metrics["onnx_validation"] = onnx_check
     final_metrics["delivery_status"] = onnx_delivery_status(onnx_check)
     final_metrics["history"] = history
+    if steps_steady_s_per_step is not None:
+        final_metrics["steps_steady_s_per_step"] = steps_steady_s_per_step
     final_metrics["train_pixel_counts"] = counts.tolist()
     final_metrics["train_source_counts"] = {
         "synthetic": len(synthetic_train_pairs),
