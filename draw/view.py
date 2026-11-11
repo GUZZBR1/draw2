@@ -143,7 +143,7 @@ def _compose_view(camera_img, canvas_img):
     footer_h = 36
     panel_h = target_h - header_h - footer_h - 8  # 552px
     panel_y = header_h + 4
-    split_x = 1140
+    split_x = 1120
 
     studio = np.empty((target_h, target_w, 3), dtype=np.uint8)
     # Lado esquerdo: dark studio
@@ -229,10 +229,10 @@ def _compose_view(camera_img, canvas_img):
 
     canvas_h, canvas_w = canvas_img.shape[:2]
     aspect_sheet = canvas_w / max(1, canvas_h)
-    inner_sheet_h = panel_h - 24
+    inner_sheet_h = panel_h - 8
     inner_sheet_w = int(inner_sheet_h * aspect_sheet)
-    if inner_sheet_w > canvas_area_w - 24:
-        inner_sheet_w = canvas_area_w - 24
+    if inner_sheet_w > canvas_area_w - 16:
+        inner_sheet_w = canvas_area_w - 16
         inner_sheet_h = int(inner_sheet_w / aspect_sheet)
 
     sheet_resized = cv2.resize(canvas_img, (inner_sheet_w, inner_sheet_h))
@@ -255,7 +255,7 @@ def _message_view(last_view, title, lines):
         view = np.full((640, 1280, 3), COLOR_BG_STUDIO, dtype=np.uint8)
 
     vh, vw = view.shape[:2]
-    avail_w = 1140 if vw >= 1600 else vw
+    avail_w = 1120 if vw >= 1600 else vw
     card_w = min(680, avail_w - 60)
     card_h = min(280, vh - 60)
     cx = (avail_w - card_w) // 2
