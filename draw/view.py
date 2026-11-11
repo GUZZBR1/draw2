@@ -141,8 +141,8 @@ def _compose_view(camera_img, canvas_img):
     target_w, target_h = 1600, 640
     header_h = 44
     footer_h = 36
-    panel_h = target_h - header_h - footer_h - 16  # 544px
-    panel_y = header_h + 8
+    panel_h = target_h - header_h - footer_h - 8  # 552px
+    panel_y = header_h + 4
     split_x = 1140
 
     studio = np.empty((target_h, target_w, 3), dtype=np.uint8)
@@ -180,42 +180,35 @@ def _compose_view(camera_img, canvas_img):
     cv2.rectangle(studio, (split_x, target_h - footer_h), (target_w, target_h), COLOR_PAPER_BAR, -1)
     cv2.line(studio, (split_x, target_h - footer_h), (target_w, target_h - footer_h), COLOR_PAPER_BORDER, 1, cv2.LINE_AA)
 
-    # 3. Barra Vertical Compacta de Botoes (lado esquerdo da camera)
-    toolbar_x = 12
-    toolbar_w = 56
-
-    _draw_pill(studio, toolbar_x, panel_y, toolbar_w, panel_h, (26, 28, 26), COLOR_BORDER_SUBTLE, radius=6, alpha=0.9)
-    cv2.putText(studio, "KEY", (toolbar_x + 16, panel_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.26, COLOR_TEXT_MUTED, 1, cv2.LINE_AA)
-    cv2.line(studio, (toolbar_x + 8, panel_y + 24), (toolbar_x + toolbar_w - 8, panel_y + 24), COLOR_BORDER_SUBTLE, 1, cv2.LINE_AA)
-
+    # 3. Teclas de atalho no rodape (esquerda, abaixo da camera)
     buttons = [
         ("[S]", "Salvar"),
         ("[C]", "Base"),
         ("[F]", "Frame"),
         ("[Q]", "Sair"),
     ]
-    btn_y = panel_y + 32
+    btn_h = 22
+    btn_y = target_h - footer_h + (footer_h - btn_h) // 2
+    btn_x = 12
     for key, label in buttons:
-        bx = toolbar_x + 6
-        bw = toolbar_w - 12
-        bh = 28
-        _draw_pill(studio, bx, btn_y, bw, bh, (35, 38, 36), (58, 64, 61), radius=4, alpha=1.0)
-        cv2.putText(studio, key, (bx + 7, btn_y + 13), cv2.FONT_HERSHEY_DUPLEX, 0.34, COLOR_ACCENT_YELLOW, 1, cv2.LINE_AA)
-        cv2.putText(studio, label, (bx + 5, btn_y + 23), cv2.FONT_HERSHEY_SIMPLEX, 0.26, COLOR_TEXT_SOFT, 1, cv2.LINE_AA)
-        btn_y += 34
+        bw = 94
+        _draw_pill(studio, btn_x, btn_y, bw, btn_h, (35, 38, 36), (58, 64, 61), radius=5, alpha=1.0)
+        cv2.putText(studio, key, (btn_x + 9, btn_y + 15), cv2.FONT_HERSHEY_DUPLEX, 0.38, COLOR_ACCENT_YELLOW, 1, cv2.LINE_AA)
+        cv2.putText(studio, label, (btn_x + 40, btn_y + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.38, COLOR_TEXT_SOFT, 1, cv2.LINE_AA)
+        btn_x += bw + 8
 
-    # 4. Viewport da Camera (Container dedicado com moldura e badge)
-    cam_area_x = toolbar_x + toolbar_w + 10
+    # 4. Viewport da Camera (largura total do lado esquerdo)
+    cam_area_x = 12
     cam_area_w = split_x - cam_area_x - 12
     cv2.rectangle(studio, (cam_area_x, panel_y), (cam_area_x + cam_area_w, panel_y + panel_h), (26, 28, 26), -1)
     cv2.rectangle(studio, (cam_area_x, panel_y), (cam_area_x + cam_area_w, panel_y + panel_h), COLOR_BORDER_SUBTLE, 1, cv2.LINE_AA)
 
     cam_h, cam_w = camera_img.shape[:2]
     aspect_cam = cam_w / max(1, cam_h)
-    inner_cam_h = panel_h - 16
+    inner_cam_h = panel_h - 8
     inner_cam_w = int(inner_cam_h * aspect_cam)
-    if inner_cam_w > cam_area_w - 16:
-        inner_cam_w = cam_area_w - 16
+    if inner_cam_w > cam_area_w - 8:
+        inner_cam_w = cam_area_w - 8
         inner_cam_h = int(inner_cam_w / aspect_cam)
 
     cam_resized = cv2.resize(camera_img, (inner_cam_w, inner_cam_h))
